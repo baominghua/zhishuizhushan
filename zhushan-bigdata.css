@@ -1,0 +1,1065 @@
+:root {
+  --cyan: #6ffdf5;
+  --cyan-soft: rgba(111, 253, 245, 0.42);
+  --panel: rgba(7, 113, 119, 0.28);
+  --panel-deep: rgba(3, 45, 50, 0.54);
+  --text: #efffff;
+  --zoom: 1;
+  --bg-size: 160%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(2, 15, 14, 0.84), transparent 18%, transparent 76%, rgba(2, 15, 14, 0.76)),
+    linear-gradient(180deg, rgba(0, 20, 22, 0.44), transparent 42%, rgba(0, 20, 22, 0.7)),
+    #031613;
+  color: var(--text);
+  font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.screen {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 46%, transparent 0 42%, rgba(0, 18, 18, 0.48) 78%),
+    repeating-linear-gradient(90deg, rgba(111, 253, 245, 0.05) 0 1px, transparent 1px 120px);
+  pointer-events: none;
+}
+
+.screen-title {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: 1fr 420px 1fr;
+  align-items: center;
+  gap: 16px;
+  width: min(1050px, 72vw);
+  transform: translateX(-50%);
+}
+
+.screen-title h1 {
+  position: relative;
+  min-height: 56px;
+  margin: 0;
+  border: 1px solid rgba(145, 255, 251, 0.5);
+  padding-top: 9px;
+  background: linear-gradient(90deg, rgba(16, 130, 137, 0.1), rgba(89, 239, 232, 0.48), rgba(16, 130, 137, 0.1));
+  box-shadow: inset 0 0 28px rgba(143, 255, 249, 0.26), 0 0 26px rgba(143, 255, 249, 0.2);
+  color: #d9fffb;
+  font-size: 30px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.screen-title span {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  box-shadow: 0 0 14px var(--cyan-soft);
+}
+
+.left-tools {
+  position: absolute;
+  top: 142px;
+  left: 34px;
+  z-index: 18;
+  display: grid;
+  grid-template-columns: 84px 210px;
+  gap: 10px;
+}
+
+.tool-menu,
+.layer-card,
+.legend,
+.info-card,
+.business-card,
+.bottom-dock,
+.zoom,
+.basemap-switch {
+  border: 1px solid rgba(137, 255, 250, 0.28);
+  background: var(--panel);
+  box-shadow: inset 0 0 26px rgba(130, 255, 248, 0.12), 0 20px 60px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(12px);
+}
+
+.tool-menu {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 10px;
+}
+
+.tool-menu button {
+  display: grid;
+  place-items: center;
+  min-height: 58px;
+  border: 1px solid rgba(137, 255, 250, 0.18);
+  border-radius: 3px;
+  background: rgba(0, 57, 67, 0.28);
+  color: #e9fffd;
+  font-size: 13px;
+}
+
+.tool-menu i {
+  display: block;
+  margin-bottom: 3px;
+  font-style: normal;
+}
+
+.tool-menu .active {
+  background: rgba(64, 216, 212, 0.2);
+}
+
+.layer-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px 14px;
+}
+
+.layer-list {
+  display: grid;
+  gap: 9px;
+}
+
+.layer-card.collapsed .layer-list {
+  display: none;
+}
+
+.layer-card.collapsed {
+  display: none;
+}
+
+.layer-list label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.layer-list input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--cyan);
+}
+
+.legend {
+  position: absolute;
+  left: 34px;
+  bottom: 150px;
+  z-index: 18;
+  display: grid;
+  gap: 8px;
+  width: 150px;
+  padding: 12px;
+}
+
+.legend strong {
+  font-size: 15px;
+}
+
+.legend span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.legend i {
+  display: inline-block;
+  width: 28px;
+  height: 8px;
+  border: 1px solid currentColor;
+}
+
+.green {
+  color: #51ff66;
+}
+
+.yellow {
+  color: #fff05a;
+}
+
+.orange {
+  color: #ff9d30;
+}
+
+.red {
+  color: #ff4949;
+}
+
+.cyan {
+  color: var(--cyan);
+}
+
+.map-scene {
+  position: absolute;
+  inset: 0;
+  transform: scale(var(--zoom));
+  transform-origin: center center;
+  transition: transform 0.18s ease;
+}
+
+.webgis-ready .map-scene {
+  transform: none;
+}
+
+body.terrain3d-mode .map-scene {
+  transform: none;
+  transform-origin: center center;
+}
+
+body.terrain3d-mode .screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background:
+    radial-gradient(ellipse at 51% 51%, transparent 0 30%, rgba(0, 10, 10, 0.34) 62%, rgba(0, 8, 8, 0.78) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent 26%, rgba(0, 0, 0, 0.28) 64%, transparent),
+    repeating-linear-gradient(28deg, rgba(128, 255, 180, 0.055) 0 2px, transparent 2px 20px);
+  pointer-events: none;
+}
+
+.webgis-map {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+}
+
+.webgis-ready .webgis-map {
+  opacity: 0.78;
+}
+
+body.webgis-ready,
+body.webgis-ready .screen {
+  background: #031613;
+}
+
+.webgis-ready .layer,
+.webgis-ready #forestBlocks {
+  display: none;
+}
+
+.ol-viewport {
+  filter: saturate(1.25) contrast(1.08) brightness(0.76) hue-rotate(24deg);
+}
+
+body.imagery-mode .ol-viewport,
+body.terrain3d-mode .ol-viewport {
+  filter: saturate(1.45) contrast(1.18) brightness(0.78) hue-rotate(18deg);
+}
+
+body.terrain3d-mode .ol-viewport {
+  box-shadow:
+    inset 0 0 120px rgba(0, 0, 0, 0.42),
+    0 0 80px rgba(47, 255, 173, 0.1);
+}
+
+body.terrain3d-mode .ol-layer canvas {
+  mix-blend-mode: screen;
+}
+
+body.standard-mode .ol-layer canvas,
+body.imagery-mode .ol-layer canvas {
+  mix-blend-mode: normal;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.layer.hidden {
+  opacity: 0;
+}
+
+.layer-bamboo {
+  background:
+    radial-gradient(circle at 31% 44%, rgba(87, 255, 87, 0.22), transparent 15%),
+    radial-gradient(circle at 52% 38%, rgba(87, 255, 87, 0.2), transparent 13%),
+    radial-gradient(circle at 63% 55%, rgba(87, 255, 87, 0.18), transparent 14%);
+}
+
+.layer-quality {
+  background:
+    radial-gradient(circle at 38% 56%, rgba(255, 234, 63, 0.24), transparent 8%),
+    radial-gradient(circle at 60% 36%, rgba(255, 147, 38, 0.2), transparent 7%),
+    radial-gradient(circle at 49% 66%, rgba(255, 58, 58, 0.2), transparent 5%);
+}
+
+.layer-soil {
+  background: repeating-linear-gradient(35deg, transparent 0 36px, rgba(255, 224, 120, 0.08) 36px 38px);
+}
+
+.layer-growth {
+  background: repeating-linear-gradient(120deg, transparent 0 42px, rgba(88, 255, 168, 0.09) 42px 44px);
+}
+
+.layer-yield {
+  background:
+    radial-gradient(circle at 44% 72%, rgba(255, 196, 56, 0.18), transparent 9%),
+    radial-gradient(circle at 70% 44%, rgba(255, 196, 56, 0.14), transparent 8%);
+}
+
+.layer-pest {
+  background:
+    radial-gradient(circle at 56% 59%, rgba(255, 42, 42, 0.28), transparent 4%),
+    radial-gradient(circle at 67% 31%, rgba(255, 42, 42, 0.2), transparent 4%);
+}
+
+.layer-ownership {
+  background:
+    linear-gradient(88deg, transparent 0 28%, rgba(255, 255, 255, 0.18) 28.2% 28.7%, transparent 29%),
+    linear-gradient(90deg, transparent 0 62%, rgba(255, 255, 255, 0.14) 62.2% 62.7%, transparent 63%);
+}
+
+.layer-farmer {
+  background: radial-gradient(circle at 42% 48%, rgba(255, 255, 255, 0.13), transparent 3%);
+}
+
+.layer-cooperative {
+  background: radial-gradient(circle at 60% 64%, rgba(112, 235, 255, 0.16), transparent 4%);
+}
+
+.layer-uav {
+  background: radial-gradient(circle at 47% 41%, rgba(130, 255, 255, 0.18), transparent 16%);
+}
+
+.layer-satellite {
+  background: repeating-linear-gradient(112deg, rgba(117, 255, 246, 0.07) 0 1px, transparent 1px 28px);
+}
+
+.layer-ovobj::before {
+  content: "小桥上屯竹林";
+  position: absolute;
+  left: 61%;
+  top: 36%;
+  z-index: 8;
+  border: 2px solid rgba(255, 238, 89, 0.9);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(80, 60, 0, 0.5);
+  color: #fff8b0;
+  font-weight: 700;
+  box-shadow: 0 0 20px rgba(255, 238, 89, 0.5);
+}
+
+.layer-history {
+  background: rgba(15, 61, 60, 0.22);
+}
+
+.forest-block {
+  position: absolute;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  width: 170px;
+  min-height: 108px;
+  border: 3px solid currentColor;
+  padding: 8px;
+  background: rgba(4, 35, 20, 0.38);
+  color: #5cff6d;
+  text-align: center;
+  clip-path: polygon(14% 8%, 44% 0, 88% 16%, 100% 52%, 80% 92%, 38% 100%, 4% 76%, 0 32%);
+  box-shadow:
+    inset 0 0 22px rgba(255, 255, 255, 0.12),
+    0 0 0 3px rgba(239, 255, 255, 0.28),
+    0 0 18px currentColor,
+    0 0 42px rgba(0, 0, 0, 0.7);
+  filter: none;
+  pointer-events: auto;
+}
+
+.forest-block strong,
+.forest-block span {
+  display: block;
+}
+
+.forest-block strong {
+  font-size: 13px;
+}
+
+.forest-block span {
+  margin-top: 4px;
+  color: #f4fffe;
+  font-size: 12px;
+}
+
+.forest-block.medium {
+  color: #fff05a;
+}
+
+.forest-block.warning {
+  color: #ff9d30;
+}
+
+.forest-block.danger {
+  color: #ff4949;
+}
+
+.info-card {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  z-index: 24;
+  width: min(740px, 58vw);
+  transform: translate(-50%, -50%);
+  border-color: rgba(151, 255, 250, 0.7);
+  background: rgba(12, 145, 154, 0.5);
+}
+
+.business-card {
+  position: absolute;
+  left: 50%;
+  bottom: 126px;
+  z-index: 24;
+  width: min(860px, 70vw);
+  border-color: rgba(151, 255, 250, 0.7);
+  background: rgba(12, 145, 154, 0.5);
+  transform: translateX(-50%);
+}
+
+.business-card.hidden {
+  display: none;
+}
+
+.business-card header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid rgba(220, 255, 253, 0.46);
+  padding: 14px 48px 12px 18px;
+  text-align: center;
+}
+
+.business-card h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.business-card header span {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.business-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.business-metrics article {
+  border: 1px solid rgba(220, 255, 253, 0.28);
+  padding: 10px;
+  background: rgba(0, 38, 44, 0.22);
+  text-align: center;
+}
+
+.business-metrics span {
+  display: block;
+  color: #d8fffb;
+  font-size: 13px;
+}
+
+.business-metrics strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+}
+
+.business-search {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(220, 255, 253, 0.28);
+  padding: 10px 12px;
+  background: rgba(0, 38, 44, 0.22);
+}
+
+.business-search span {
+  color: #d8fffb;
+  font-size: 14px;
+}
+
+.business-search input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(137, 255, 250, 0.32);
+  outline: 0;
+  background: rgba(3, 35, 42, 0.68);
+  color: #efffff;
+  padding: 9px 12px;
+  font: inherit;
+}
+
+.business-search input::placeholder {
+  color: rgba(224, 255, 253, 0.58);
+}
+
+.business-table-wrap {
+  overflow-x: auto;
+  padding: 0 12px 12px;
+}
+
+.business-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 620px;
+}
+
+.business-table-wrap th,
+.business-table-wrap td {
+  border: 1px solid rgba(220, 255, 253, 0.28);
+  padding: 9px 12px;
+  text-align: center;
+}
+
+.business-table-wrap th {
+  color: #d8fffb;
+  background: rgba(0, 38, 44, 0.26);
+}
+
+.business-table-wrap tbody tr[data-row-index] {
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.business-table-wrap tbody tr[data-row-index]:hover {
+  background: rgba(111, 253, 245, 0.16);
+  color: #efffff;
+}
+
+.info-card.hidden {
+  display: none;
+}
+
+.close-card {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 28px;
+}
+
+.info-card header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid rgba(220, 255, 253, 0.46);
+  padding: 14px 48px 12px 18px;
+  text-align: center;
+}
+
+.info-card h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.info-card header span {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr 1.4fr;
+}
+
+.info-grid span,
+.info-grid b {
+  min-height: 38px;
+  border-right: 1px solid rgba(220, 255, 253, 0.3);
+  border-bottom: 1px solid rgba(220, 255, 253, 0.26);
+  padding: 9px 10px;
+  font-size: 14px;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(220, 255, 253, 0.28);
+}
+
+.tabs button {
+  min-height: 36px;
+  border: 0;
+  border-right: 1px solid rgba(220, 255, 253, 0.24);
+  padding: 0 14px;
+  background: rgba(0, 38, 44, 0.32);
+  color: #fff;
+}
+
+.tabs .active {
+  background: rgba(106, 237, 231, 0.34);
+}
+
+.image-panel {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+  padding: 12px;
+}
+
+.image-panel .preview {
+  display: grid;
+  place-items: center;
+  min-height: 82px;
+  border: 1px solid rgba(220, 255, 253, 0.32);
+  background:
+    linear-gradient(135deg, rgba(99, 255, 143, 0.3), rgba(70, 217, 255, 0.22)),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 10px);
+  font-size: 13px;
+}
+
+.image-panel strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.image-panel p {
+  margin: 0;
+  color: #ddfffb;
+  line-height: 1.7;
+}
+
+.bottom-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 42px;
+  z-index: 18;
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  border: 1px solid rgba(137, 255, 250, 0.2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: rgba(4, 62, 70, 0.24);
+  box-shadow: inset 0 0 24px rgba(130, 255, 248, 0.08), 0 14px 40px rgba(0, 0, 0, 0.18);
+  transform: translateX(-50%);
+}
+
+.bottom-dock button {
+  display: grid;
+  gap: 5px;
+  place-items: center;
+  min-width: 78px;
+  border: 1px solid rgba(137, 255, 250, 0.16);
+  border-radius: 6px;
+  padding: 7px 8px 6px;
+  background: rgba(0, 52, 60, 0.22);
+  color: #e4fffc;
+  font-weight: 700;
+}
+
+.bottom-dock span {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 44px;
+  clip-path: polygon(16% 0, 84% 0, 100% 50%, 84% 100%, 16% 100%, 0 50%);
+  background: rgba(65, 225, 239, 0.48);
+  box-shadow: 0 0 18px rgba(95, 255, 247, 0.28);
+}
+
+.bottom-dock .active span {
+  background: rgba(238, 220, 72, 0.7);
+}
+
+.bottom-dock button.active {
+  border-color: rgba(255, 238, 89, 0.5);
+  background: rgba(125, 113, 20, 0.28);
+}
+
+.zoom {
+  position: absolute;
+  right: 34px;
+  bottom: 145px;
+  z-index: 20;
+  display: grid;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.zoom button,
+.zoom b {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-height: 38px;
+  border: 0;
+  border-bottom: 1px solid rgba(140, 255, 250, 0.2);
+  background: transparent;
+  color: #fff;
+}
+
+.zoom b {
+  font-size: 12px;
+}
+
+.basemap-switch {
+  position: absolute;
+  right: 34px;
+  bottom: 292px;
+  z-index: 20;
+  display: grid;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.basemap-switch button {
+  min-width: 58px;
+  min-height: 34px;
+  border: 0;
+  border-bottom: 1px solid rgba(140, 255, 250, 0.2);
+  background: transparent;
+  color: #fff;
+}
+
+.basemap-switch button.active {
+  background: rgba(106, 237, 231, 0.34);
+}
+
+@media (max-width: 1100px) {
+  .left-tools {
+    grid-template-columns: 1fr;
+    width: 260px;
+  }
+
+  .tool-menu {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .tool-menu button {
+    min-height: 42px;
+  }
+
+  .info-card {
+    width: min(720px, 80vw);
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: hidden;
+    background:
+      linear-gradient(180deg, rgba(0, 20, 22, 0.56), transparent 42%, rgba(0, 20, 22, 0.86)),
+      #031613;
+  }
+
+  .screen::before {
+    background:
+      radial-gradient(circle at 50% 48%, transparent 0 34%, rgba(0, 18, 18, 0.5) 76%),
+      repeating-linear-gradient(90deg, rgba(111, 253, 245, 0.04) 0 1px, transparent 1px 88px);
+  }
+
+  .screen-title {
+    top: 10px;
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    gap: 8px;
+    width: calc(100vw - 24px);
+  }
+
+  .screen-title h1 {
+    min-height: 42px;
+    padding-top: 8px;
+    font-size: 19px;
+    white-space: nowrap;
+  }
+
+  .left-tools {
+    top: 64px;
+    left: 10px;
+    right: 10px;
+    z-index: 26;
+    width: auto;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .tool-menu {
+    grid-template-columns: repeat(4, minmax(72px, 1fr));
+    gap: 6px;
+    padding: 7px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tool-menu::-webkit-scrollbar,
+  .bottom-dock::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tool-menu button {
+    min-height: 42px;
+    padding: 4px 3px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .tool-menu i {
+    margin-bottom: 1px;
+  }
+
+  .layer-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 120px;
+    overflow: auto;
+    gap: 6px 8px;
+  }
+
+  .layer-card {
+    padding: 9px 10px;
+  }
+
+  .layer-list label {
+    min-height: 22px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .legend {
+    left: 10px;
+    bottom: 94px;
+    width: auto;
+    max-width: calc(100vw - 20px);
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .legend strong {
+    font-size: 12px;
+  }
+
+  .legend span {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .legend i {
+    width: 20px;
+  }
+
+  .webgis-ready .webgis-map {
+    opacity: 0.86;
+  }
+
+  .forest-block {
+    width: 118px;
+    min-height: 78px;
+    border-width: 2px;
+    padding: 6px;
+  }
+
+  .forest-block strong {
+    font-size: 11px;
+  }
+
+  .forest-block span {
+    font-size: 10px;
+  }
+
+  .layer-ovobj::before {
+    left: 55%;
+    top: 42%;
+    padding: 6px 9px;
+    font-size: 12px;
+  }
+
+  .info-card,
+  .business-card {
+    left: 8px;
+    right: 8px;
+    bottom: 84px;
+    top: auto;
+    width: auto;
+    max-height: min(64vh, 560px);
+    overflow: auto;
+    transform: none;
+    border-radius: 8px 8px 0 0;
+    background: rgba(8, 105, 116, 0.78);
+  }
+
+  .info-card header,
+  .business-card header {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 12px 46px 10px 14px;
+    text-align: left;
+  }
+
+  .info-card h2,
+  .business-card h2 {
+    font-size: 17px;
+  }
+
+  .info-card header span,
+  .business-card header span {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .business-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    padding: 9px;
+  }
+
+  .business-metrics article {
+    padding: 8px 5px;
+  }
+
+  .business-metrics span {
+    font-size: 11px;
+  }
+
+  .business-metrics strong {
+    font-size: 16px;
+  }
+
+  .business-search {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .business-search input {
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .business-table-wrap {
+    padding: 0 9px 10px;
+  }
+
+  .business-table-wrap table {
+    min-width: 540px;
+  }
+
+  .business-table-wrap th,
+  .business-table-wrap td {
+    padding: 8px 9px;
+    font-size: 12px;
+  }
+
+  .info-grid {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .info-grid span,
+  .info-grid b {
+    min-height: 34px;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tabs button {
+    min-width: max-content;
+    min-height: 34px;
+    padding: 0 11px;
+    font-size: 12px;
+  }
+
+  .image-panel {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .image-panel .preview {
+    min-height: 64px;
+  }
+
+  .image-panel p {
+    font-size: 12px;
+  }
+
+  .bottom-dock {
+    left: 0;
+    right: 0;
+    bottom: 10px;
+    justify-content: flex-start;
+    gap: 12px;
+    overflow-x: auto;
+    border-width: 0;
+    border-radius: 0;
+    padding: 0 10px 4px;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .bottom-dock button {
+    min-width: 62px;
+    font-size: 12px;
+    background: rgba(0, 52, 60, 0.3);
+  }
+
+  .bottom-dock span {
+    width: 46px;
+    height: 36px;
+  }
+
+  .zoom {
+    right: 10px;
+    bottom: 164px;
+    grid-template-columns: 38px;
+  }
+
+  .zoom button,
+  .zoom b {
+    width: 38px;
+    min-height: 34px;
+  }
+
+  .basemap-switch {
+    right: 10px;
+    bottom: 296px;
+  }
+
+  .basemap-switch button {
+    min-width: 48px;
+    min-height: 32px;
+    font-size: 12px;
+  }
+}

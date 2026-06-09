@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>松树小班数据预览</title>
+    <link rel="stylesheet" href="assets/ol/ol.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        height: 100vh;
+        overflow: hidden;
+        background: #071411;
+        color: #efffff;
+        font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      }
+
+      #map {
+        position: fixed;
+        inset: 0;
+        background: #071411;
+      }
+
+      .panel {
+        position: fixed;
+        left: 18px;
+        top: 18px;
+        width: min(360px, calc(100vw - 36px));
+        z-index: 5;
+        padding: 14px;
+        background: rgba(4, 35, 36, 0.86);
+        border: 1px solid rgba(111, 253, 245, 0.28);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .stats span {
+        padding: 8px;
+        background: rgba(111, 253, 245, 0.1);
+        border: 1px solid rgba(111, 253, 245, 0.18);
+        font-size: 12px;
+      }
+
+      .stats b {
+        display: block;
+        margin-top: 3px;
+        color: #ffee59;
+        font-size: 15px;
+      }
+
+      label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 7px 0;
+        font-size: 14px;
+      }
+
+      input {
+        accent-color: #6ffdf5;
+      }
+
+      .hint {
+        margin-top: 10px;
+        color: rgba(239, 255, 255, 0.7);
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      .popup {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        width: min(380px, calc(100vw - 36px));
+        z-index: 5;
+        padding: 14px;
+        background: rgba(3, 28, 31, 0.9);
+        border: 1px solid rgba(255, 238, 89, 0.28);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+      }
+
+      .popup.hidden {
+        display: none;
+      }
+
+      .popup h2 {
+        margin: 0 0 10px;
+        font-size: 17px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 88px 1fr;
+        gap: 7px 10px;
+        font-size: 13px;
+      }
+
+      .grid span {
+        color: rgba(239, 255, 255, 0.66);
+      }
+
+      .grid b {
+        color: #fff;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <section class="panel">
+      <h1>松树小班数据预览</h1>
+      <div class="stats" id="stats"></div>
+      <label><input type="checkbox" data-layer="国外松种" checked /> 国外松</label>
+      <label><input type="checkbox" data-layer="湿地松小班" checked /> 湿地松</label>
+      <label><input type="checkbox" data-layer="马尾松小班" checked /> 马尾松</label>
+      <div class="hint">数据已从 CGCS2000 高斯克吕格 37 带转换为经纬度。点击小班面可查看林班、小班、权属和坐落单位。</div>
+    </section>
+
+    <section class="popup hidden" id="popup">
+      <h2 id="popupTitle">小班信息</h2>
+      <div class="grid" id="popupGrid"></div>
+    </section>
+
+    <script src="assets/ol/ol.js"></script>
+    <script src="converted-data/songshu-small-classes/songshu-layers.geojson.js"></script>
+    <script>
+      const palette = {
+        "国外松种": { stroke: "rgba(255, 202, 82, 0.9)", fill: "rgba(255, 202, 82, 0.22)" },
+        "湿地松小班": { stroke: "rgba(75, 210, 255, 0.9)", fill: "rgba(75, 210, 255, 0.2)" },
+        "马尾松小班": { stroke: "rgba(98, 255, 152, 0.86)", fill: "rgba(98, 255, 152, 0.18)" },
+      };
+
+      const format = new ol.format.GeoJSON();
+      const layers = {};
+
+      function styleFor(layerName) {
+        const colors = palette[layerName];
+        return new ol.style.Style({
+          stroke: new ol.style.Stroke({ color: colors.stroke, width: 1.2 }),
+          fill: new ol.style.Fill({ color: colors.fill }),
+        });
+      }
+
+      Object.entries(window.SONGSHU_LAYERS).forEach(([layerName, geojson]) => {
+        const features = format.readFeatures(geojson, {
+          dataProjection: "EPSG:4326",
+          featureProjection: "EPSG:3857",
+        });
+        layers[layerName] = new ol.layer.Vector({
+          source: new ol.source.Vector({ features }),
+          style: styleFor(layerName),
+        });
+      });
+
+      const map = new ol.Map({
+        target: "map",
+        controls: [],
+        layers: [
+          new ol.layer.Vector({
+            source: new ol.source.Vector(),
+          }),
+          layers["国外松种"],
+          layers["湿地松小班"],
+          layers["马尾松小班"],
+        ],
+        view: new ol.View({
+          center: ol.proj.fromLonLat([111.56, 30.08]),
+          zoom: 10,
+          minZoom: 8,
+          maxZoom: 16,
+        }),
+      });
+
+      const extent = ol.extent.createEmpty();
+      Object.values(layers).forEach((layer) => ol.extent.extend(extent, layer.getSource().getExtent()));
+      map.getView().fit(extent, { padding: [60, 60, 60, 390], maxZoom: 12 });
+
+      document.querySelector("#stats").innerHTML = Object.entries(window.SONGSHU_LAYERS)
+        .map(([name, geojson]) => `<span>${geojson.features[0]?.properties.speciesName || name}<b>${geojson.features.length}</b></span>`)
+        .join("");
+
+      document.querySelectorAll("[data-layer]").forEach((input) => {
+        input.addEventListener("change", () => {
+          layers[input.dataset.layer].setVisible(input.checked);
+        });
+      });
+
+      const popup = document.querySelector("#popup");
+      const popupTitle = document.querySelector("#popupTitle");
+      const popupGrid = document.querySelector("#popupGrid");
+
+      map.on("singleclick", (event) => {
+        const feature = map.forEachFeatureAtPixel(event.pixel, (item) => item);
+        if (!feature) {
+          popup.classList.add("hidden");
+          return;
+        }
+        const props = feature.getProperties();
+        popupTitle.textContent = props.speciesName || props.layerName || "小班信息";
+        popupGrid.innerHTML = [
+          ["林班", props.LIN_BAN],
+          ["小班", props.XIAO_BAN],
+          ["权属单位", props.QSDWMC],
+          ["坐落单位", props.ZLDWMC],
+          ["优势树种", props.YOU_SHI_SZ],
+        ]
+          .map(([label, value]) => `<span>${label}</span><b>${value || "-"}</b>`)
+          .join("");
+        popup.classList.remove("hidden");
+      });
+
+      map.on("pointermove", (event) => {
+        map.getTargetElement().style.cursor = map.hasFeatureAtPixel(event.pixel) ? "pointer" : "";
+      });
+    </script>
+  </body>
+</html>

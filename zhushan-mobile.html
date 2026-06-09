@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>智慧竹山手机端</title>
+    <link rel="stylesheet" href="assets/ol/ol.css" />
+    <link rel="stylesheet" href="zhushan-mobile.css" />
+  </head>
+  <body>
+    <main class="mobile-screen">
+      <section class="mobile-map" aria-label="智慧竹山移动端地图">
+        <div class="mobile-gis-map" id="mobileGisMap"></div>
+        <div class="map-glow"></div>
+      </section>
+
+      <header class="mobile-header">
+        <div>
+          <span>南平市 · 竹山数据</span>
+          <h1>智慧竹山</h1>
+        </div>
+        <div class="header-actions">
+          <button id="layerToggle">图层</button>
+          <button id="navToggle" aria-expanded="true">菜单</button>
+        </div>
+      </header>
+
+      <section class="mobile-stats" aria-label="核心数据">
+        <article><span>竹林面积</span><strong>10.32 万亩</strong></article>
+        <article><span>林班数量</span><strong>486 个</strong></article>
+        <article><span>健康指数</span><strong>86%</strong></article>
+      </section>
+
+      <section class="search-bar">
+        <input id="mobileSearch" type="search" placeholder="搜索林班、村镇、图层" autocomplete="off" />
+        <button id="searchClear">清空</button>
+      </section>
+      <section class="search-results" id="searchResults" aria-label="搜索结果"></section>
+
+      <aside class="layer-drawer" id="layerDrawer" aria-label="图层管理">
+        <div class="drawer-head">
+          <strong>图层管理</strong>
+          <button id="closeLayer">关闭</button>
+        </div>
+        <div class="layer-grid">
+          <label><input type="checkbox" data-mobile-layer="points" checked /> 竹林林班</label>
+          <label><input type="checkbox" checked /> 质量等级</label>
+          <label><input type="checkbox" checked /> 土壤墒情</label>
+          <label><input type="checkbox" checked /> 长势监测</label>
+          <label><input type="checkbox" checked /> 碳汇样方</label>
+          <label><input type="checkbox" data-mobile-layer="imagery" /> 卫星影像</label>
+          <label><input type="checkbox" data-mobile-layer="boundary" checked /> 黄坑边界</label>
+          <label><input type="checkbox" data-mobile-layer="kangVillage" checked /> 康内部分村</label>
+          <label><input type="checkbox" /> 历史影像</label>
+        </div>
+      </aside>
+
+      <section class="plot-sheet" id="plotSheet">
+        <div class="sheet-handle"></div>
+        <div class="sheet-title">
+          <div>
+            <span id="plotCode">BP-001</span>
+            <h2 id="plotName">北坡示范林班</h2>
+          </div>
+          <div class="sheet-actions">
+            <b id="plotLevel">优质</b>
+            <button id="sheetToggle" aria-expanded="true">收起</button>
+          </div>
+        </div>
+        <div class="sheet-body" id="sheetBody">
+          <div class="sheet-grid" id="plotFields"></div>
+          <div class="mobile-tabs">
+            <button class="active" data-tab="uav">航拍</button>
+            <button data-tab="satellite">卫星</button>
+            <button data-tab="carbon">碳汇</button>
+          </div>
+          <p id="tabText">无人机航拍用于查看竹冠覆盖、作业道路、林班边界和采伐窗口。</p>
+        </div>
+      </section>
+
+      <nav class="mobile-nav" aria-label="业务导航">
+        <button class="active" data-nav="竹农"><i>♧</i><span>竹农</span></button>
+        <button data-nav="合作社"><i>▤</i><span>合作社</span></button>
+        <button data-nav="竹企"><i>◉</i><span>竹企</span></button>
+        <button data-nav="植保"><i>✚</i><span>植保</span></button>
+        <button data-nav="碳汇"><i>◈</i><span>碳汇</span></button>
+      </nav>
+    </main>
+
+    <script src="assets/ol/ol.js"></script>
+    <script src="offline-maps/fujian-basemap.geojson.js"></script>
+    <script src="assets/huang-keng-bamboo-geojson.js"></script>
+    <script src="assets/kang-village-geojson.js"></script>
+    <script src="zhushan-mobile.js"></script>
+  </body>
+</html>

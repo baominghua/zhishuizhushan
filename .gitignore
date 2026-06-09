@@ -1,0 +1,30 @@
+# Dependency and tool caches
+node_modules/
+.npm-cache/
+.android-tools/
+__pycache__/
+*.pyc
+
+# Android build outputs
+android-zhushan-app/.gradle/
+android-zhushan-app/**/build/
+
+# Generated deployment folders
+deploy/
+nas-release/
+
+# Generated release binaries and archives
+*.apk
+*.zip
+
+# Large raw/source geodata that can be regenerated from scripts
+offline-maps/*.pbf
+converted-data/
+
+# Local browser policy backups
+browser-config-applied-*.json
+browser-policy-backup-*.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

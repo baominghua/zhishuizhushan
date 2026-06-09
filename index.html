@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>智慧竹山管理平台</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M16 3c4.8 4.1 7.2 8.4 7.2 13 0 6-3.4 10.4-7.2 13-3.8-2.6-7.2-7-7.2-13C8.8 11.4 11.2 7.1 16 3Z" />
+              <path d="M16 8v18M12.2 14.2H16M16 18.4h4" />
+            </svg>
+          </div>
+          <div>
+            <strong>智慧竹山</strong>
+            <span>管理平台</span>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item" data-view="overview">
+            <span class="icon" aria-hidden="true">⌂</span>
+            <span>综合总览</span>
+          </button>
+          <button class="nav-item active" data-view="dispatch">
+            <span class="icon" aria-hidden="true">◎</span>
+            <span>智慧调度</span>
+          </button>
+          <button class="nav-item" data-view="assets">
+            <span class="icon" aria-hidden="true">▦</span>
+            <span>竹林档案</span>
+          </button>
+          <button class="nav-item" data-view="iot">
+            <span class="icon" aria-hidden="true">◌</span>
+            <span>物联监测</span>
+          </button>
+          <button class="nav-item" data-view="patrol">
+            <span class="icon" aria-hidden="true">✓</span>
+            <span>巡护工单</span>
+          </button>
+          <button class="nav-item" data-view="carbon">
+            <span class="icon" aria-hidden="true">◈</span>
+            <span>碳汇经营</span>
+          </button>
+        </nav>
+
+        <section class="sidebar-panel" aria-label="今日调度">
+          <span>今日调度</span>
+          <strong>8 个任务待处理</strong>
+          <p>优先处理北坡湿度异常与 3 号虫情监测点复核。</p>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Zhushan Digital Operations</p>
+            <h1>智慧竹山管理平台</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <input id="globalSearch" type="search" placeholder="搜索地块、设备、工单" />
+            </label>
+            <button class="ghost-button" id="refreshBtn">刷新数据</button>
+            <button class="primary-button" id="newTaskBtn">新增巡护</button>
+          </div>
+        </header>
+
+        <section class="control-strip" aria-label="筛选条件">
+          <label>
+            区域
+            <select id="regionFilter">
+              <option value="all">全部区域</option>
+              <option value="north">北坡示范区</option>
+              <option value="east">东岭管护区</option>
+              <option value="south">南谷生态区</option>
+              <option value="west">西坳修复区</option>
+            </select>
+          </label>
+          <label>
+            时段
+            <select id="rangeFilter">
+              <option>今日</option>
+              <option>近 7 天</option>
+              <option>近 30 天</option>
+              <option>本季度</option>
+            </select>
+          </label>
+          <label class="toggle-row">
+            <input id="riskOnly" type="checkbox" />
+            只看风险项
+          </label>
+        </section>
+
+        <section class="view" id="overview" aria-label="综合总览">
+          <div class="metric-grid" id="metricGrid"></div>
+
+          <div class="dashboard-grid">
+            <section class="map-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Digital Twin</p>
+                  <h2>竹山态势一张图</h2>
+                </div>
+                <span class="status-pill good">在线率 97.8%</span>
+              </div>
+              <div class="terrain-map" id="terrainMap" aria-label="竹山态势图"></div>
+              <div class="map-legend">
+                <span><i class="legend-dot healthy"></i>健康</span>
+                <span><i class="legend-dot warning"></i>关注</span>
+                <span><i class="legend-dot danger"></i>处置</span>
+              </div>
+            </section>
+
+            <section class="operations-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Operations</p>
+                  <h2>实时运营</h2>
+                </div>
+                <button class="text-button" data-view-target="patrol">查看工单</button>
+              </div>
+              <div class="timeline" id="eventTimeline"></div>
+            </section>
+          </div>
+
+          <div class="split-grid">
+            <section>
+              <div class="section-heading compact">
+                <h2>生长环境趋势</h2>
+                <span>传感器均值</span>
+              </div>
+              <div class="chart" id="growthChart"></div>
+            </section>
+            <section>
+              <div class="section-heading compact">
+                <h2>预警处置</h2>
+                <span id="riskCountLabel">0 项</span>
+              </div>
+              <div class="risk-list" id="riskList"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view active" id="dispatch" aria-label="智慧调度中心">
+          <div class="bigscreen-title">
+            <span></span>
+            <h2>智慧竹山大数据</h2>
+            <span></span>
+          </div>
+
+          <div class="dispatch-layout bigscreen-layout">
+            <aside class="layer-panel" aria-label="地图图层">
+              <button class="panel-collapse" id="toggleLayerPanel" aria-label="收起图层管理">‹</button>
+              <div class="command-menu">
+                <button class="active"><span>▣</span> 图层管理</button>
+                <button><span>⌕</span> 竹山搜索</button>
+                <button><span>◈</span> 碳汇服务图</button>
+                <button><span>◌</span> 卫星轨道图</button>
+              </div>
+              <div class="layer-panel-head">
+                <strong>图层管理</strong>
+                <span id="activeLayerCount">0/0 已开启</span>
+              </div>
+              <div class="layer-list" id="layerList"></div>
+            </aside>
+
+            <section class="dispatch-map-stage" aria-label="智慧调度空间底图">
+              <div class="dispatch-floating-toolbar">
+                <div>
+                  <strong>福建南平三维空间底图</strong>
+                  <span>图层数据直接叠加于数字孪生底图</span>
+                </div>
+                <div class="map-mode-tabs" id="mapModeTabs">
+                  <button class="active" data-map-mode="standard">标准</button>
+                  <button data-map-mode="terrain">地形</button>
+                  <button data-map-mode="satellite">影像</button>
+                </div>
+              </div>
+
+              <button class="info-open-button hidden" id="openInfoCard">林班信息</button>
+
+              <div class="map-zoom-controls" aria-label="地图缩放">
+                <button id="zoomInBtn" aria-label="放大地图">+</button>
+                <span id="zoomLabel">100%</span>
+                <button id="zoomOutBtn" aria-label="缩小地图">−</button>
+              </div>
+
+              <div class="dispatch-map standard" id="dispatchMap" aria-label="智慧调度地图叠加层">
+                <div class="map-layer layer-terrain" data-layer="terrain"></div>
+                <div class="map-layer layer-landform" data-layer="landform"></div>
+                <div class="map-layer layer-water" data-layer="water"></div>
+                <div class="map-layer layer-roads" data-layer="roads"></div>
+                <div class="map-layer layer-uav" data-layer="uav"></div>
+                <div class="map-layer layer-satellite" data-layer="satellite"></div>
+                <div class="map-layer layer-orthophoto" data-layer="orthophoto"></div>
+                <div class="map-layer layer-slope" data-layer="slope"></div>
+                <div class="map-layer layer-ownership" data-layer="ownership"></div>
+                <div class="map-layer layer-buildings" data-layer="buildings"></div>
+                <div class="map-layer layer-plots" data-layer="plots" id="dispatchPlots"></div>
+                <div class="map-layer layer-devices" data-layer="devices" id="dispatchDevices"></div>
+                <div class="map-layer layer-risks" data-layer="risks" id="dispatchRisks"></div>
+              </div>
+
+              <div class="bamboo-info-card hidden" id="bambooInfoCard">
+                <div class="info-card-head">
+                  <strong id="infoCardTitle">竹林电子信息卡</strong>
+                  <span id="infoCardSubTitle">竹林分等定级因子表</span>
+                  <button id="closeInfoCard" aria-label="关闭信息卡">×</button>
+                </div>
+                <div class="info-table-grid" id="infoTableGrid">
+                  <span>竹林编号</span><b>NP-ZS-350724-009879</b><span>经营方式</span><b>合作经营</b>
+                  <span>管护主体</span><b>竹山合作社</b><span>联系方式</span><b>138****6996</b>
+                  <span>所属村镇</span><b>南平市示范片区</b><span>面积(亩)</span><b>75.39</b>
+                  <span>竹林品种</span><b>毛竹、本山竹</b><span>种植时间</span><b>2003年</b>
+                  <span>竹林等级</span><b>4级</b><span>适宜性</span><b>适宜</b>
+                </div>
+                <div class="policy-row">
+                  <span>政策建议</span>
+                  <b>退化竹林改造</b>
+                  <b>竹林提升</b>
+                  <b>竹林保护</b>
+                </div>
+                <div class="imagery-tabs" id="imageryTabs"></div>
+                <div class="imagery-panel" id="imageryPanel"></div>
+              </div>
+
+              <nav class="business-dock" aria-label="业务入口">
+                <button class="active"><span>♧</span>竹农</button>
+                <button><span>▤</span>合作社</button>
+                <button><span>◉</span>竹企</button>
+                <button><span>✚</span>植保</button>
+                <button><span>▥</span>农资</button>
+                <button><span>§</span>政策法规</button>
+              </nav>
+
+              <section class="bottom-data-panel" aria-label="竹山业务数据">
+                <div class="tab-row">
+                  <button class="active">详细信息</button>
+                  <button>基地竹农农药、肥料计划</button>
+                  <button>农资购买</button>
+                  <button>鲜笋采摘</button>
+                  <button>竹材进仓单</button>
+                  <button>检验记录</button>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>序号</th>
+                      <th>采摘日期</th>
+                      <th>地块编号</th>
+                      <th>竹材品种</th>
+                      <th>预计产量</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>1</td><td>2026-08-16</td><td>北坡H</td><td>毛竹</td><td>18.6 吨</td><td>待采收</td></tr>
+                    <tr><td>2</td><td>2026-08-17</td><td>东岭A</td><td>雷竹</td><td>9.2 吨</td><td>巡护中</td></tr>
+                    <tr><td>3</td><td>2026-08-18</td><td>南谷C</td><td>苦竹</td><td>12.4 吨</td><td>已入库</td></tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <div class="dispatch-map-footer floating">
+                <span>当前比例尺 1:5000</span>
+                <span>坐标系 CGCS2000</span>
+                <span>图层更新 10:18</span>
+              </div>
+            </section>
+
+            <aside class="info-panel" aria-label="空间对象信息">
+              <div class="layer-panel-head">
+                <strong>对象信息</strong>
+                <span id="selectedObjectType">未选择</span>
+              </div>
+              <div class="object-card" id="selectedObjectCard"></div>
+              <div class="dispatch-stats" id="dispatchStats"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="assets" aria-label="竹林档案">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">Resource Ledger</p>
+              <h2>竹林资源档案</h2>
+            </div>
+            <button class="primary-button">导入地块</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>地块</th>
+                  <th>面积</th>
+                  <th>竹种</th>
+                  <th>健康度</th>
+                  <th>采伐窗口</th>
+                  <th>责任人</th>
+                </tr>
+              </thead>
+              <tbody id="assetRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="iot" aria-label="物联监测">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">IoT Monitoring</p>
+              <h2>物联设备监测</h2>
+            </div>
+            <button class="ghost-button">设备巡检</button>
+          </div>
+          <div class="device-grid" id="deviceGrid"></div>
+        </section>
+
+        <section class="view" id="patrol" aria-label="巡护工单">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">Patrol Workflow</p>
+              <h2>巡护与工单</h2>
+            </div>
+            <button class="primary-button">派发任务</button>
+          </div>
+          <div class="kanban" id="kanbanBoard"></div>
+        </section>
+
+        <section class="view" id="carbon" aria-label="碳汇经营">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">Carbon Assets</p>
+              <h2>碳汇经营看板</h2>
+            </div>
+            <button class="ghost-button">生成月报</button>
+          </div>
+          <div class="carbon-layout">
+            <section class="carbon-hero">
+              <p>年度预计固碳量</p>
+              <strong id="carbonTotal">18,420 tCO₂e</strong>
+              <span>较上年提升 12.6%</span>
+            </section>
+            <div class="carbon-breakdown" id="carbonBreakdown"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="script.js"></script>
+  </body>
+</html>
