@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>卫星图传管理系统</title>
+    <link rel="stylesheet" href="assets/ol/ol.css" />
+    <link rel="stylesheet" href="satellite-manager.css?v=20260610-tdt2" />
+  </head>
+  <body>
+    <main class="rs-shell">
+      <aside class="rs-sidebar">
+        <header class="rs-brand">
+          <span>GDAL · COG · TiTiler · OpenLayers</span>
+          <h1>卫星图传管理系统</h1>
+        </header>
+
+        <section class="rs-panel">
+          <div class="panel-title">
+            <h2>影像上传入库</h2>
+            <small id="serverStatus">服务未连接</small>
+          </div>
+          <form id="uploadForm" class="upload-form">
+            <div class="api-row">
+              <label>
+                <span>瓦片服务地址</span>
+                <input id="apiBase" type="url" value="http://127.0.0.1:8010" />
+              </label>
+              <button type="button" id="connectApi">连接</button>
+            </div>
+
+            <div class="basemap-row">
+              <label>
+                <span>天地图 TK</span>
+                <input id="tiandituTk" type="password" placeholder="填写天地图控制台申请的 tk" autocomplete="off" />
+              </label>
+              <label>
+                <span>底图类型</span>
+                <select id="tiandituType">
+                  <option value="img">影像</option>
+                  <option value="vec">矢量</option>
+                  <option value="ter">地形</option>
+                </select>
+              </label>
+              <button type="button" id="applyTianditu">启用</button>
+              <button type="button" id="clearBasemap">关闭</button>
+            </div>
+
+            <label class="file-drop" id="dropZone">
+              <input id="imageFile" type="file" accept=".tif,.tiff,.geotiff,image/tiff,image/png,image/jpeg,image/webp" />
+              <strong>选择或拖入卫星遥感图</strong>
+              <span id="fileHint">GeoTIFF/TIFF 走 COG 入库；PNG/JPG/WebP 可本地直显</span>
+            </label>
+
+            <label>
+              <span>影像名称</span>
+              <input id="sceneName" type="text" placeholder="例如：竹山 2026 春季正射影像" />
+            </label>
+
+            <div class="form-grid">
+              <label>
+                <span>卫星/平台</span>
+                <input id="satellite" type="text" placeholder="GF-2 / Sentinel-2 / UAV" />
+              </label>
+              <label>
+                <span>传感器</span>
+                <input id="sensor" type="text" placeholder="PMS / MSI / RGB" />
+              </label>
+              <label>
+                <span>拍摄日期</span>
+                <input id="capturedAt" type="date" />
+              </label>
+              <label>
+                <span>分辨率</span>
+                <input id="resolution" type="text" placeholder="0.5m / 10m / 5cm" />
+              </label>
+            </div>
+
+            <label>
+              <span>覆盖范围 W,S,E,N</span>
+              <input id="bounds" type="text" value="117.55,26.05,118.85,27.20" />
+            </label>
+
+            <div class="actions">
+              <button type="submit">上传入库</button>
+              <button type="button" id="exportCatalog">导出目录</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="rs-panel list-panel">
+          <div class="panel-title">
+            <h2>影像目录</h2>
+            <small id="sceneCount">0 景</small>
+          </div>
+          <div class="catalog-search">
+            <input id="catalogFilter" type="search" placeholder="搜索名称、卫星、传感器..." />
+          </div>
+          <div class="scene-list" id="sceneList"></div>
+        </section>
+      </aside>
+
+      <section class="rs-map-stage">
+        <div class="map-toolbar">
+          <div>
+            <strong>遥感图层视图</strong>
+            <span id="statusText">SDK 初始化中</span>
+          </div>
+          <div class="toolbar-actions">
+            <button id="syncServer" type="button">同步 COG</button>
+            <button id="fitAll" type="button">全域</button>
+            <button id="clearLocal" type="button">清空本地库</button>
+          </div>
+        </div>
+        <div id="rsMap" class="rs-map"></div>
+        <section class="detail-card" id="detailCard">
+          <span>当前影像</span>
+          <strong>未选择</strong>
+          <p>上传影像后，可在目录中控制显示、透明度和定位。</p>
+        </section>
+      </section>
+    </main>
+
+    <script src="assets/ol/ol.js"></script>
+    <script src="satellite-config.local.js?v=20260610-tdt2"></script>
+    <script src="sdk/remote-sensing-sdk.js?v=20260610-tdt2"></script>
+    <script src="satellite-manager.js?v=20260610-tdt2"></script>
+  </body>
+</html>

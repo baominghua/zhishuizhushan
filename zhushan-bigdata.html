@@ -36,6 +36,7 @@
             <label><input type="checkbox" data-layer="cooperative" checked /> 合作社</label>
             <label><input type="checkbox" data-layer="uav" checked /> 无人机航拍</label>
             <label><input type="checkbox" data-layer="satellite" checked /> 卫星底图</label>
+            <label><input type="checkbox" data-layer="remoteSensing" checked /> 遥感SDK影像</label>
             <label><input type="checkbox" data-layer="huangkeng" checked /> 麻沙黄坑边界</label>
             <label><input type="checkbox" data-layer="kangVillage" checked /> 康内部分村</label>
             <label><input type="checkbox" data-layer="ovobj" checked /> 导入点位</label>
@@ -113,16 +114,18 @@
       </div>
 
       <div class="basemap-switch" aria-label="底图模式">
-        <button class="active" data-basemap="standard">标准</button>
-        <button data-basemap="imagery">实景</button>
-        <button data-basemap="terrain3d">三维</button>
+        <button class="active" data-basemap="img">影像</button>
+        <button data-basemap="vec">矢量</button>
+        <button data-basemap="ter">地形</button>
       </div>
     </main>
 
     <script src="assets/ol/ol.js"></script>
+    <script src="satellite-config.local.js?v=20260610-sdk2"></script>
+    <script src="sdk/remote-sensing-sdk.js?v=20260610-sdk2"></script>
     <script src="offline-maps/fujian-basemap.geojson.js"></script>
     <script src="assets/huang-keng-bamboo-geojson.js"></script>
     <script src="assets/kang-village-geojson.js"></script>
-    <script src="zhushan-bigdata.js"></script>
+    <script src="zhushan-bigdata.js?v=20260610-sdk2"></script>
   </body>
 </html>

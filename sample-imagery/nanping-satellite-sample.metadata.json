@@ -1,0 +1,10 @@
+{
+  "name": "南平 VIIRS 真彩色样例",
+  "file": "nanping-satellite-sample.png",
+  "source": "NASA GIBS WMS",
+  "layer": "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+  "date": "2025-12-20",
+  "bounds": [117.2, 26.3, 119.0, 28.0],
+  "boundsText": "117.2,26.3,119.0,28.0",
+  "usage": "在卫星图传管理系统上传 PNG 时，将覆盖范围填为 boundsText。"
+}

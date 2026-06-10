@@ -279,9 +279,144 @@ let activeRenderedRows = [];
 let activeRowLocators = [];
 const gisLayers = {};
 const baseSources = {};
+const RS_SDK = window.RemoteSensingSDK;
+const ZHUSHAN_SDK_CONFIG = window.SATELLITE_CONFIG || {};
+const ZHUSHAN_REMOTE_API_BASE =
+  localStorage.getItem("remoteSensingApiBase") ||
+  (window.location.port === "8010" ? window.location.origin : "http://127.0.0.1:8010");
+const remoteSensing = {
+  remote: null,
+  layers: null,
+  scenes: [],
+  visible: true,
+  basemaps: {},
+  basemapErrorShown: false,
+  basemapFailed: false,
+  currentBasemapMode: "img",
+};
+
+function normalizeSdkBasemapMode(mode) {
+  return (
+    {
+      imagery: "img",
+      image: "img",
+      standard: "vec",
+      vector: "vec",
+      terrain: "ter",
+      terrain3d: "ter",
+    }[mode] || mode || "img"
+  );
+}
 
 function localMapExtent() {
   return ol.proj.transformExtent([117.55, 26.15, 118.88, 27.18], "EPSG:4326", "EPSG:3857");
+}
+
+function setLayerOrder() {
+  [
+    [gisLayers.localBase, 0],
+    [gisLayers.satellite, 0],
+    [gisLayers.hillshade, 1],
+    [gisLayers.offlineBase, 2],
+    [gisLayers.history, 6],
+    [gisLayers.soil, 20],
+    [gisLayers.growth, 20],
+    [gisLayers.ownership, 20],
+    [gisLayers.quality, 22],
+    [gisLayers.yield, 22],
+    [gisLayers.pest, 23],
+    [gisLayers.farmer, 24],
+    [gisLayers.cooperative, 24],
+    [gisLayers.uav, 25],
+    [gisLayers.huangkeng, 28],
+    [gisLayers.kangVillage, 28],
+    [gisLayers.ovobj, 30],
+    [gisLayers.bamboo, 32],
+  ].forEach(([layer, zIndex]) => layer?.setZIndex(zIndex));
+}
+
+function sdkBasemapGroups() {
+  return Object.values(remoteSensing.basemaps).flat();
+}
+
+function hasSdkBasemap() {
+  return sdkBasemapGroups().length > 0 && !remoteSensing.basemapFailed;
+}
+
+function applySdkBasemapMode(mode) {
+  const sdkMode = normalizeSdkBasemapMode(mode);
+  Object.entries(remoteSensing.basemaps).forEach(([key, layers]) => {
+    layers.forEach((layer) => layer.setVisible(key === sdkMode));
+  });
+}
+
+function initSdkBasemap() {
+  if (!RS_SDK || !gisMap) return;
+  const tk = String(ZHUSHAN_SDK_CONFIG.tiandituTk || "").trim();
+  if (!tk) return;
+  remoteSensing.basemapFailed = false;
+  const onTileLoadError = () => {
+    if (remoteSensing.basemapErrorShown) return;
+    remoteSensing.basemapErrorShown = true;
+    remoteSensing.basemapFailed = true;
+    setBasemapMode(remoteSensing.currentBasemapMode);
+    console.warn("天地图底图加载失败，请检查 tk、域名白名单或网络访问。");
+  };
+  remoteSensing.basemaps = {
+    img: RS_SDK.createTiandituLayers({ tk, type: "img", onTileLoadError }),
+    vec: RS_SDK.createTiandituLayers({ tk, type: "vec", onTileLoadError }),
+    ter: RS_SDK.createTiandituLayers({ tk, type: "ter", onTileLoadError }),
+  };
+  Object.values(remoteSensing.basemaps)
+    .flat()
+    .forEach((layer) => {
+      layer.setVisible(false);
+      gisMap.addLayer(layer);
+    });
+}
+
+function renderRemoteSensingScenes() {
+  if (!remoteSensing.layers) return;
+  remoteSensing.layers.clear();
+  if (!remoteSensing.visible) return;
+  remoteSensing.scenes.forEach((scene) => {
+    remoteSensing.layers.add({
+      ...scene,
+      opacity: Number.isFinite(Number(scene.opacity)) ? Number(scene.opacity) : 0.82,
+      zIndex: 5,
+    });
+  });
+}
+
+async function syncRemoteSensingScenes() {
+  if (!remoteSensing.remote) return;
+  try {
+    await remoteSensing.remote.health();
+    remoteSensing.scenes = await remoteSensing.remote.list();
+    renderRemoteSensingScenes();
+    console.info(`遥感SDK已同步 ${remoteSensing.scenes.length} 景 COG 影像`);
+  } catch (error) {
+    remoteSensing.scenes = [];
+    renderRemoteSensingScenes();
+    console.warn("遥感SDK影像同步失败：", error);
+  }
+}
+
+function initRemoteSensingSdk() {
+  if (!RS_SDK || !gisMap) {
+    console.warn("RemoteSensingSDK 未加载，智慧竹山地图将使用原有图层。");
+    return;
+  }
+  initSdkBasemap();
+  remoteSensing.remote = new RS_SDK.RemoteCogCatalog({ baseUrl: ZHUSHAN_REMOTE_API_BASE });
+  remoteSensing.layers = new RS_SDK.SceneLayerController(gisMap);
+  gisLayers.remoteSensing = {
+    setVisible(visible) {
+      remoteSensing.visible = Boolean(visible);
+      renderRemoteSensingScenes();
+    },
+  };
+  syncRemoteSensingScenes();
 }
 
 function renderBlocks() {
@@ -517,6 +652,9 @@ function initWebGIS() {
     }),
   });
 
+  setLayerOrder();
+  initRemoteSensingSdk();
+
   gisMap.on("singleclick", (event) => {
     const feature = gisMap.forEachFeatureAtPixel(event.pixel, (item) => item);
     if (!feature) return;
@@ -675,26 +813,30 @@ function kangVillageStyle(feature) {
 }
 
 function setBasemapMode(mode) {
+  const sdkMode = normalizeSdkBasemapMode(mode);
+  remoteSensing.currentBasemapMode = sdkMode;
+  const sdkBasemapReady = hasSdkBasemap();
+  applySdkBasemapMode(sdkMode);
   if (gisLayers.offlineBase) {
-    gisLayers.offlineBase.setVisible(mode === "terrain3d");
-    gisLayers.offlineBase.setOpacity(mode === "terrain3d" ? 0.42 : 0.58);
+    gisLayers.offlineBase.setVisible(!sdkBasemapReady && sdkMode === "ter");
+    gisLayers.offlineBase.setOpacity(sdkMode === "ter" ? 0.42 : 0.58);
   }
   if (gisLayers.localBase) {
-    gisLayers.localBase.setVisible(mode !== "imagery");
-    gisLayers.localBase.setOpacity(mode === "terrain3d" ? 0.86 : 1);
+    gisLayers.localBase.setVisible(!sdkBasemapReady && sdkMode !== "img");
+    gisLayers.localBase.setOpacity(sdkMode === "ter" ? 0.86 : 1);
   }
   if (gisLayers.satellite) {
     gisLayers.satellite.setSource(baseSources.imagery);
-    gisLayers.satellite.setVisible(mode === "imagery");
-    gisLayers.satellite.setOpacity(mode === "imagery" ? 0.92 : 0);
+    gisLayers.satellite.setVisible(!sdkBasemapReady && sdkMode === "img");
+    gisLayers.satellite.setOpacity(sdkMode === "img" ? 0.92 : 0);
   }
   if (gisLayers.hillshade) {
     gisLayers.hillshade.setOpacity(0);
   }
 
-  document.body.classList.toggle("terrain3d-mode", mode === "terrain3d");
-  document.body.classList.toggle("imagery-mode", mode === "imagery");
-  document.body.classList.toggle("standard-mode", mode === "standard");
+  document.body.classList.toggle("terrain3d-mode", sdkMode === "ter");
+  document.body.classList.toggle("imagery-mode", sdkMode === "img");
+  document.body.classList.toggle("standard-mode", sdkMode === "vec");
 }
 
 function createPointLayer(layerType, points, radius = 9) {
@@ -1252,5 +1394,5 @@ document.querySelectorAll("[data-business]").forEach((button) => {
 
 renderBlocks();
 initWebGIS();
-setBasemapMode("standard");
+setBasemapMode("img");
 setZoom(1);

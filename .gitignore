@@ -2,6 +2,9 @@
 node_modules/
 .npm-cache/
 .android-tools/
+.edge-test-profile/
+.server-5177*.log
+satellite-config.local.js
 __pycache__/
 *.pyc
 
@@ -20,6 +23,8 @@ nas-release/
 # Large raw/source geodata that can be regenerated from scripts
 offline-maps/*.pbf
 converted-data/
+data/remote-sensing/
+.venv/
 
 # Local browser policy backups
 browser-config-applied-*.json
