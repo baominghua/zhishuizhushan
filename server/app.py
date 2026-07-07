@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from server.modules.database import init_platform_schema, use_postgis as smart_bamboo_use_postgis
 from server.modules.forest_blocks import router as forest_blocks_router
+from server.modules.imports import router as imports_router
 from server.modules.settings import get_settings
 
 
@@ -41,6 +42,7 @@ app.add_middleware(
 
 init_platform_schema()
 app.include_router(forest_blocks_router)
+app.include_router(imports_router)
 
 
 def ensure_dirs() -> None:

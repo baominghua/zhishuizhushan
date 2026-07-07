@@ -1,0 +1,35 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "blockCode": "SAMPLE-001",
+        "name": "黄坑示范林班",
+        "countyCode": "350703",
+        "countyName": "建阳区",
+        "townName": "麻沙镇",
+        "villageName": "黄坑村",
+        "baseType": "self_operated",
+        "operationType": "timber",
+        "forestType": "毛竹",
+        "areaMu": 126.5,
+        "qualityGrade": "A",
+        "healthStatus": "normal",
+        "riskLevel": "low"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [118.10, 26.50],
+            [118.12, 26.50],
+            [118.12, 26.52],
+            [118.10, 26.52],
+            [118.10, 26.50]
+          ]
+        ]
+      }
+    }
+  ]
+}
