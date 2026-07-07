@@ -423,3 +423,38 @@ def test_forest_block_summary_counts_filtered_dimensions(app_client):
         "qualityGrade": {"A": 1},
         "baseType": {"self_operated": 1},
     }
+
+
+def test_forest_block_summary_counts_unknown_dimension_buckets(app_client):
+    first = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-SUM-UNKNOWN-1"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert first.status_code == 200
+
+    second_payload = sample_block_payload("FB-SUM-UNKNOWN-2")
+    second_payload.update(
+        {
+            "baseType": "",
+            "qualityGrade": None,
+            "riskLevel": "",
+        }
+    )
+    second = app_client.post(
+        "/api/forest-blocks",
+        json=second_payload,
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert second.status_code == 200
+
+    response = app_client.get("/api/map/forest-blocks/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "total": 2,
+        "riskLevel": {"low": 1, "unknown": 1},
+        "qualityGrade": {"A": 1, "unknown": 1},
+        "baseType": {"self_operated": 1, "unknown": 1},
+    }

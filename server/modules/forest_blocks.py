@@ -253,9 +253,7 @@ def forest_block_summary(filters: ForestBlockFilters, context: AuthContext) -> d
     }
     for block in blocks:
         for key in ("riskLevel", "qualityGrade", "baseType"):
-            value = block.get(key)
-            if not value:
-                continue
+            value = block.get(key) or "unknown"
             summary[key][value] = summary[key].get(value, 0) + 1
     return summary
 
