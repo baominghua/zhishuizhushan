@@ -1,0 +1,17 @@
+.git
+.venv
+.pytest_cache
+__pycache__/
+*.pyc
+node_modules/
+.android-tools/
+.edge-test-profile/
+nas-release/
+converted-data/
+offline-maps/*.pbf
+data/remote-sensing/uploads/
+data/remote-sensing/cogs/
+data/remote-sensing/tile-cache/
+data/remote-sensing/basemap-cache/
+*.zip
+*.apk

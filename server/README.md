@@ -29,3 +29,11 @@ http://NAS-IP:8010/satellite-manager.html
 - `/titiler/...`：如果安装了 `titiler.core`，会挂载通用 TiTiler COG 路由。
 
 运行时数据位于 `data/remote-sensing/`，包括原始上传、COG 文件和目录 JSON。
+
+## Docker Compose 部署
+
+智慧竹山平台的一体化 Docker Compose 部署说明见：
+
+```text
+docs/deploy-smart-bamboo-platform.md
+```

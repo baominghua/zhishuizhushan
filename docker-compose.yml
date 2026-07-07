@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-smart_bamboo}"
+      POSTGRES_USER: "${POSTGRES_USER:-smart_bamboo}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-smart_bamboo_dev}"
+    ports:
+      - "${SMART_BAMBOO_DB_PORT:-5433}:5432"
+    volumes:
+      - smart_bamboo_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      REMOTE_SENSING_PORT: "8010"
+      REMOTE_SENSING_DATA_DIR: /data/remote-sensing
+      REMOTE_SENSING_SERVE_STATIC: "1"
+      REMOTE_SENSING_CORS_ORIGINS: "${REMOTE_SENSING_CORS_ORIGINS:-*}"
+      REMOTE_SENSING_IMPORT_DIRS: /data/remote-sensing/inbox
+      SMART_BAMBOO_STORAGE_BACKEND: "${SMART_BAMBOO_STORAGE_BACKEND:-postgis}"
+      SMART_BAMBOO_DATABASE_URL: "${SMART_BAMBOO_DATABASE_URL:-postgresql://smart_bamboo:smart_bamboo_dev@db:5432/smart_bamboo}"
+      REMOTE_SENSING_CATALOG_BACKEND: "${REMOTE_SENSING_CATALOG_BACKEND:-json}"
+      REMOTE_SENSING_DATABASE_URL: "${REMOTE_SENSING_DATABASE_URL:-postgresql://smart_bamboo:smart_bamboo_dev@db:5432/smart_bamboo}"
+      REMOTE_SENSING_GEOSERVER_URL: "${REMOTE_SENSING_GEOSERVER_URL:-}"
+      REMOTE_SENSING_TIANDITU_TK: "${REMOTE_SENSING_TIANDITU_TK:-}"
+      REMOTE_SENSING_AUTH_REQUIRED: "${REMOTE_SENSING_AUTH_REQUIRED:-0}"
+      REMOTE_SENSING_API_TOKENS: "${REMOTE_SENSING_API_TOKENS:-}"
+    ports:
+      - "${SMART_BAMBOO_APP_PORT:-8010}:8010"
+    volumes:
+      - ./data:/data
+
+  geoserver:
+    image: docker.osgeo.org/geoserver:2.25.x
+    restart: unless-stopped
+    profiles: ["geoserver"]
+    environment:
+      GEOSERVER_ADMIN_USER: "${GEOSERVER_ADMIN_USER:-admin}"
+      GEOSERVER_ADMIN_PASSWORD: "${GEOSERVER_ADMIN_PASSWORD:-geoserver}"
+    ports:
+      - "${GEOSERVER_PORT:-8080}:8080"
+    volumes:
+      - geoserver_data:/opt/geoserver_data
+
+volumes:
+  smart_bamboo_pg:
+  geoserver_data:

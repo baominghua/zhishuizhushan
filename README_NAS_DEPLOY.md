@@ -82,3 +82,11 @@ python3 -m venv .venv
 - `/api/scenes` 遥感影像目录同步
 
 要使用完整 SDK 能力，请启动上面的 COG 服务。
+
+## Docker Compose 部署
+
+智慧竹山平台的一体化 Docker Compose 部署说明见：
+
+```text
+docs/deploy-smart-bamboo-platform.md
+```
