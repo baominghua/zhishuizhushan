@@ -168,6 +168,12 @@ a {
   background: rgba(199, 163, 87, 0.08);
 }
 
+.status-badge.warning {
+  color: var(--warning);
+  border-color: rgba(199, 163, 87, 0.28);
+  background: rgba(199, 163, 87, 0.08);
+}
+
 .status-meta {
   margin: 12px 0 0;
   display: grid;

@@ -1,5 +1,19 @@
 const DEFAULT_API_BASE = "http://127.0.0.1:8010";
 
+const STATUS_LABELS = {
+  idle: "\u672a\u8fde\u63a5",
+  online: "\u5df2\u8fde\u63a5",
+  busy: "\u5904\u7406\u4e2d",
+  warning: "\u9700\u5904\u7406",
+  offline: "\u4e0d\u53ef\u7528",
+};
+
+const EMPTY_BLOCK = {
+  geometry: null,
+  properties: {},
+  tags: [],
+};
+
 const state = {
   apiBase: DEFAULT_API_BASE,
   blocks: [],
@@ -10,7 +24,7 @@ const state = {
     operationType: "",
     riskLevel: "",
   },
-  lastImportLabel: "无",
+  lastImportLabel: "\u65e0",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -81,8 +95,7 @@ function splitHeaderValues(value) {
 
 function setStatus(kind, message) {
   elements.statusBadge.className = `status-badge ${kind}`;
-  elements.statusBadge.textContent =
-    kind === "online" ? "已连接" : kind === "busy" ? "处理中" : kind === "offline" ? "不可用" : "未连接";
+  elements.statusBadge.textContent = STATUS_LABELS[kind] || STATUS_LABELS.idle;
   elements.statusText.textContent = message;
 }
 
@@ -177,7 +190,7 @@ function renderBlockRows() {
   if (!rows.length) {
     elements.blockRows.innerHTML = `
       <tr class="placeholder-row">
-        <td colspan="7">当前筛选条件下没有可显示的小班</td>
+        <td colspan="7">\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u53ef\u663e\u793a\u7684\u5c0f\u73ed</td>
       </tr>
     `;
     return;
@@ -210,7 +223,7 @@ function stringifyPretty(value, fallback) {
 }
 
 function populateForm(block) {
-  const nextBlock = block || {};
+  const nextBlock = block || EMPTY_BLOCK;
   state.activeBlockId = nextBlock.id || "";
   elements.blockId.value = nextBlock.id || "";
   elements.blockCode.value = nextBlock.blockCode || "";
@@ -237,11 +250,7 @@ function populateForm(block) {
 }
 
 function resetForm() {
-  populateForm({
-    geometry: null,
-    properties: {},
-    tags: [],
-  });
+  populateForm(EMPTY_BLOCK);
 }
 
 function parseJsonField(label, value, fallback) {
@@ -252,7 +261,7 @@ function parseJsonField(label, value, fallback) {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${label} 不是合法 JSON`);
+    throw new Error(`${label} \u4e0d\u662f\u5408\u6cd5 JSON`);
   }
 }
 
@@ -278,34 +287,56 @@ function buildBlockPayload() {
     tags: splitHeaderValues(elements.tags.value)
       .split(",")
       .filter(Boolean),
-    properties: parseJsonField("附加属性", elements.properties.value, {}),
-    geometry: parseJsonField("GeoJSON 几何", elements.geometry.value, null),
+    properties: parseJsonField("\u9644\u52a0\u5c5e\u6027", elements.properties.value, {}),
+    geometry: parseJsonField("GeoJSON \u51e0\u4f55", elements.geometry.value, null),
+  };
+}
+
+function buildSaveRequest(payload, blockId) {
+  if (!blockId) {
+    return {
+      method: "POST",
+      path: "/api/forest-blocks",
+      body: JSON.stringify(payload),
+    };
+  }
+
+  const patchPayload = { ...payload };
+  delete patchPayload.blockCode;
+  return {
+    method: "PATCH",
+    path: `/api/forest-blocks/${encodeURIComponent(blockId)}`,
+    body: JSON.stringify(patchPayload),
   };
 }
 
 async function loadBlocks() {
   const queryString = buildQueryString();
-  setStatus("busy", "正在加载森林小班列表...");
+  setStatus("busy", "\u6b63\u5728\u52a0\u8f7d\u68ee\u6797\u5c0f\u73ed\u5217\u8868...");
 
   try {
     const payload = await api(`/api/forest-blocks?${queryString}`);
     state.blocks = Array.isArray(payload.items) ? payload.items : [];
-    if (state.activeBlockId && !activeBlock()) {
-      state.activeBlockId = "";
+
+    const hiddenActiveBlock = Boolean(state.activeBlockId) && !activeBlock();
+    if (hiddenActiveBlock) {
+      resetForm();
     }
+
     renderBlockRows();
     if (state.activeBlockId) {
       populateForm(activeBlock());
     } else if (!elements.blockCode.value && !elements.blockName.value) {
       resetForm();
     }
-    setStatus("online", `已加载 ${payload.total ?? state.blocks.length} 个小班。`);
+
+    setStatus("online", `\u5df2\u52a0\u8f7d ${payload.total ?? state.blocks.length} \u4e2a\u5c0f\u73ed\u3002`);
     return payload;
   } catch (error) {
     state.blocks = [];
     state.activeBlockId = "";
     renderBlockRows();
-    setStatus("offline", `接口不可用：${error.message}`);
+    setStatus("offline", `\u63a5\u53e3\u4e0d\u53ef\u7528\uff1a${error.message}`);
     return null;
   }
 }
@@ -323,26 +354,22 @@ async function saveActiveBlock(event) {
     throw error;
   }
 
-  setStatus("busy", "正在保存小班...");
+  setStatus("busy", "\u6b63\u5728\u4fdd\u5b58\u5c0f\u73ed...");
   const blockId = elements.blockId.value.trim();
+  const request = buildSaveRequest(payload, blockId);
 
   try {
-    const saved = blockId
-      ? await api(`/api/forest-blocks/${encodeURIComponent(blockId)}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        })
-      : await api("/api/forest-blocks", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+    const saved = await api(request.path, {
+      method: request.method,
+      body: request.body,
+    });
 
     await loadBlocks();
     populateForm(saved);
-    setStatus("online", `已保存小班 ${saved.blockCode || saved.name || ""}`.trim());
+    setStatus("online", `\u5df2\u4fdd\u5b58\u5c0f\u73ed ${saved.blockCode || saved.name || ""}`.trim());
     return saved;
   } catch (error) {
-    setStatus("offline", `保存失败：${error.message}`);
+    setStatus("offline", `\u4fdd\u5b58\u5931\u8d25\uff1a${error.message}`);
     throw error;
   }
 }
@@ -352,7 +379,7 @@ function renderImportMetrics(report) {
   elements.reportTotal.textContent = String(nextReport.totalRows || 0);
   elements.reportValid.textContent = String(nextReport.validRows || 0);
   elements.reportInvalid.textContent = String(nextReport.invalidRows || 0);
-  elements.reportStatus.textContent = String(nextReport.status || "未执行");
+  elements.reportStatus.textContent = String(nextReport.status || "\u672a\u6267\u884c");
 }
 
 async function importForestBlocks(event) {
@@ -362,7 +389,7 @@ async function importForestBlocks(event) {
 
   const file = elements.importFile.files && elements.importFile.files[0];
   if (!file) {
-    const error = new Error("请选择导入文件");
+    const error = new Error("\u8bf7\u9009\u62e9\u5bfc\u5165\u6587\u4ef6");
     setStatus("offline", error.message);
     throw error;
   }
@@ -371,7 +398,7 @@ async function importForestBlocks(event) {
   formData.set("file", file);
   formData.set("strategy", elements.importStrategy.value);
 
-  setStatus("busy", `正在导入 ${file.name}...`);
+  setStatus("busy", `\u6b63\u5728\u5bfc\u5165 ${file.name}...`);
 
   try {
     const payload = await api("/api/imports/forest-blocks", {
@@ -384,17 +411,19 @@ async function importForestBlocks(event) {
     state.lastImportLabel = `${report.fileName || file.name} / ${report.status || "completed"}`;
     elements.lastImport.textContent = state.lastImportLabel;
     await loadBlocks();
+
+    const hasValidationErrors = Number(report.invalidRows || 0) > 0;
     setStatus(
-      report.invalidRows ? "offline" : "online",
-      report.invalidRows
-        ? `导入完成，但有 ${report.invalidRows} 行未通过校验。`
-        : `导入完成，共处理 ${report.totalRows || 0} 行。`
+      hasValidationErrors ? "warning" : "online",
+      hasValidationErrors
+        ? `\u5bfc\u5165\u5b8c\u6210\uff0c\u5b58\u5728\u6821\u9a8c\u9519\u8bef\uff1a${report.invalidRows} \u884c\u672a\u901a\u8fc7\u3002`
+        : `\u5bfc\u5165\u5b8c\u6210\uff0c\u5171\u5904\u7406 ${report.totalRows || 0} \u884c\u3002`
     );
     return payload;
   } catch (error) {
     renderImportMetrics(null);
-    elements.importReport.textContent = `导入失败\n${error.message}`;
-    setStatus("offline", `导入失败：${error.message}`);
+    elements.importReport.textContent = `\u5bfc\u5165\u5931\u8d25\n${error.message}`;
+    setStatus("offline", `\u5bfc\u5165\u5931\u8d25\uff1a${error.message}`);
     throw error;
   }
 }
