@@ -374,3 +374,52 @@ def test_map_geojson_returns_no_features_outside_bbox(app_client):
 
     assert response.status_code == 200
     assert response.json()["features"] == []
+
+
+def test_forest_block_summary_counts_filtered_dimensions(app_client):
+    first = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-SUM-1"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert first.status_code == 200
+
+    second_payload = sample_block_payload("FB-SUM-2")
+    second_payload.update(
+        {
+            "baseType": "cooperative",
+            "qualityGrade": "C",
+            "riskLevel": "high",
+            "geometry": {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [
+                        [
+                            [118.30, 26.70],
+                            [118.32, 26.70],
+                            [118.32, 26.72],
+                            [118.30, 26.72],
+                            [118.30, 26.70],
+                        ]
+                    ]
+                ],
+            },
+        }
+    )
+    second = app_client.post(
+        "/api/forest-blocks",
+        json=second_payload,
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert second.status_code == 200
+
+    response = app_client.get("/api/map/forest-blocks/summary?bbox=118.09,26.49,118.13,26.53")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "total": 1,
+        "riskLevel": {"low": 1},
+        "qualityGrade": {"A": 1},
+        "baseType": {"self_operated": 1},
+    }

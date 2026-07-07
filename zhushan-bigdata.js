@@ -294,6 +294,11 @@ const remoteSensing = {
   basemapFailed: false,
   currentBasemapMode: "img",
 };
+const liveForestState = {
+  inFlight: null,
+  pendingFilters: null,
+  debounceTimer: null,
+};
 
 function normalizeSdkBasemapMode(mode) {
   return (
@@ -439,6 +444,22 @@ function renderBlocks() {
   });
 }
 
+function demoBlockFeature(block, index) {
+  const feature = new ol.Feature({
+    geometry: new ol.geom.Polygon(polygonAround(block.center, 0.045 + index * 0.003, 0.032 + index * 0.002)).transform("EPSG:4326", "EPSG:3857"),
+    blockId: block.id,
+    code: block.code,
+    name: block.name,
+    layerType: "bamboo",
+  });
+  feature.setStyle(blockStyle(block));
+  return feature;
+}
+
+function demoBlockFeatures() {
+  return blocks.map((block, index) => demoBlockFeature(block, index));
+}
+
 function polygonAround([lon, lat], width, height) {
   const skew = width * 0.28;
   return [
@@ -481,6 +502,136 @@ function blockStyle(block) {
         fill: new ol.style.Fill({ color: "#efffff" }),
         stroke: new ol.style.Stroke({ color: "rgba(0, 0, 0, 0.82)", width: 4 }),
         font: "bold 13px Microsoft YaHei",
+
+function liveBlockClassName(props) {
+  if (props.riskLevel === "high") return "danger";
+  if (props.riskLevel === "medium") return "warning";
+  if (props.qualityGrade === "C") return "warning";
+  if (props.qualityGrade === "B") return "medium";
+  return "good";
+}
+
+function formatAreaMu(areaMu) {
+  if (areaMu === null || areaMu === undefined || areaMu === "") return "????";
+  const numeric = Number(areaMu);
+  if (Number.isNaN(numeric)) return String(areaMu);
+  return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)} ?`;
+}
+
+function forestBlockFromFeature(feature) {
+  const props = feature.getProperties();
+  const location = [props.countyName, props.townName, props.villageName].filter(Boolean).join("");
+  const riskText =
+    {
+      high: "???",
+      medium: "???",
+      low: "???",
+    }[props.riskLevel] || props.riskLevel || "???";
+  const images = [
+    ["????", "??????", `${props.blockCode || props.name || "??"} ??????????`],
+    ["????", "???????", `?????${props.baseType || "??"}??????${props.qualityGrade || "??"}??????${props.healthStatus || "??"}?`],
+    ["????", "???????", `?????${location || "??"}??????${riskText}?`],
+  ];
+  return {
+    id: props.id || feature.getId?.() || props.blockCode || props.name || "live-block",
+    code: props.blockCode || props.code || "??",
+    name: props.name || props.blockCode || "??",
+    area: formatAreaMu(props.areaMu),
+    variety: props.forestType || props.operationType || "??",
+    level: props.qualityGrade || "???",
+    owner: location || props.baseType || "????",
+    altitude: props.bambooAge || props.countyName || "???",
+    slope: props.slopeDegree ? `${props.slopeDegree}?` : "???",
+    health: props.healthStatus || props.managementStatus || riskText,
+    images,
+    className: liveBlockClassName(props),
+  };
+}
+
+function liveBlockStyle(feature) {
+  return blockStyle(forestBlockFromFeature(feature));
+}
+
+function setBambooSourceFeatures(features) {
+  const source = gisLayers.bamboo?.getSource();
+  if (!source) return;
+  source.clear();
+  source.addFeatures(features);
+}
+
+function applyDemoForestBlocks() {
+  if (!window.ol || !gisLayers.bamboo) return;
+  setBambooSourceFeatures(demoBlockFeatures());
+}
+
+function currentForestBlockBbox() {
+  if (!window.ol || !gisMap) return "";
+  const size = gisMap.getSize();
+  if (!size) return "";
+  return ol.proj.transformExtent(gisMap.getView().calculateExtent(size), "EPSG:3857", "EPSG:4326").join(",");
+}
+
+async function loadLiveForestBlocks(filters = {}) {
+  if (!window.ol || !gisMap || !gisLayers.bamboo || typeof fetch !== "function") {
+    return false;
+  }
+  if (liveForestState.inFlight) {
+    liveForestState.pendingFilters = filters;
+    return liveForestState.inFlight;
+  }
+
+  liveForestState.inFlight = (async () => {
+    try {
+      const bbox = currentForestBlockBbox();
+      if (!bbox) {
+        applyDemoForestBlocks();
+        return false;
+      }
+      const params = new URLSearchParams();
+      Object.entries({ ...filters, bbox }).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+      });
+      const response = await fetch(`${ZHUSHAN_REMOTE_API_BASE}/api/map/forest-blocks.geojson?${params.toString()}`);
+      if (!response.ok) throw new Error(`forest block api ${response.status}`);
+      const geojson = await response.json();
+      const features = new ol.format.GeoJSON().readFeatures(geojson, {
+        dataProjection: "EPSG:4326",
+        featureProjection: "EPSG:3857",
+      });
+      if (!features.length) {
+        applyDemoForestBlocks();
+        return false;
+      }
+      features.forEach((feature) => {
+        feature.set("layerType", "bamboo");
+        feature.setStyle(liveBlockStyle(feature));
+      });
+      setBambooSourceFeatures(features);
+      return true;
+    } catch (error) {
+      console.warn("???????????????????", error);
+      applyDemoForestBlocks();
+      return false;
+    } finally {
+      liveForestState.inFlight = null;
+      if (liveForestState.pendingFilters) {
+        const nextFilters = liveForestState.pendingFilters;
+        liveForestState.pendingFilters = null;
+        loadLiveForestBlocks(nextFilters);
+      }
+    }
+  })();
+
+  return liveForestState.inFlight;
+}
+
+function scheduleLiveForestBlocksLoad(filters = {}) {
+  if (liveForestState.debounceTimer) window.clearTimeout(liveForestState.debounceTimer);
+  liveForestState.debounceTimer = window.setTimeout(() => {
+    liveForestState.debounceTimer = null;
+    loadLiveForestBlocks(filters);
+  }, 220);
+}
         offsetY: -2,
       }),
     }),
@@ -538,15 +689,7 @@ function initWebGIS() {
 
   document.body.classList.add("webgis-ready");
 
-  const blockFeatures = blocks.map((block, index) => {
-    const feature = new ol.Feature({
-      geometry: new ol.geom.Polygon(polygonAround(block.center, 0.045 + index * 0.003, 0.032 + index * 0.002)).transform("EPSG:4326", "EPSG:3857"),
-      blockId: block.id,
-      layerType: "bamboo",
-    });
-    feature.setStyle(blockStyle(block));
-    return feature;
-  });
+  const blockFeatures = demoBlockFeatures();
 
   baseSources.standard = new ol.source.XYZ({
     url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -648,6 +791,7 @@ function initWebGIS() {
       center: ol.proj.fromLonLat([118.2, 26.6]),
       zoom: 10,
       minZoom: 8,
+  scheduleLiveForestBlocksLoad();
       maxZoom: 16,
     }),
   });
@@ -670,9 +814,15 @@ function initWebGIS() {
       openImportedObjectCard();
       return;
     }
-    if (!feature?.get("blockId")) return;
-    const block = blocks.find((item) => item.id === feature.get("blockId"));
+    const block =
+      feature?.get("blockCode")
+        ? forestBlockFromFeature(feature)
+        : blocks.find((item) => item.id === feature?.get("blockId"));
+    if (!block) return;
     openBlockCard(block);
+  gisMap.on("moveend", () => {
+    scheduleLiveForestBlocksLoad();
+  });
   });
 
   gisMap.on("pointermove", (event) => {

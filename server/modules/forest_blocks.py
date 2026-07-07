@@ -243,6 +243,23 @@ def forest_block_feature_collection(filters: ForestBlockFilters, context: AuthCo
     }
 
 
+def forest_block_summary(filters: ForestBlockFilters, context: AuthContext) -> dict[str, Any]:
+    blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
+    summary: dict[str, Any] = {
+        "total": len(blocks),
+        "riskLevel": {},
+        "qualityGrade": {},
+        "baseType": {},
+    }
+    for block in blocks:
+        for key in ("riskLevel", "qualityGrade", "baseType"):
+            value = block.get(key)
+            if not value:
+                continue
+            summary[key][value] = summary[key].get(value, 0) + 1
+    return summary
+
+
 def filter_params(
     q: str = Query(default=""),
     countyCode: str = Query(default=""),
@@ -370,3 +387,11 @@ def forest_blocks_geojson(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     return forest_block_feature_collection(filters, context)
+
+
+@router.get("/map/forest-blocks/summary")
+def forest_blocks_summary(
+    filters: ForestBlockFilters = Depends(filter_params),
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    return forest_block_summary(filters, context)
