@@ -285,6 +285,31 @@ def test_area_scoped_writer_cannot_create_block_outside_allowed_areas(app_client
     assert response.json()["detail"] == "Area access denied"
 
 
+def test_area_context_filters_forest_blocks(app_client):
+    first = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("AREA-001"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert first.status_code == 200
+
+    other = sample_block_payload("AREA-002")
+    other["countyCode"] = "350702"
+    other["countyName"] = "延平区"
+    second = app_client.post(
+        "/api/forest-blocks",
+        json=other,
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert second.status_code == 200
+
+    response = app_client.get("/api/forest-blocks", headers={"X-RS-Areas": "350703"})
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["countyCode"] == "350703"
+
+
 def test_area_scoped_writer_cannot_create_block_without_county_code(app_client):
     payload = sample_block_payload("FB-005A")
     payload.pop("countyCode")
@@ -324,6 +349,54 @@ def test_area_scoped_patch_cannot_move_block_into_unauthorized_county(app_client
 
     assert fetched.status_code == 200
     assert fetched.json()["countyCode"] == "350703"
+
+
+def test_non_writer_role_cannot_create_forest_block(app_client):
+    response = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("PERM-CREATE-001"),
+        headers={"X-RS-Roles": "viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Write access denied"
+
+
+def test_non_writer_role_cannot_patch(app_client):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("PERM-PATCH-001"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    block_id = created.json()["id"]
+
+    response = app_client.patch(
+        f"/api/forest-blocks/{block_id}",
+        json={"riskLevel": "high"},
+        headers={"X-RS-Roles": "viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Write access denied"
+
+
+def test_non_writer_role_cannot_delete_forest_block(app_client):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("PERM-DELETE-001"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    block_id = created.json()["id"]
+
+    response = app_client.delete(
+        f"/api/forest-blocks/{block_id}",
+        headers={"X-RS-Roles": "viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Write access denied"
 
 
 def test_patch_rejects_block_code_mutation(app_client):

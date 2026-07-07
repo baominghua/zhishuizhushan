@@ -130,6 +130,18 @@ def test_import_rejects_missing_block_code_with_invalid_report(app_client):
     assert "blockCode" in body["report"]["errors"][0]["message"]
 
 
+def test_import_requires_write_access_for_explicit_read_only_role(app_client):
+    response = app_client.post(
+        "/api/imports/forest-blocks",
+        files={"file": ("forest.geojson", io.BytesIO(geojson_bytes()), "application/geo+json")},
+        data={"strategy": "upsert"},
+        headers={"X-RS-Roles": "viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Write access denied"
+
+
 def test_import_rejects_missing_name_with_invalid_report(app_client):
     response = app_client.post(
         "/api/imports/forest-blocks",
