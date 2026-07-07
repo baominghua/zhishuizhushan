@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -233,3 +234,102 @@ def test_map_geojson_filters_by_bbox(app_client):
     assert body["type"] == "FeatureCollection"
     assert len(body["features"]) == 1
     assert body["features"][0]["properties"]["blockCode"] == "FB-002"
+
+
+def test_deleted_block_is_hidden_but_preserved_for_later_writes(
+    app_client, isolated_env, reload_platform_modules
+):
+    first = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-003"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert first.status_code == 200
+    deleted_id = first.json()["id"]
+
+    deleted = app_client.delete(
+        f"/api/forest-blocks/{deleted_id}",
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert deleted.status_code == 200
+
+    second = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-004"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert second.status_code == 200
+
+    listed = app_client.get("/api/forest-blocks")
+    assert listed.status_code == 200
+    assert [item["blockCode"] for item in listed.json()["items"]] == ["FB-004"]
+
+    geojson = app_client.get("/api/map/forest-blocks.geojson")
+    assert geojson.status_code == 200
+    assert [feature["properties"]["blockCode"] for feature in geojson.json()["features"]] == ["FB-004"]
+
+    _, database_module = reload_platform_modules()
+    stored = json.loads(database_module.forest_blocks_json_path().read_text(encoding="utf-8"))
+    assert {item["blockCode"] for item in stored} == {"FB-003", "FB-004"}
+    assert next(item for item in stored if item["blockCode"] == "FB-003")["deletedAt"]
+
+
+def test_area_scoped_writer_cannot_create_block_outside_allowed_areas(app_client):
+    response = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-005") | {"countyCode": "350702"},
+        headers={"X-RS-Roles": "operator", "X-RS-Areas": "350703"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Area access denied"
+
+
+def test_patch_rejects_block_code_mutation(app_client):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-006"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    block_id = created.json()["id"]
+
+    patched = app_client.patch(
+        f"/api/forest-blocks/{block_id}",
+        json={"blockCode": "FB-006-NEW"},
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert patched.status_code == 422
+
+
+def test_duplicate_block_code_conflicts(app_client):
+    first = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-007"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert first.status_code == 200
+
+    duplicate = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-007"),
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "blockCode already exists"
+
+
+def test_map_geojson_returns_no_features_outside_bbox(app_client):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-008"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+
+    response = app_client.get("/api/map/forest-blocks.geojson?bbox=119.00,27.00,119.10,27.10")
+
+    assert response.status_code == 200
+    assert response.json()["features"] == []

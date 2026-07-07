@@ -53,7 +53,6 @@ class ForestBlockIn(ForestBlockBase):
 
 
 class ForestBlockPatch(BaseModel):
-    blockCode: str | None = None
     name: str | None = None
     countyCode: str | None = None
     countyName: str | None = None
@@ -80,6 +79,8 @@ class ForestBlockPatch(BaseModel):
     tags: list[str] | None = None
     properties: dict[str, Any] | None = None
     geometry: dict[str, Any] | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class ForestBlockOut(ForestBlockBase):
@@ -156,8 +157,12 @@ def parse_bbox(value: str | None) -> list[float] | None:
     return parts
 
 
+def load_all_blocks() -> list[dict[str, Any]]:
+    return load_json_records(forest_blocks_json_path())
+
+
 def load_blocks() -> list[dict[str, Any]]:
-    return [item for item in load_json_records(forest_blocks_json_path()) if not item.get("deletedAt")]
+    return [item for item in load_all_blocks() if not item.get("deletedAt")]
 
 
 def save_blocks(blocks: list[dict[str, Any]]) -> None:
@@ -277,7 +282,9 @@ def create_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> ForestBlockOut:
     require_write_access(context)
-    blocks = load_blocks()
+    if not area_allowed(context, payload.countyCode):
+        raise HTTPException(status_code=403, detail="Area access denied")
+    blocks = load_all_blocks()
     if any(item.get("blockCode") == payload.blockCode for item in blocks):
         raise HTTPException(status_code=409, detail="blockCode already exists")
     block = normalize_block(payload.model_dump())
@@ -301,16 +308,15 @@ def patch_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> ForestBlockOut:
     require_write_access(context)
-    blocks = load_blocks()
+    blocks = load_all_blocks()
     for index, block in enumerate(blocks):
         if block.get("id") != block_id:
             continue
+        if block.get("deletedAt"):
+            raise HTTPException(status_code=404, detail="Forest block not found")
         if not area_allowed(context, block.get("countyCode")):
             raise HTTPException(status_code=404, detail="Forest block not found")
         changes = payload.model_dump(exclude_unset=True)
-        next_code = changes.get("blockCode")
-        if next_code and any(item.get("id") != block_id and item.get("blockCode") == next_code for item in blocks):
-            raise HTTPException(status_code=409, detail="blockCode already exists")
         updated = normalize_block(
             {
                 **block,
@@ -332,10 +338,12 @@ def delete_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_write_access(context)
-    blocks = load_blocks()
+    blocks = load_all_blocks()
     for block in blocks:
         if block.get("id") != block_id:
             continue
+        if block.get("deletedAt"):
+            raise HTTPException(status_code=404, detail="Forest block not found")
         if not area_allowed(context, block.get("countyCode")):
             raise HTTPException(status_code=404, detail="Forest block not found")
         block["deletedAt"] = now_iso()
