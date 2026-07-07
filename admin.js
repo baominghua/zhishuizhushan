@@ -183,6 +183,10 @@ function activeBlock() {
   return state.blocks.find((block) => String(block.id) === String(state.activeBlockId)) || null;
 }
 
+function findBlockById(blockId) {
+  return state.blocks.find((block) => String(block.id) === String(blockId)) || null;
+}
+
 function renderBlockRows() {
   const rows = state.blocks;
   elements.blockCount.textContent = String(rows.length);
@@ -365,8 +369,14 @@ async function saveActiveBlock(event) {
     });
 
     await loadBlocks();
-    populateForm(saved);
-    setStatus("online", `\u5df2\u4fdd\u5b58\u5c0f\u73ed ${saved.blockCode || saved.name || ""}`.trim());
+    const visibleSavedBlock = findBlockById(saved.id);
+    if (visibleSavedBlock) {
+      populateForm(visibleSavedBlock);
+      setStatus("online", `\u5df2\u4fdd\u5b58\u5c0f\u73ed ${saved.blockCode || saved.name || ""}`.trim());
+    } else {
+      resetForm();
+      setStatus("warning", `\u5df2\u4fdd\u5b58\uff0c\u4f46\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u4e0d\u53ef\u89c1\uff1a${saved.blockCode || saved.name || ""}`.trim());
+    }
     return saved;
   } catch (error) {
     setStatus("offline", `\u4fdd\u5b58\u5931\u8d25\uff1a${error.message}`);
