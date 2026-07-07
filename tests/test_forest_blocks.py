@@ -285,6 +285,47 @@ def test_area_scoped_writer_cannot_create_block_outside_allowed_areas(app_client
     assert response.json()["detail"] == "Area access denied"
 
 
+def test_area_scoped_writer_cannot_create_block_without_county_code(app_client):
+    payload = sample_block_payload("FB-005A")
+    payload.pop("countyCode")
+
+    response = app_client.post(
+        "/api/forest-blocks",
+        json=payload,
+        headers={"X-RS-Roles": "operator", "X-RS-Areas": "350703"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Area access denied"
+
+
+def test_area_scoped_patch_cannot_move_block_into_unauthorized_county(app_client):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-005B"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    block_id = created.json()["id"]
+
+    patched = app_client.patch(
+        f"/api/forest-blocks/{block_id}",
+        json={"countyCode": "350702"},
+        headers={"X-RS-Roles": "operator", "X-RS-Areas": "350703"},
+    )
+
+    assert patched.status_code == 403
+    assert patched.json()["detail"] == "Area access denied"
+
+    fetched = app_client.get(
+        f"/api/forest-blocks/{block_id}",
+        headers={"X-RS-Roles": "operator", "X-RS-Areas": "350703"},
+    )
+
+    assert fetched.status_code == 200
+    assert fetched.json()["countyCode"] == "350703"
+
+
 def test_patch_rejects_block_code_mutation(app_client):
     created = app_client.post(
         "/api/forest-blocks",

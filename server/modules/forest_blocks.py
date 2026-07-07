@@ -169,6 +169,17 @@ def save_blocks(blocks: list[dict[str, Any]]) -> None:
     save_json_records(forest_blocks_json_path(), blocks)
 
 
+def context_has_scoped_areas(context: AuthContext) -> bool:
+    return bool(context.areas) and "*" not in context.areas
+
+
+def require_target_area_allowed(context: AuthContext, county_code: str | None) -> None:
+    if context_has_scoped_areas(context) and not county_code:
+        raise HTTPException(status_code=403, detail="Area access denied")
+    if not area_allowed(context, county_code):
+        raise HTTPException(status_code=403, detail="Area access denied")
+
+
 def text_matches(block: dict[str, Any], query: str) -> bool:
     if not query:
         return True
@@ -282,8 +293,7 @@ def create_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> ForestBlockOut:
     require_write_access(context)
-    if not area_allowed(context, payload.countyCode):
-        raise HTTPException(status_code=403, detail="Area access denied")
+    require_target_area_allowed(context, payload.countyCode)
     blocks = load_all_blocks()
     if any(item.get("blockCode") == payload.blockCode for item in blocks):
         raise HTTPException(status_code=409, detail="blockCode already exists")
@@ -326,6 +336,7 @@ def patch_forest_block(
                 "deletedAt": block.get("deletedAt"),
             }
         )
+        require_target_area_allowed(context, updated.get("countyCode"))
         blocks[index] = updated
         save_blocks(blocks)
         return ForestBlockOut.model_validate(updated)
