@@ -417,6 +417,58 @@ def test_create_scene_link_rejects_hidden_scene_for_current_context(app_client, 
         assert response.json() == {"detail": "Scene is not visible for current context"}
 
 
+def test_scene_links_allow_wildcard_allowed_roles_for_writer_context(app_client, reload_platform_modules):
+    seed_catalog(
+        reload_platform_modules,
+        {
+            "id": "scene-wildcard",
+            "projectId": "project-alpha",
+            "areaCode": "350703",
+            "allowedRoles": ["*"],
+        },
+    )
+    block = create_block(app_client, "LINK-SCENE-WILDCARD-001")
+    writer_headers = {"X-RS-Roles": "operator", "X-RS-Areas": "350703"}
+
+    created = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-wildcard", "relationType": "coverage"},
+        headers=writer_headers,
+    )
+    listed = list_links(app_client, block["id"], headers=writer_headers)
+    deleted = delete_scene_link(
+        app_client,
+        block["id"],
+        "scene-wildcard",
+        headers=writer_headers,
+    )
+
+    assert created.status_code == 200
+    assert created.json() == {
+        "forestBlockId": block["id"],
+        "sceneId": "scene-wildcard",
+        "relationType": "coverage",
+        "capturedAt": None,
+        "confidence": None,
+    }
+    assert listed.status_code == 200
+    assert listed.json() == {
+        "items": [
+            {
+                "forestBlockId": block["id"],
+                "sceneId": "scene-wildcard",
+                "relationType": "coverage",
+                "capturedAt": None,
+                "confidence": None,
+            }
+        ],
+        "total": 1,
+    }
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True, "deleted": 1}
+
+
 def test_list_scene_links_filters_hidden_scenes_for_current_context(app_client, reload_platform_modules):
     seed_catalog(
         reload_platform_modules,
