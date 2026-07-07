@@ -254,6 +254,34 @@
                 <textarea id="geometry" rows="10" spellcheck="false">null</textarea>
               </label>
             </div>
+            <section class="scene-link-panel" aria-labelledby="sceneLinkTitle">
+              <div class="section-heading">
+                <h3 id="sceneLinkTitle">影像关联</h3>
+                <span id="sceneLinkStatus" class="scene-link-status">请选择一个林班</span>
+              </div>
+              <div class="field-grid scene-link-grid">
+                <label>
+                  <span>Scene ID</span>
+                  <input id="sceneLinkSceneId" type="text" placeholder="例如 cog-demo-001" />
+                </label>
+                <label>
+                  <span>关联类型</span>
+                  <input id="sceneLinkRelationType" type="text" placeholder="coverage / orthophoto" value="coverage" />
+                </label>
+                <label>
+                  <span>采集日期</span>
+                  <input id="sceneLinkCapturedAt" type="date" />
+                </label>
+                <label>
+                  <span>置信度</span>
+                  <input id="sceneLinkConfidence" type="number" min="0" max="1" step="0.01" placeholder="0.00 - 1.00" />
+                </label>
+              </div>
+              <div class="scene-link-toolbar">
+                <button id="linkScene" type="button">关联影像</button>
+              </div>
+              <div id="linkedScenes" class="scene-link-list">请选择一个林班后查看关联影像。</div>
+            </section>
           </form>
         </section>
 

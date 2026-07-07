@@ -299,6 +299,7 @@ const liveForestState = {
   pendingFilters: null,
   debounceTimer: null,
 };
+let activeInfoCardBlockId = "";
 
 function normalizeSdkBasemapMode(mode) {
   return (
@@ -545,9 +546,59 @@ function forestBlockFromFeature(feature) {
     health: props.healthStatus || props.managementStatus || riskText,
     images,
     className: liveBlockClassName(props),
+    isLive: true,
   };
 }
 
+
+function renderImageTabs(tabs, datasetKey) {
+  imageTabs.innerHTML = tabs
+    .map(([name], index) => `<button class="${index === 0 ? "active" : ""}" data-${datasetKey}="${index}">${name}</button>`)
+    .join("");
+
+  function renderTab(index) {
+    const [name, title, desc] = tabs[index];
+    imagePanel.innerHTML = `
+      <div class="preview">${name}</div>
+      <div>
+        <strong>${title}</strong>
+        <p>${desc}</p>
+      </div>
+    `;
+  }
+
+  imageTabs.querySelectorAll(`[data-${datasetKey}]`).forEach((button) => {
+    button.addEventListener("click", () => {
+      imageTabs.querySelectorAll("button").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      renderTab(Number(button.dataset[datasetKey]));
+    });
+  });
+
+  renderTab(0);
+}
+
+function linkedSceneSummaryTab(items) {
+  if (!items.length) {
+    return ["关联影像", "暂无关联影像", "当前林班还没有关联到远程感知场景。"];
+  }
+  const lines = items.map((item) => {
+    const parts = [item.sceneId || "未命名场景", item.relationType || "coverage"];
+    if (item.capturedAt) parts.push(item.capturedAt);
+    if (item.confidence !== null && item.confidence !== undefined) parts.push(`置信度 ${item.confidence}`);
+    return parts.join(" · ");
+  });
+  return ["关联影像", `已关联 ${items.length} 个场景`, lines.join("；")];
+}
+
+async function fetchForestSceneLinks(blockId) {
+  const response = await fetch(`${ZHUSHAN_REMOTE_API_BASE}/api/forest-blocks/${encodeURIComponent(blockId)}/scenes`);
+  if (!response.ok) {
+    throw new Error(`scene links ${response.status}`);
+  }
+  const payload = await response.json();
+  return Array.isArray(payload.items) ? payload.items : [];
+}
 function liveBlockStyle(feature) {
   return blockStyle(forestBlockFromFeature(feature));
 }
@@ -1082,6 +1133,50 @@ function openBlockCard(block) {
   renderImage(0);
   infoCard.classList.remove("hidden");
   businessCard.classList.add("hidden");
+}
+
+function openBlockCard(block) {
+  cardTitle.textContent = "林班电子信息卡";
+  cardSubtitle.textContent = `${block.name} · 影像信息`;
+  activeInfoCardBlockId = String(block.id || "");
+  infoGrid.innerHTML = [
+    ["林班编号", block.code],
+    ["林班名称", block.name],
+    ["面积", block.area],
+    ["竹种", block.variety],
+    ["质量等级", block.level],
+    ["经营主体", block.owner],
+    ["海拔范围", block.altitude],
+    ["坡度范围", block.slope],
+    ["健康度", block.health],
+    ["数据状态", "已入库"],
+  ]
+    .map(([label, value]) => `<span>${label}</span><b>${value}</b>`)
+    .join("");
+
+  renderImageTabs(block.images, "image");
+  infoCard.classList.remove("hidden");
+  businessCard.classList.add("hidden");
+
+  if (!block.isLive || !block.id) {
+    return;
+  }
+
+  const cardBlockId = activeInfoCardBlockId;
+  renderImageTabs([...block.images, ["关联影像", "正在加载关联影像", "正在获取该林班关联的远程感知场景。"]], "image");
+
+  fetchForestSceneLinks(block.id)
+    .then((items) => {
+      if (activeInfoCardBlockId !== cardBlockId) return;
+      renderImageTabs([...block.images, linkedSceneSummaryTab(items)], "image");
+    })
+    .catch(() => {
+      if (activeInfoCardBlockId !== cardBlockId) return;
+      renderImageTabs(
+        [...block.images, ["关联影像", "关联影像暂不可用", `林班 ${block.code || block.name} 的关联影像接口暂不可用。`]],
+        "image"
+      );
+    });
 }
 
 function focusPoint(coord, nextZoom = 14) {

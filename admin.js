@@ -68,6 +68,13 @@ const elements = {
   tags: $("#tags"),
   properties: $("#properties"),
   geometry: $("#geometry"),
+  sceneLinkSceneId: $("#sceneLinkSceneId"),
+  sceneLinkRelationType: $("#sceneLinkRelationType"),
+  sceneLinkCapturedAt: $("#sceneLinkCapturedAt"),
+  sceneLinkConfidence: $("#sceneLinkConfidence"),
+  sceneLinkStatus: $("#sceneLinkStatus"),
+  linkScene: $("#linkScene"),
+  linkedScenes: $("#linkedScenes"),
   importForm: $("#importForm"),
   importFile: $("#importFile"),
   importStrategy: $("#importStrategy"),
@@ -183,6 +190,10 @@ function activeBlock() {
   return state.blocks.find((block) => String(block.id) === String(state.activeBlockId)) || null;
 }
 
+function activeBlockId() {
+  return String(state.activeBlockId || elements.blockId.value || "").trim();
+}
+
 function findBlockById(blockId) {
   return state.blocks.find((block) => String(block.id) === String(blockId)) || null;
 }
@@ -226,6 +237,148 @@ function stringifyPretty(value, fallback) {
   }
 }
 
+function sceneLinkPlaceholder(message) {
+  elements.linkedScenes.innerHTML = `<div class="scene-link-empty">${escapeHtml(message)}</div>`;
+}
+
+function setSceneLinkStatus(message) {
+  elements.sceneLinkStatus.textContent = message;
+}
+
+function setSceneLinkEnabled(enabled) {
+  elements.linkScene.disabled = !enabled;
+  [
+    elements.sceneLinkSceneId,
+    elements.sceneLinkRelationType,
+    elements.sceneLinkCapturedAt,
+    elements.sceneLinkConfidence,
+  ].forEach((element) => {
+    element.disabled = !enabled;
+  });
+}
+
+function resetSceneLinkInputs() {
+  elements.sceneLinkSceneId.value = "";
+  elements.sceneLinkRelationType.value = elements.sceneLinkRelationType.value.trim() || "coverage";
+  elements.sceneLinkCapturedAt.value = "";
+  elements.sceneLinkConfidence.value = "";
+}
+
+function renderSceneLinks(items) {
+  if (!items.length) {
+    sceneLinkPlaceholder("当前林班还没有关联影像。");
+    return;
+  }
+
+  elements.linkedScenes.innerHTML = items
+    .map((item) => {
+      const meta = [
+        item.relationType || "coverage",
+        item.capturedAt ? `采集 ${item.capturedAt}` : "",
+        item.confidence === null || item.confidence === undefined ? "" : `置信度 ${item.confidence}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `
+        <article class="scene-link-item">
+          <div>
+            <strong>${escapeHtml(item.sceneId || "-")}</strong>
+            <p>${escapeHtml(meta || "已关联")}</p>
+          </div>
+          <button
+            type="button"
+            class="button-ghost scene-link-remove"
+            data-scene-id="${escapeHtml(item.sceneId || "")}"
+            data-relation-type="${escapeHtml(item.relationType || "")}"
+          >
+            移除
+          </button>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function loadSceneLinks(block) {
+  if (!block?.id) {
+    setSceneLinkEnabled(false);
+    setSceneLinkStatus("请选择一个林班");
+    sceneLinkPlaceholder("请选择一个林班后查看关联影像。");
+    return null;
+  }
+
+  setSceneLinkEnabled(true);
+  setSceneLinkStatus("正在加载");
+
+  try {
+    const payload = await api(`/api/forest-blocks/${encodeURIComponent(block.id)}/scenes`);
+    renderSceneLinks(Array.isArray(payload.items) ? payload.items : []);
+    setSceneLinkStatus(`已加载 ${payload.total ?? 0} 条关联`);
+    return payload;
+  } catch (error) {
+    sceneLinkPlaceholder(`关联影像加载失败：${error.message}`);
+    setSceneLinkStatus("加载失败");
+    throw error;
+  }
+}
+
+async function linkSceneToActive() {
+  const blockId = activeBlockId();
+  const sceneId = elements.sceneLinkSceneId.value.trim();
+  if (!blockId) {
+    setSceneLinkStatus("请先保存并选中一个林班");
+    return null;
+  }
+  if (!sceneId) {
+    setSceneLinkStatus("请输入 Scene ID");
+    elements.sceneLinkSceneId.focus();
+    return null;
+  }
+
+  const relationType = elements.sceneLinkRelationType.value.trim() || "coverage";
+  const confidenceText = elements.sceneLinkConfidence.value.trim();
+  const payload = {
+    sceneId,
+    relationType,
+    capturedAt: elements.sceneLinkCapturedAt.value || null,
+    confidence: confidenceText ? Number(confidenceText) : null,
+  };
+
+  setSceneLinkStatus("正在关联");
+  await api(`/api/forest-blocks/${encodeURIComponent(blockId)}/scenes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  resetSceneLinkInputs();
+  elements.sceneLinkRelationType.value = relationType;
+  await loadSceneLinks(activeBlock() || { id: blockId });
+  setSceneLinkStatus("关联成功");
+  return true;
+}
+
+async function removeSceneLink(sceneId, relationType) {
+  const blockId = activeBlockId();
+  if (!blockId || !sceneId) {
+    return null;
+  }
+
+  const query = new URLSearchParams();
+  if (relationType) {
+    query.set("relationType", relationType);
+  }
+
+  setSceneLinkStatus("正在移除");
+  await api(
+    `/api/forest-blocks/${encodeURIComponent(blockId)}/scenes/${encodeURIComponent(sceneId)}${
+      query.toString() ? `?${query.toString()}` : ""
+    }`,
+    { method: "DELETE" }
+  );
+  await loadSceneLinks(activeBlock() || { id: blockId });
+  setSceneLinkStatus("已移除关联");
+  return true;
+}
+
 function populateForm(block) {
   const nextBlock = block || EMPTY_BLOCK;
   state.activeBlockId = nextBlock.id || "";
@@ -251,6 +404,7 @@ function populateForm(block) {
   elements.properties.value = stringifyPretty(nextBlock.properties, {});
   elements.geometry.value = stringifyPretty(nextBlock.geometry, null);
   renderBlockRows();
+  loadSceneLinks(nextBlock).catch(() => {});
 }
 
 function resetForm() {
@@ -461,6 +615,22 @@ function attachEvents() {
     }
     state.activeBlockId = row.getAttribute("data-block-id") || "";
     populateForm(activeBlock());
+  });
+
+  elements.linkScene.addEventListener("click", () => {
+    linkSceneToActive().catch((error) => {
+      setSceneLinkStatus(`关联失败：${error.message}`);
+    });
+  });
+
+  elements.linkedScenes.addEventListener("click", (event) => {
+    const button = event.target.closest(".scene-link-remove");
+    if (!button) {
+      return;
+    }
+    removeSceneLink(button.dataset.sceneId || "", button.dataset.relationType || "").catch((error) => {
+      setSceneLinkStatus(`移除失败：${error.message}`);
+    });
   });
 }
 

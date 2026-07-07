@@ -363,6 +363,67 @@ tbody tr.active {
   margin-top: 12px;
 }
 
+.scene-link-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.scene-link-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.scene-link-status {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.scene-link-grid {
+  margin-top: 12px;
+}
+
+.scene-link-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.scene-link-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.scene-link-item,
+.scene-link-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(8, 19, 17, 0.72);
+}
+
+.scene-link-item strong {
+  display: block;
+  font-size: 13px;
+}
+
+.scene-link-item p,
+.scene-link-empty {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scene-link-remove {
+  flex: 0 0 auto;
+}
+
 .import-panel {
   display: grid;
   gap: 14px;
