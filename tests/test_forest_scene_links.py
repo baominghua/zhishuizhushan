@@ -5,6 +5,21 @@ import json
 from tests.test_forest_blocks import sample_block_payload
 
 
+def seed_catalog(reload_platform_modules, *scene_ids: str) -> None:
+    _, database_module = reload_platform_modules()
+    catalog_path = database_module.get_data_dir() / "catalog.json"
+    scenes = [
+        {
+            "id": scene_id,
+            "name": scene_id,
+            "cogPath": f"cogs/{scene_id}.tif",
+            "bounds": [117.0, 27.0, 118.0, 28.0],
+        }
+        for scene_id in scene_ids
+    ]
+    catalog_path.write_text(json.dumps({"scenes": scenes}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def create_block(app_client, code: str = "LINK-001") -> dict[str, object]:
     response = app_client.post(
         "/api/forest-blocks",
@@ -51,6 +66,7 @@ def delete_scene_link(
 
 
 def test_link_scene_to_forest_block_lists_and_persists(app_client, reload_platform_modules):
+    seed_catalog(reload_platform_modules, "cog-demo-001")
     block = create_block(app_client)
 
     response = link_scene(
@@ -90,7 +106,8 @@ def test_link_scene_to_forest_block_lists_and_persists(app_client, reload_platfo
     assert json.loads(link_path.read_text(encoding="utf-8")) == listed.json()["items"]
 
 
-def test_duplicate_scene_relation_upserts_in_place(app_client):
+def test_duplicate_scene_relation_upserts_in_place(app_client, reload_platform_modules):
+    seed_catalog(reload_platform_modules, "cog-demo-002")
     block = create_block(app_client, "LINK-UPSERT-001")
 
     first = link_scene(
@@ -126,7 +143,8 @@ def test_duplicate_scene_relation_upserts_in_place(app_client):
     assert listed.json()["items"][0]["confidence"] == 0.95
 
 
-def test_delete_scene_links_supports_relation_type_and_full_scene_removal(app_client):
+def test_delete_scene_links_supports_relation_type_and_full_scene_removal(app_client, reload_platform_modules):
+    seed_catalog(reload_platform_modules, "cog-demo-003", "cog-demo-004")
     block = create_block(app_client, "LINK-DELETE-001")
     for relation_type in ("coverage", "orthophoto"):
         response = link_scene(
@@ -184,7 +202,8 @@ def test_delete_scene_links_supports_relation_type_and_full_scene_removal(app_cl
     }
 
 
-def test_scene_links_require_visible_block_for_read_and_write(app_client):
+def test_scene_links_require_visible_block_for_read_and_write(app_client, reload_platform_modules):
+    seed_catalog(reload_platform_modules, "cog-demo-005")
     block = create_block(app_client, "LINK-VIS-001")
     hidden_headers = {"X-RS-Roles": "operator", "X-RS-Areas": "350702"}
 
@@ -207,7 +226,8 @@ def test_scene_links_require_visible_block_for_read_and_write(app_client):
     assert deleted.status_code == 404
 
 
-def test_scene_links_require_write_access_for_mutations(app_client):
+def test_scene_links_require_write_access_for_mutations(app_client, reload_platform_modules):
+    seed_catalog(reload_platform_modules, "cog-demo-006")
     block = create_block(app_client, "LINK-AUTH-001")
 
     created = link_scene(
@@ -225,3 +245,17 @@ def test_scene_links_require_write_access_for_mutations(app_client):
 
     assert created.status_code == 403
     assert deleted.status_code == 403
+
+
+def test_scene_links_reject_nonexistent_scene_id(app_client):
+    block = create_block(app_client, "LINK-MISSING-SCENE-001")
+
+    response = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "cog-demo-missing", "relationType": "coverage"},
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Scene not found"}

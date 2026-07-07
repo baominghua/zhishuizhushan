@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -22,6 +23,26 @@ class ForestSceneLinkIn(BaseModel):
 
 def forest_scene_links_json_path():
     return get_data_dir() / "forest-blocks" / "forest_block_scene_links.json"
+
+
+def remote_sensing_catalog_json_path():
+    return get_data_dir() / "catalog.json"
+
+
+def require_catalog_scene(scene_id: str) -> dict[str, Any]:
+    catalog_path = remote_sensing_catalog_json_path()
+    if not catalog_path.exists():
+        raise HTTPException(status_code=404, detail="Scene catalog not found")
+
+    try:
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=404, detail="Scene catalog not found") from exc
+
+    for scene in data.get("scenes", []):
+        if scene.get("id") == scene_id:
+            return scene
+    raise HTTPException(status_code=404, detail="Scene not found")
 
 
 def load_scene_links() -> list[dict[str, Any]]:
@@ -70,6 +91,7 @@ def create_forest_block_scene_link(
         raise HTTPException(status_code=422, detail="sceneId cannot be empty")
     if not next_item["relationType"]:
         raise HTTPException(status_code=422, detail="relationType cannot be empty")
+    require_catalog_scene(next_item["sceneId"])
 
     records = [
         item
