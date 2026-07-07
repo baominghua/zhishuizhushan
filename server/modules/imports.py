@@ -228,6 +228,7 @@ async def import_forest_blocks(
     }
 
     valid_rows = 0
+    did_change_blocks = False
     errors: list[dict[str, Any]] = []
     for row_number, record in enumerate(records, start=1):
         row_errors = validate_record(record)
@@ -251,12 +252,15 @@ async def import_forest_blocks(
             normalized["createdAt"] = existing.get("createdAt", normalized["createdAt"])
             normalized["deletedAt"] = existing.get("deletedAt")
             blocks[existing_index] = normalized
+            did_change_blocks = True
             continue
 
         blocks.append(normalized)
         active_indexes[record["blockCode"]] = len(blocks) - 1
+        did_change_blocks = True
 
-    save_blocks(blocks)
+    if did_change_blocks:
+        save_blocks(blocks)
 
     batch_id = str(uuid.uuid4())
     report = build_report(

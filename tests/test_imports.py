@@ -321,8 +321,18 @@ def test_import_preserves_deleted_records_in_storage(app_client, reload_platform
 
 
 def test_area_scoped_import_rejects_rows_outside_allowed_areas_without_saving(
-    app_client, reload_platform_modules
+    app_client, monkeypatch
 ):
+    from server.modules import imports as imports_module
+
+    save_calls: list[object] = []
+
+    def fail_on_save(blocks):
+        save_calls.append(blocks)
+        raise AssertionError("save_blocks should not be called when all rows are rejected")
+
+    monkeypatch.setattr(imports_module, "save_blocks", fail_on_save)
+
     response = app_client.post(
         "/api/imports/forest-blocks",
         files={
@@ -350,6 +360,7 @@ def test_area_scoped_import_rejects_rows_outside_allowed_areas_without_saving(
     assert body["invalidRows"] == 1
     assert body["report"]["errors"][0]["row"] == 1
     assert "Area access denied" in body["report"]["errors"][0]["message"]
+    assert save_calls == []
 
     listed = app_client.get(
         "/api/forest-blocks?q=FORBIDDEN-001",
@@ -357,7 +368,3 @@ def test_area_scoped_import_rejects_rows_outside_allowed_areas_without_saving(
     )
     assert listed.status_code == 200
     assert listed.json()["total"] == 0
-
-    _, database_module = reload_platform_modules()
-    stored = json.loads(database_module.forest_blocks_json_path().read_text(encoding="utf-8"))
-    assert stored == []
