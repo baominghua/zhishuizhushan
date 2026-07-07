@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import json
+import sys
+from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
+from server.modules.auth import AuthContext
 from tests.test_forest_blocks import sample_block_payload
 
 
@@ -63,6 +70,67 @@ def delete_scene_link(
         params=params,
         headers=headers or {},
     )
+
+
+def reload_scene_links_module(reload_platform_modules):
+    reload_platform_modules()
+    import server.modules.forest_scene_links as forest_scene_links_module
+
+    importlib.reload(forest_scene_links_module)
+    return forest_scene_links_module
+
+
+class FakeCursor:
+    def __init__(self, *, fetchall_result=None, fetchone_result=None, rowcount: int = 0):
+        self.fetchall_result = list(fetchall_result or [])
+        self.fetchone_result = fetchone_result
+        self.rowcount = rowcount
+        self.executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql: str, params=None):
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, tuple(params) if params is not None else None))
+
+    def fetchall(self):
+        return list(self.fetchall_result)
+
+    def fetchone(self):
+        return self.fetchone_result
+
+
+class FakeConnection:
+    def __init__(self, cursor: FakeCursor):
+        self.cursor_obj = cursor
+        self.commit_count = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def commit(self):
+        self.commit_count += 1
+
+
+def install_fake_psycopg(monkeypatch, *, cursor: FakeCursor, connect_calls: list[str] | None = None):
+    calls = connect_calls if connect_calls is not None else []
+
+    def fake_connect(database_url: str):
+        calls.append(database_url)
+        return FakeConnection(cursor)
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    return calls
 
 
 def test_link_scene_to_forest_block_lists_and_persists(app_client, reload_platform_modules):
@@ -259,3 +327,165 @@ def test_scene_links_reject_nonexistent_scene_id(app_client):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Scene not found"}
+
+
+def test_postgis_list_scene_links_returns_api_shape(monkeypatch, reload_platform_modules):
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    block_id = "8ab8cd2e-f574-4fd8-bdf6-b7788e632111"
+    cursor = FakeCursor(
+        fetchall_result=[
+            (block_id, "scene-a", "coverage", "2026-06-01", 0.75),
+            (block_id, "scene-b", "orthophoto", None, None),
+        ]
+    )
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, cursor=cursor, connect_calls=connect_calls)
+
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+
+    items = forest_scene_links_module.scene_links_for_block(block_id)
+
+    assert items == [
+        {
+            "forestBlockId": block_id,
+            "sceneId": "scene-a",
+            "relationType": "coverage",
+            "capturedAt": "2026-06-01",
+            "confidence": 0.75,
+        },
+        {
+            "forestBlockId": block_id,
+            "sceneId": "scene-b",
+            "relationType": "orthophoto",
+            "capturedAt": None,
+            "confidence": None,
+        },
+    ]
+    assert connect_calls == ["postgresql://smart-bamboo"]
+    assert cursor.executed == [
+        (
+            "SELECT forest_block_id::text, scene_id, relation_type, captured_at, confidence "
+            "FROM forest_block_scene_links WHERE forest_block_id = %s ORDER BY created_at DESC, scene_id, relation_type",
+            (block_id,),
+        )
+    ]
+
+
+def test_postgis_create_and_delete_scene_links_use_database_storage(monkeypatch, reload_platform_modules):
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    block_id = "8ab8cd2e-f574-4fd8-bdf6-b7788e632222"
+    create_cursor = FakeCursor()
+    delete_cursor = FakeCursor(rowcount=2)
+    cursors = [create_cursor, delete_cursor]
+    connect_calls: list[str] = []
+
+    def fake_connect(database_url: str):
+        connect_calls.append(database_url)
+        return FakeConnection(cursors.pop(0))
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "require_visible_block",
+        lambda block_id, context: {"id": block_id},
+    )
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "require_catalog_scene",
+        lambda scene_id: {"id": scene_id},
+    )
+
+    context = AuthContext(user="alice", roles={"admin"}, projects=set(), areas=set())
+    created = forest_scene_links_module.create_forest_block_scene_link(
+        block_id,
+        forest_scene_links_module.ForestSceneLinkIn(
+            sceneId="scene-a",
+            relationType="coverage",
+            capturedAt="2026-06-12",
+            confidence=0.98,
+        ),
+        context=context,
+    )
+    deleted = forest_scene_links_module.delete_forest_block_scene_link(
+        block_id,
+        "scene-a",
+        relationType="",
+        context=context,
+    )
+
+    assert created == {
+        "forestBlockId": block_id,
+        "sceneId": "scene-a",
+        "relationType": "coverage",
+        "capturedAt": "2026-06-12",
+        "confidence": 0.98,
+    }
+    assert deleted == {"ok": True, "deleted": 2}
+    assert connect_calls == ["postgresql://smart-bamboo", "postgresql://smart-bamboo"]
+    assert create_cursor.executed == [
+        (
+            "INSERT INTO forest_block_scene_links ( forest_block_id, scene_id, relation_type, captured_at, confidence ) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (forest_block_id, scene_id, relation_type) DO UPDATE "
+            "SET captured_at = EXCLUDED.captured_at, confidence = EXCLUDED.confidence, created_at = now()",
+            (block_id, "scene-a", "coverage", "2026-06-12", 0.98),
+        )
+    ]
+    assert delete_cursor.executed == [
+        (
+            "DELETE FROM forest_block_scene_links WHERE forest_block_id = %s AND scene_id = %s",
+            (block_id, "scene-a"),
+        )
+    ]
+
+
+def test_postgis_catalog_validation_queries_remote_sensing_scenes(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    monkeypatch.setenv("REMOTE_SENSING_CATALOG_BACKEND", "postgis")
+    monkeypatch.setenv("REMOTE_SENSING_DATABASE_URL", "postgresql://remote-sensing")
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    cursor = FakeCursor(fetchone_result=("scene-postgis",))
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, cursor=cursor, connect_calls=connect_calls)
+
+    scene = forest_scene_links_module.require_catalog_scene("scene-postgis")
+
+    assert scene == {"id": "scene-postgis"}
+    assert connect_calls == ["postgresql://remote-sensing"]
+    assert cursor.executed == [
+        ("SELECT id FROM remote_sensing_scenes WHERE id = %s LIMIT 1", ("scene-postgis",))
+    ]
+
+
+def test_postgis_scene_links_raise_503_when_connect_fails(monkeypatch, reload_platform_modules):
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+
+    def fail_connect(database_url: str):
+        raise RuntimeError(f"boom for {database_url}")
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fail_connect))
+
+    with pytest.raises(HTTPException) as excinfo:
+        forest_scene_links_module.scene_links_for_block("8ab8cd2e-f574-4fd8-bdf6-b7788e632333")
+
+    assert excinfo.value.status_code == 503
+    assert "forest scene links PostGIS database is unavailable" in excinfo.value.detail
+    assert "postgresql://smart-bamboo" in excinfo.value.detail
