@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import importlib
 import sys
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from server.modules.auth import AuthContext, request_context, require_write_access
@@ -51,6 +53,47 @@ def test_request_context_parses_remote_sensing_headers():
     assert context.roles == {"admin", "operator"}
     assert context.projects == {"p1", "p2"}
     assert context.areas == {"a1", "a2"}
+
+
+def test_auth_required_enforces_api_tokens_for_forest_writes(isolated_env, monkeypatch):
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv(
+        "REMOTE_SENSING_API_TOKENS",
+        json.dumps(
+            {
+                "admin-token": {"user": "alice", "roles": ["admin"], "areas": ["*"], "projects": ["*"]},
+                "viewer-token": {"user": "bob", "roles": ["viewer"], "areas": ["*"], "projects": ["*"]},
+            }
+        ),
+    )
+
+    import server.app as app_module
+    import server.modules.database as database
+    import server.modules.settings as settings
+
+    settings.get_settings.cache_clear()
+    importlib.reload(settings)
+    importlib.reload(database)
+    importlib.reload(app_module)
+    settings.get_settings.cache_clear()
+    client = TestClient(app_module.app)
+
+    missing = client.post("/api/forest-blocks", json=sample_block_payload("AUTH-TOKEN-001"))
+    viewer = client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("AUTH-TOKEN-002"),
+        headers={"Authorization": "Bearer viewer-token"},
+    )
+    admin = client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("AUTH-TOKEN-003"),
+        headers={"X-RS-Token": "admin-token"},
+    )
+
+    assert missing.status_code == 401
+    assert viewer.status_code == 403
+    assert admin.status_code == 200
+    assert admin.json()["blockCode"] == "AUTH-TOKEN-003"
 
 
 @pytest.mark.parametrize(
@@ -155,6 +198,63 @@ def test_health_includes_platform_schema_status(app_client):
     }
 
 
+class FakeCursor:
+    def __init__(self, *, fetchall_result=None, fetchone_result=None):
+        self.fetchall_result = list(fetchall_result or [])
+        self.fetchone_result = fetchone_result
+        self.executed: list[tuple[str, tuple[object, ...] | None]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def execute(self, sql: str, params=None):
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, tuple(params) if params is not None else None))
+
+    def fetchall(self):
+        return list(self.fetchall_result)
+
+    def fetchone(self):
+        return self.fetchone_result
+
+
+class FakeConnection:
+    def __init__(self, cursor: FakeCursor):
+        self.cursor_obj = cursor
+        self.commit_count = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def commit(self):
+        self.commit_count += 1
+
+
+def install_fake_psycopg(monkeypatch, cursors: list[FakeCursor], connect_calls: list[str]):
+    def fake_connect(database_url: str):
+        connect_calls.append(database_url)
+        return FakeConnection(cursors.pop(0))
+
+    monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+
+
+def reload_forest_blocks_module(reload_platform_modules):
+    reload_platform_modules()
+    import server.modules.forest_blocks as forest_blocks_module
+
+    importlib.reload(forest_blocks_module)
+    return forest_blocks_module
+
+
 SAMPLE_GEOMETRY = {
     "type": "MultiPolygon",
     "coordinates": [
@@ -189,6 +289,123 @@ def sample_block_payload(code: str = "FB-001") -> dict[str, object]:
         "riskLevel": "low",
         "geometry": SAMPLE_GEOMETRY,
     }
+
+
+def postgis_row(code: str = "PG-001") -> dict[str, object]:
+    return {
+        "id": "8ab8cd2e-f574-4fd8-bdf6-b7788e632101",
+        "block_code": code,
+        "name": "PostGIS block",
+        "county_code": "350703",
+        "county_name": "Jianyang",
+        "town_code": "350703101",
+        "town_name": "Masha",
+        "village_code": None,
+        "village_name": None,
+        "base_type": "self_operated",
+        "operation_type": "timber",
+        "forest_type": None,
+        "area_mu": 126.5,
+        "slope_degree": None,
+        "ownership_status": None,
+        "management_status": None,
+        "quality_grade": "A",
+        "health_status": "normal",
+        "risk_level": "low",
+        "bamboo_age": None,
+        "avg_dbh_cm": None,
+        "avg_height_m": None,
+        "standing_density": None,
+        "carbon_estimate_tco2e": None,
+        "yield_estimate": {},
+        "tags": [],
+        "properties": {},
+        "geometry": SAMPLE_GEOMETRY,
+        "source_batch_id": None,
+        "created_at": "2026-07-07T00:00:00+00:00",
+        "updated_at": "2026-07-07T00:00:00+00:00",
+        "deleted_at": None,
+    }
+
+
+def test_postgis_create_forest_block_uses_database_storage(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    monkeypatch.setenv("SMART_BAMBOO_DATABASE_URL", "postgresql://smart-bamboo")
+    monkeypatch.setenv("SMART_BAMBOO_STORAGE_BACKEND", "postgis")
+    forest_blocks_module = reload_forest_blocks_module(reload_platform_modules)
+    duplicate_cursor = FakeCursor(fetchall_result=[])
+    insert_cursor = FakeCursor()
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, [duplicate_cursor, insert_cursor], connect_calls)
+
+    created = forest_blocks_module.create_forest_block(
+        forest_blocks_module.ForestBlockIn(**sample_block_payload("PG-CREATE-001")),
+        context=AuthContext(user="alice", roles={"admin"}, projects=set(), areas=set()),
+    )
+
+    assert created.blockCode == "PG-CREATE-001"
+    assert connect_calls == ["postgresql://smart-bamboo", "postgresql://smart-bamboo"]
+    assert "FROM forest_blocks" in duplicate_cursor.executed[0][0]
+    assert "INSERT INTO forest_blocks" in insert_cursor.executed[0][0]
+    assert "ST_GeomFromGeoJSON" in insert_cursor.executed[0][0]
+    assert insert_cursor.executed[0][1][1] == "PG-CREATE-001"
+
+
+def test_postgis_load_and_save_blocks_use_database_storage(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    monkeypatch.setenv("SMART_BAMBOO_DATABASE_URL", "postgresql://smart-bamboo")
+    monkeypatch.setenv("SMART_BAMBOO_STORAGE_BACKEND", "postgis")
+    forest_blocks_module = reload_forest_blocks_module(reload_platform_modules)
+    insert_cursor = FakeCursor()
+    select_cursor = FakeCursor(fetchall_result=[postgis_row("PG-LOAD-001")])
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, [insert_cursor, select_cursor], connect_calls)
+
+    block = forest_blocks_module.normalize_block(sample_block_payload("PG-LOAD-001"))
+    forest_blocks_module.save_blocks([block])
+    loaded = forest_blocks_module.load_all_blocks()
+
+    assert loaded[0]["blockCode"] == "PG-LOAD-001"
+    assert connect_calls == ["postgresql://smart-bamboo", "postgresql://smart-bamboo"]
+    assert "INSERT INTO forest_blocks" in insert_cursor.executed[0][0]
+    assert "FROM forest_blocks" in select_cursor.executed[0][0]
+
+
+def test_postgis_list_filters_are_applied_in_database(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    monkeypatch.setenv("SMART_BAMBOO_DATABASE_URL", "postgresql://smart-bamboo")
+    monkeypatch.setenv("SMART_BAMBOO_STORAGE_BACKEND", "postgis")
+    forest_blocks_module = reload_forest_blocks_module(reload_platform_modules)
+    list_cursor = FakeCursor(fetchall_result=[postgis_row("PG-FILTER-001")])
+    count_cursor = FakeCursor(fetchone_result=(1,))
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, [list_cursor, count_cursor], connect_calls)
+
+    response = forest_blocks_module.list_forest_blocks(
+        forest_blocks_module.ForestBlockFilters(
+            q="block",
+            countyCode="350703",
+            bbox="118.09,26.49,118.13,26.53",
+            limit=20,
+            offset=5,
+        ),
+        AuthContext(user="alice", roles=set(), projects=set(), areas={"350703"}),
+    )
+
+    list_sql, list_params = list_cursor.executed[0]
+    count_sql, count_params = count_cursor.executed[0]
+    assert response["total"] == 1
+    assert response["items"][0]["blockCode"] == "PG-FILTER-001"
+    assert "county_code = %s" in list_sql
+    assert "geometry && ST_MakeEnvelope" in list_sql
+    assert "ILIKE" in list_sql
+    assert "LIMIT %s OFFSET %s" in list_sql
+    assert list_params[-2:] == (20, 5)
+    assert "SELECT COUNT(*) FROM forest_blocks" in count_sql
+    assert count_params[:2] == ("350703", "350703")
 
 
 def test_create_list_patch_and_delete_forest_block(app_client):

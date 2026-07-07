@@ -1,18 +1,127 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .auth import AuthContext, area_allowed, request_context, require_write_access
-from .database import forest_blocks_json_path, load_json_records, save_json_records
+from .database import forest_blocks_json_path, load_json_records, save_json_records, use_postgis
+from .settings import get_settings
 
 
 router = APIRouter(prefix="/api", tags=["forest-blocks"])
 
+POSTGIS_SELECT_COLUMNS = [
+    "id",
+    "block_code",
+    "name",
+    "county_code",
+    "county_name",
+    "town_code",
+    "town_name",
+    "village_code",
+    "village_name",
+    "base_type",
+    "operation_type",
+    "forest_type",
+    "area_mu",
+    "slope_degree",
+    "ownership_status",
+    "management_status",
+    "quality_grade",
+    "health_status",
+    "risk_level",
+    "bamboo_age",
+    "avg_dbh_cm",
+    "avg_height_m",
+    "standing_density",
+    "carbon_estimate_tco2e",
+    "yield_estimate",
+    "tags",
+    "properties",
+    "geometry",
+    "source_batch_id",
+    "created_at",
+    "updated_at",
+    "deleted_at",
+]
+
+POSTGIS_SELECT_SQL = """
+    SELECT
+        id::text,
+        block_code,
+        name,
+        county_code,
+        county_name,
+        town_code,
+        town_name,
+        village_code,
+        village_name,
+        base_type,
+        operation_type,
+        forest_type,
+        area_mu,
+        slope_degree,
+        ownership_status,
+        management_status,
+        quality_grade,
+        health_status,
+        risk_level,
+        bamboo_age,
+        avg_dbh_cm,
+        avg_height_m,
+        standing_density,
+        carbon_estimate_tco2e,
+        COALESCE(yield_estimate, '{}'::jsonb),
+        COALESCE(tags, '[]'::jsonb),
+        COALESCE(properties, '{}'::jsonb),
+        CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::json END,
+        source_batch_id::text,
+        created_at,
+        updated_at,
+        deleted_at
+    FROM forest_blocks
+"""
+
+DB_TO_API_FIELD = {
+    "id": "id",
+    "block_code": "blockCode",
+    "name": "name",
+    "county_code": "countyCode",
+    "county_name": "countyName",
+    "town_code": "townCode",
+    "town_name": "townName",
+    "village_code": "villageCode",
+    "village_name": "villageName",
+    "base_type": "baseType",
+    "operation_type": "operationType",
+    "forest_type": "forestType",
+    "area_mu": "areaMu",
+    "slope_degree": "slopeDegree",
+    "ownership_status": "ownershipStatus",
+    "management_status": "managementStatus",
+    "quality_grade": "qualityGrade",
+    "health_status": "healthStatus",
+    "risk_level": "riskLevel",
+    "bamboo_age": "bambooAge",
+    "avg_dbh_cm": "avgDbhCm",
+    "avg_height_m": "avgHeightM",
+    "standing_density": "standingDensity",
+    "carbon_estimate_tco2e": "carbonEstimateTco2e",
+    "yield_estimate": "yieldEstimate",
+    "tags": "tags",
+    "properties": "properties",
+    "geometry": "geometry",
+    "source_batch_id": "sourceBatchId",
+    "created_at": "createdAt",
+    "updated_at": "updatedAt",
+    "deleted_at": "deletedAt",
+}
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -157,15 +266,376 @@ def parse_bbox(value: str | None) -> list[float] | None:
     return parts
 
 
+def postgis_connect():
+    try:
+        import psycopg
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"forest blocks PostGIS database requires psycopg. {exc}") from exc
+
+    try:
+        return psycopg.connect(get_settings().database_url)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="forest blocks PostGIS database is unavailable") from exc
+
+
+def normalize_geometry_for_storage(geometry: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not geometry:
+        return None
+    geometry_type = geometry.get("type")
+    coordinates = geometry.get("coordinates")
+    if geometry_type == "Polygon":
+        return {"type": "MultiPolygon", "coordinates": [coordinates]}
+    if geometry_type == "MultiPolygon":
+        return {"type": "MultiPolygon", "coordinates": coordinates}
+    return None
+
+
+def serializable_json(value: Any, default: Any) -> str:
+    if value is None:
+        value = default
+    return json.dumps(value, ensure_ascii=False)
+
+
+def decimal_to_float(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+def datetime_to_iso(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def json_value(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
+def normalize_postgis_row(row: Any) -> dict[str, Any]:
+    if hasattr(row, "keys"):
+        source = dict(row)
+    else:
+        source = dict(zip(POSTGIS_SELECT_COLUMNS, row))
+
+    block: dict[str, Any] = {}
+    for db_field, api_field in DB_TO_API_FIELD.items():
+        value = source.get(db_field)
+        if db_field in {"yield_estimate", "properties"}:
+            value = json_value(value, {})
+        elif db_field == "tags":
+            value = json_value(value, [])
+        elif db_field in {"created_at", "updated_at", "deleted_at"}:
+            value = datetime_to_iso(value)
+        else:
+            value = decimal_to_float(value)
+        block[api_field] = value
+
+    block.setdefault("yieldEstimate", {})
+    block.setdefault("tags", [])
+    block.setdefault("properties", {})
+    return block
+
+
+def postgis_where(
+    *,
+    filters: ForestBlockFilters | None = None,
+    context: AuthContext | None = None,
+    include_deleted: bool = False,
+    block_id: str | None = None,
+    block_code: str | None = None,
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if not include_deleted:
+        clauses.append("deleted_at IS NULL")
+    if block_id:
+        clauses.append("id = %s")
+        params.append(block_id)
+    if block_code:
+        clauses.append("block_code = %s")
+        params.append(block_code)
+
+    if context and context_has_scoped_areas(context):
+        placeholders = ", ".join(["%s"] * len(context.areas))
+        clauses.append(f"(county_code IS NULL OR county_code IN ({placeholders}))")
+        params.extend(sorted(context.areas))
+
+    if filters:
+        exact_filters = {
+            "countyCode": "county_code",
+            "townCode": "town_code",
+            "baseType": "base_type",
+            "operationType": "operation_type",
+            "qualityGrade": "quality_grade",
+            "healthStatus": "health_status",
+            "riskLevel": "risk_level",
+        }
+        for api_field, db_field in exact_filters.items():
+            value = getattr(filters, api_field)
+            if value:
+                clauses.append(f"{db_field} = %s")
+                params.append(value)
+
+        if filters.q:
+            pattern = f"%{filters.q}%"
+            clauses.append(
+                "(block_code ILIKE %s OR name ILIKE %s OR county_name ILIKE %s OR town_name ILIKE %s OR village_name ILIKE %s)"
+            )
+            params.extend([pattern] * 5)
+
+        bbox = parse_bbox(filters.bbox)
+        if bbox:
+            clauses.append("geometry && ST_MakeEnvelope(%s, %s, %s, %s, 4326)")
+            params.extend(bbox)
+
+    if not clauses:
+        return "", params
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def fetch_blocks_postgis(
+    *,
+    filters: ForestBlockFilters | None = None,
+    context: AuthContext | None = None,
+    include_deleted: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
+    block_id: str | None = None,
+    block_code: str | None = None,
+) -> list[dict[str, Any]]:
+    where_sql, params = postgis_where(
+        filters=filters,
+        context=context,
+        include_deleted=include_deleted,
+        block_id=block_id,
+        block_code=block_code,
+    )
+    sql = f"{POSTGIS_SELECT_SQL}{where_sql} ORDER BY updated_at DESC, block_code"
+    if limit is not None:
+        sql += " LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+    with postgis_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return [normalize_postgis_row(row) for row in cur.fetchall()]
+
+
+def count_blocks_postgis(filters: ForestBlockFilters, context: AuthContext) -> int:
+    where_sql, params = postgis_where(filters=filters, context=context)
+    with postgis_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM forest_blocks{where_sql}", tuple(params))
+            row = cur.fetchone()
+    return int(row[0] if row else 0)
+
+
+def first_block_postgis(
+    *,
+    block_id: str | None = None,
+    block_code: str | None = None,
+    context: AuthContext | None = None,
+    include_deleted: bool = False,
+) -> dict[str, Any] | None:
+    items = fetch_blocks_postgis(
+        block_id=block_id,
+        block_code=block_code,
+        context=context,
+        include_deleted=include_deleted,
+        limit=1,
+    )
+    return items[0] if items else None
+
+
+def postgis_block_values(block: dict[str, Any]) -> tuple[Any, ...]:
+    geometry = normalize_geometry_for_storage(block.get("geometry"))
+    geometry_json = json.dumps(geometry, ensure_ascii=False) if geometry else None
+    return (
+        block.get("id"),
+        block.get("blockCode"),
+        block.get("name"),
+        block.get("countyCode"),
+        block.get("countyName"),
+        block.get("townCode"),
+        block.get("townName"),
+        block.get("villageCode"),
+        block.get("villageName"),
+        block.get("baseType"),
+        block.get("operationType"),
+        block.get("forestType"),
+        block.get("areaMu"),
+        block.get("slopeDegree"),
+        block.get("ownershipStatus"),
+        block.get("managementStatus"),
+        block.get("qualityGrade"),
+        block.get("healthStatus"),
+        block.get("riskLevel"),
+        block.get("bambooAge"),
+        block.get("avgDbhCm"),
+        block.get("avgHeightM"),
+        block.get("standingDensity"),
+        block.get("carbonEstimateTco2e"),
+        serializable_json(block.get("yieldEstimate"), {}),
+        serializable_json(block.get("tags"), []),
+        serializable_json(block.get("properties"), {}),
+        geometry_json,
+        geometry_json,
+        geometry_json,
+        geometry_json,
+        block.get("createdAt"),
+        block.get("updatedAt"),
+        block.get("deletedAt"),
+    )
+
+
+def execute_upsert_block_postgis(cur: Any, block: dict[str, Any]) -> None:
+    cur.execute(
+        """
+                INSERT INTO forest_blocks (
+                    id,
+                    block_code,
+                    name,
+                    county_code,
+                    county_name,
+                    town_code,
+                    town_name,
+                    village_code,
+                    village_name,
+                    base_type,
+                    operation_type,
+                    forest_type,
+                    area_mu,
+                    slope_degree,
+                    ownership_status,
+                    management_status,
+                    quality_grade,
+                    health_status,
+                    risk_level,
+                    bamboo_age,
+                    avg_dbh_cm,
+                    avg_height_m,
+                    standing_density,
+                    carbon_estimate_tco2e,
+                    yield_estimate,
+                    tags,
+                    properties,
+                    geometry,
+                    centroid,
+                    created_at,
+                    updated_at,
+                    deleted_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb,
+                    %s::jsonb,
+                    %s::jsonb,
+                    CASE WHEN %s IS NULL THEN NULL ELSE ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)) END,
+                    CASE WHEN %s IS NULL THEN NULL ELSE ST_Centroid(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))) END,
+                    %s, %s, %s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    block_code = EXCLUDED.block_code,
+                    name = EXCLUDED.name,
+                    county_code = EXCLUDED.county_code,
+                    county_name = EXCLUDED.county_name,
+                    town_code = EXCLUDED.town_code,
+                    town_name = EXCLUDED.town_name,
+                    village_code = EXCLUDED.village_code,
+                    village_name = EXCLUDED.village_name,
+                    base_type = EXCLUDED.base_type,
+                    operation_type = EXCLUDED.operation_type,
+                    forest_type = EXCLUDED.forest_type,
+                    area_mu = EXCLUDED.area_mu,
+                    slope_degree = EXCLUDED.slope_degree,
+                    ownership_status = EXCLUDED.ownership_status,
+                    management_status = EXCLUDED.management_status,
+                    quality_grade = EXCLUDED.quality_grade,
+                    health_status = EXCLUDED.health_status,
+                    risk_level = EXCLUDED.risk_level,
+                    bamboo_age = EXCLUDED.bamboo_age,
+                    avg_dbh_cm = EXCLUDED.avg_dbh_cm,
+                    avg_height_m = EXCLUDED.avg_height_m,
+                    standing_density = EXCLUDED.standing_density,
+                    carbon_estimate_tco2e = EXCLUDED.carbon_estimate_tco2e,
+                    yield_estimate = EXCLUDED.yield_estimate,
+                    tags = EXCLUDED.tags,
+                    properties = EXCLUDED.properties,
+                    geometry = EXCLUDED.geometry,
+                    centroid = EXCLUDED.centroid,
+                    created_at = EXCLUDED.created_at,
+                    updated_at = EXCLUDED.updated_at,
+                    deleted_at = EXCLUDED.deleted_at
+                """,
+        postgis_block_values(block),
+    )
+
+
+def upsert_blocks_postgis(blocks: list[dict[str, Any]]) -> None:
+    if not blocks:
+        return
+    with postgis_connect() as conn:
+        with conn.cursor() as cur:
+            for block in blocks:
+                execute_upsert_block_postgis(cur, block)
+        conn.commit()
+
+
+def upsert_block_postgis(block: dict[str, Any]) -> None:
+    upsert_blocks_postgis([block])
+
+
+def save_block(block: dict[str, Any]) -> None:
+    if use_postgis():
+        upsert_block_postgis(block)
+        return
+
+    blocks = load_all_blocks()
+    for index, existing in enumerate(blocks):
+        if existing.get("id") == block.get("id"):
+            blocks[index] = block
+            save_blocks(blocks)
+            return
+    blocks.append(block)
+    save_blocks(blocks)
+
+
+def block_by_code(block_code: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
+    if use_postgis():
+        return first_block_postgis(block_code=block_code, include_deleted=include_deleted)
+
+    for block in load_all_blocks():
+        if block.get("blockCode") == block_code and (include_deleted or not block.get("deletedAt")):
+            return block
+    return None
+
+
 def load_all_blocks() -> list[dict[str, Any]]:
+    if use_postgis():
+        return fetch_blocks_postgis(include_deleted=True)
     return load_json_records(forest_blocks_json_path())
 
 
 def load_blocks() -> list[dict[str, Any]]:
+    if use_postgis():
+        return fetch_blocks_postgis()
     return [item for item in load_all_blocks() if not item.get("deletedAt")]
 
 
 def save_blocks(blocks: list[dict[str, Any]]) -> None:
+    if use_postgis():
+        upsert_blocks_postgis(blocks)
+        return
     save_json_records(forest_blocks_json_path(), blocks)
 
 
@@ -217,6 +687,20 @@ def block_matches_filters(
 
 
 def list_forest_blocks(filters: ForestBlockFilters, context: AuthContext) -> dict[str, Any]:
+    if use_postgis():
+        items = fetch_blocks_postgis(
+            filters=filters,
+            context=context,
+            limit=filters.limit,
+            offset=filters.offset,
+        )
+        return {
+            "items": items,
+            "total": count_blocks_postgis(filters, context),
+            "limit": filters.limit,
+            "offset": filters.offset,
+        }
+
     blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
     items = blocks[filters.offset : filters.offset + filters.limit]
     return {
@@ -228,7 +712,10 @@ def list_forest_blocks(filters: ForestBlockFilters, context: AuthContext) -> dic
 
 
 def forest_block_feature_collection(filters: ForestBlockFilters, context: AuthContext) -> dict[str, Any]:
-    blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
+    if use_postgis():
+        blocks = fetch_blocks_postgis(filters=filters, context=context)
+    else:
+        blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
     return {
         "type": "FeatureCollection",
         "features": [
@@ -244,7 +731,10 @@ def forest_block_feature_collection(filters: ForestBlockFilters, context: AuthCo
 
 
 def forest_block_summary(filters: ForestBlockFilters, context: AuthContext) -> dict[str, Any]:
-    blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
+    if use_postgis():
+        blocks = fetch_blocks_postgis(filters=filters, context=context)
+    else:
+        blocks = [block for block in load_blocks() if block_matches_filters(block, filters, context)]
     summary: dict[str, Any] = {
         "total": len(blocks),
         "riskLevel": {},
@@ -287,6 +777,12 @@ def filter_params(
 
 
 def find_block(block_id: str, context: AuthContext) -> dict[str, Any]:
+    if use_postgis():
+        block = first_block_postgis(block_id=block_id, context=context)
+        if block is not None:
+            return block
+        raise HTTPException(status_code=404, detail="Forest block not found")
+
     visible = ForestBlockFilters(limit=1000)
     for block in load_blocks():
         if block.get("id") == block_id and block_matches_filters(block, visible, context):
@@ -309,6 +805,13 @@ def create_forest_block(
 ) -> ForestBlockOut:
     require_write_access(context)
     require_target_area_allowed(context, payload.countyCode)
+    if use_postgis():
+        if block_by_code(payload.blockCode, include_deleted=True):
+            raise HTTPException(status_code=409, detail="blockCode already exists")
+        block = normalize_block(payload.model_dump())
+        save_block(block)
+        return ForestBlockOut.model_validate(block)
+
     blocks = load_all_blocks()
     if any(item.get("blockCode") == payload.blockCode for item in blocks):
         raise HTTPException(status_code=409, detail="blockCode already exists")
@@ -333,6 +836,22 @@ def patch_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> ForestBlockOut:
     require_write_access(context)
+    if use_postgis():
+        block = find_block(block_id, context)
+        changes = payload.model_dump(exclude_unset=True)
+        updated = normalize_block(
+            {
+                **block,
+                **changes,
+                "id": block_id,
+                "createdAt": block.get("createdAt", now_iso()),
+                "deletedAt": block.get("deletedAt"),
+            }
+        )
+        require_target_area_allowed(context, updated.get("countyCode"))
+        save_block(updated)
+        return ForestBlockOut.model_validate(updated)
+
     blocks = load_all_blocks()
     for index, block in enumerate(blocks):
         if block.get("id") != block_id:
@@ -364,6 +883,13 @@ def delete_forest_block(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_write_access(context)
+    if use_postgis():
+        block = find_block(block_id, context)
+        block["deletedAt"] = now_iso()
+        block["updatedAt"] = block["deletedAt"]
+        save_block(block)
+        return {"ok": True, "deleted": block_id}
+
     blocks = load_all_blocks()
     for block in blocks:
         if block.get("id") != block_id:

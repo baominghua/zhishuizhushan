@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import sys
+import zipfile
+from types import ModuleType, SimpleNamespace
 
 from openpyxl import Workbook
 
@@ -206,6 +209,40 @@ def test_import_counts_invalid_rows_once_when_row_has_multiple_errors(app_client
     ]
 
 
+def test_import_reports_invalid_area_mu_without_saving_block(app_client):
+    response = app_client.post(
+        "/api/imports/forest-blocks",
+        files={
+            "file": (
+                "bad-area.geojson",
+                io.BytesIO(
+                    geojson_feature_bytes(
+                        {
+                            "blockCode": "BAD-AREA-001",
+                            "name": "Bad area block",
+                            "countyCode": "350703",
+                            "areaMu": "not-a-number",
+                        }
+                    )
+                ),
+                "application/geo+json",
+            )
+        },
+        data={"strategy": "upsert"},
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["validRows"] == 0
+    assert body["invalidRows"] == 1
+    assert body["report"]["errors"] == [{"row": 1, "message": "areaMu must be a number"}]
+
+    listed = app_client.get("/api/forest-blocks?q=BAD-AREA-001")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 0
+
+
 def test_import_csv_endpoint_supports_chinese_aliases(app_client):
     response = app_client.post(
         "/api/imports/forest-blocks",
@@ -283,6 +320,37 @@ def test_parse_import_file_dispatches_zip_to_shapefile_parser(monkeypatch):
 
     assert calls == [b"zip-bytes"]
     assert parsed == [{"blockCode": "ZIP-001", "name": "压缩林班"}]
+
+
+def test_parse_shapefile_zip_rejects_unsafe_member_paths(monkeypatch):
+    from server.modules import imports as imports_module
+
+    geometry_module = ModuleType("shapely.geometry")
+    geometry_module.mapping = lambda geometry: geometry
+    shapely_module = ModuleType("shapely")
+    shapely_module.geometry = geometry_module
+    monkeypatch.setitem(sys.modules, "shapely", shapely_module)
+    monkeypatch.setitem(sys.modules, "shapely.geometry", geometry_module)
+    monkeypatch.setitem(
+        sys.modules,
+        "pyogrio",
+        SimpleNamespace(read_dataframe=lambda path: (_ for _ in ()).throw(AssertionError("should not read unsafe ZIP"))),
+    )
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("../evil.shp", b"not a real shapefile")
+
+    try:
+        imports_module.parse_shapefile_zip(buffer.getvalue())
+    except Exception as exc:  # pragma: no cover - assertion follows
+        assert getattr(exc, "status_code", None) == 400
+        assert "unsafe path" in getattr(exc, "detail", "")
+        return
+
+    raise AssertionError("Unsafe Shapefile ZIP path should raise HTTP 400")
+
+
 def test_import_preserves_deleted_records_in_storage(app_client, reload_platform_modules):
     created = app_client.post(
         "/api/forest-blocks",

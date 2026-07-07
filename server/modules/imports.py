@@ -13,16 +13,19 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from .auth import request_context, require_write_access
 from .forest_blocks import (
+    block_by_code,
     load_all_blocks,
     normalize_block,
     require_target_area_allowed,
     save_blocks,
 )
+from .database import use_postgis
 
 
 router = APIRouter(prefix="/api", tags=["forest-imports"])
 
 IMPORT_REPORTS: dict[str, dict[str, Any]] = {}
+IMPORT_ERROR_FIELD = "_importErrors"
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "blockCode": ["blockCode", "林班编号", "小班编号", "编号", "block_code"],
@@ -74,14 +77,21 @@ def normalize_import_record(
     properties: dict[str, Any],
     geometry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    errors: list[str] = []
     record: dict[str, Any] = {
         field_name: pick_field(properties, field_name) for field_name in FIELD_ALIASES
     }
     area_mu = record.get("areaMu")
     if area_mu is not None:
-        record["areaMu"] = float(area_mu)
+        try:
+            record["areaMu"] = float(area_mu)
+        except (TypeError, ValueError):
+            errors.append("areaMu must be a number")
+            record["areaMu"] = None
     record["geometry"] = normalize_geometry(geometry)
     record["properties"] = dict(properties)
+    if errors:
+        record[IMPORT_ERROR_FIELD] = errors
     return record
 
 
@@ -142,7 +152,7 @@ def parse_shapefile_zip(content: bytes) -> list[dict[str, Any]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            archive.extractall(root)
+            safe_extract_zip(archive, root)
         shapefiles = list(root.rglob("*.shp"))
         if not shapefiles:
             raise HTTPException(status_code=400, detail="Shapefile ZIP must include a .shp file")
@@ -163,6 +173,18 @@ def parse_shapefile_zip(content: bytes) -> list[dict[str, Any]]:
         return records
 
 
+def safe_extract_zip(archive: zipfile.ZipFile, root: Path) -> None:
+    root = root.resolve()
+    for member in archive.infolist():
+        member_path = Path(member.filename)
+        if member_path.is_absolute() or ".." in member_path.parts:
+            raise HTTPException(status_code=400, detail="Shapefile ZIP contains an unsafe path")
+        target = (root / member.filename).resolve()
+        if root != target and root not in target.parents:
+            raise HTTPException(status_code=400, detail="Shapefile ZIP contains an unsafe path")
+        archive.extract(member, root)
+
+
 def parse_import_file(file_name: str, content: bytes) -> list[dict[str, Any]]:
     lower_name = file_name.lower()
     if lower_name.endswith(".geojson") or lower_name.endswith(".json"):
@@ -177,12 +199,16 @@ def parse_import_file(file_name: str, content: bytes) -> list[dict[str, Any]]:
 
 
 def validate_record(record: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
+    errors: list[str] = list(record.get(IMPORT_ERROR_FIELD) or [])
     if not record.get("blockCode"):
         errors.append("blockCode is required")
     if not record.get("name"):
         errors.append("name is required")
     return errors
+
+
+def clean_import_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if key != IMPORT_ERROR_FIELD}
 
 
 def build_report(
@@ -220,15 +246,20 @@ async def import_forest_blocks(
 
     content = await file.read()
     records = parse_import_file(file.filename or "upload", content)
-    blocks = load_all_blocks()
-    active_indexes = {
-        block["blockCode"]: index
-        for index, block in enumerate(blocks)
-        if block.get("blockCode") and not block.get("deletedAt")
-    }
+    postgis_enabled = use_postgis()
+    blocks: list[dict[str, Any]] = []
+    active_indexes: dict[str, int] = {}
+    if not postgis_enabled:
+        blocks = load_all_blocks()
+        active_indexes = {
+            block["blockCode"]: index
+            for index, block in enumerate(blocks)
+            if block.get("blockCode") and not block.get("deletedAt")
+        }
 
     valid_rows = 0
     did_change_blocks = False
+    pending_postgis_blocks: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for row_number, record in enumerate(records, start=1):
         row_errors = validate_record(record)
@@ -241,11 +272,26 @@ async def import_forest_blocks(
             continue
 
         valid_rows += 1
-        existing_index = active_indexes.get(record["blockCode"])
+        clean_record = clean_import_record(record)
+        if postgis_enabled:
+            existing = block_by_code(clean_record["blockCode"])
+            if existing is not None and strategy == "skip":
+                continue
+
+            normalized = normalize_block(clean_record)
+            if existing is not None:
+                normalized["id"] = existing["id"]
+                normalized["createdAt"] = existing.get("createdAt", normalized["createdAt"])
+                normalized["deletedAt"] = existing.get("deletedAt")
+            pending_postgis_blocks.append(normalized)
+            did_change_blocks = True
+            continue
+
+        existing_index = active_indexes.get(clean_record["blockCode"])
         if existing_index is not None and strategy == "skip":
             continue
 
-        normalized = normalize_block(record)
+        normalized = normalize_block(clean_record)
         if existing_index is not None:
             existing = blocks[existing_index]
             normalized["id"] = existing["id"]
@@ -256,11 +302,14 @@ async def import_forest_blocks(
             continue
 
         blocks.append(normalized)
-        active_indexes[record["blockCode"]] = len(blocks) - 1
+        active_indexes[clean_record["blockCode"]] = len(blocks) - 1
         did_change_blocks = True
 
     if did_change_blocks:
-        save_blocks(blocks)
+        if postgis_enabled:
+            save_blocks(pending_postgis_blocks)
+        else:
+            save_blocks(blocks)
 
     batch_id = str(uuid.uuid4())
     report = build_report(
