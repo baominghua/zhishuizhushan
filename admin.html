@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>森林小班管理台账</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body>
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">Smart Bamboo GIS</p>
+          <h1>森林小班管理台账</h1>
+          <p class="brand-copy">面向竹山地块维护、导入核验与批量修复的紧凑作业台。</p>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="页面导航">
+          <a href="zhushan-bigdata.html">返回竹山大屏</a>
+          <a href="satellite-manager.html">返回影像管理</a>
+          <a href="#blockWorkbench">小班台账</a>
+          <a href="#importWorkbench">批量导入</a>
+        </nav>
+
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading">
+            <h2 id="apiStatusTitle">连接状态</h2>
+            <span id="statusBadge" class="status-badge idle">未连接</span>
+          </div>
+          <p id="statusText" class="status-text">请先确认接口地址与角色范围。</p>
+          <dl class="status-meta">
+            <div>
+              <dt>活跃小班</dt>
+              <dd id="blockCount">0</dd>
+            </div>
+            <div>
+              <dt>最近导入</dt>
+              <dd id="lastImport">无</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow">接口与权限</p>
+            <h2>森林小班管理</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="connectApi" type="button">连接接口</button>
+            <button id="reloadBlocks" type="button" class="button-ghost">刷新列表</button>
+          </div>
+        </header>
+
+        <section class="panel config-panel" aria-label="接口配置">
+          <div class="field-grid field-grid-wide">
+            <label>
+              <span>API 基地址</span>
+              <input id="apiBase" type="url" value="http://127.0.0.1:8010" spellcheck="false" />
+            </label>
+            <label>
+              <span>角色头 X-RS-Roles</span>
+              <input id="authRoles" type="text" value="admin" placeholder="admin,operator" />
+            </label>
+            <label>
+              <span>区域头 X-RS-Areas</span>
+              <input id="authAreas" type="text" placeholder="350703,350724" />
+            </label>
+            <label>
+              <span>用户头 X-RS-User</span>
+              <input id="authUser" type="text" placeholder="admin" />
+            </label>
+          </div>
+        </section>
+
+        <section id="blockWorkbench" class="workbench-grid">
+          <div class="panel table-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">筛选与列表</p>
+                <h2>小班列表</h2>
+              </div>
+              <button id="newBlock" type="button">新建小班</button>
+            </div>
+
+            <div class="field-grid filters-grid">
+              <label class="field-span-2">
+                <span>关键词</span>
+                <input
+                  id="keyword"
+                  type="search"
+                  placeholder="搜索编号、名称、区县、乡镇、村名"
+                />
+              </label>
+              <label>
+                <span>基地类型</span>
+                <select id="baseTypeFilter">
+                  <option value="">全部</option>
+                  <option value="self_operated">自营</option>
+                  <option value="franchise">加盟</option>
+                </select>
+              </label>
+              <label>
+                <span>经营类型</span>
+                <select id="operationTypeFilter">
+                  <option value="">全部</option>
+                  <option value="timber">竹材用林</option>
+                  <option value="dual_regular">常规笋竹两用林</option>
+                  <option value="dual_high_yield">高产笋竹两用林</option>
+                  <option value="understory">林下经济</option>
+                </select>
+              </label>
+              <label>
+                <span>风险等级</span>
+                <select id="riskLevelFilter">
+                  <option value="">全部</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="critical">严重</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>编号</th>
+                    <th>名称</th>
+                    <th>区县</th>
+                    <th>乡镇</th>
+                    <th>面积(亩)</th>
+                    <th>经营类型</th>
+                    <th>风险</th>
+                  </tr>
+                </thead>
+                <tbody id="blockRows">
+                  <tr class="placeholder-row">
+                    <td colspan="7">等待加载数据</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <form id="blockForm" class="panel form-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">新建 / 编辑</p>
+                <h2>小班详情</h2>
+              </div>
+              <button id="saveBlock" type="submit">保存</button>
+            </div>
+
+            <input id="blockId" type="hidden" />
+
+            <div class="field-grid">
+              <label>
+                <span>小班编号</span>
+                <input id="blockCode" type="text" required />
+              </label>
+              <label>
+                <span>小班名称</span>
+                <input id="blockName" type="text" required />
+              </label>
+              <label>
+                <span>区县代码</span>
+                <input id="countyCode" type="text" />
+              </label>
+              <label>
+                <span>区县名称</span>
+                <input id="countyName" type="text" />
+              </label>
+              <label>
+                <span>乡镇代码</span>
+                <input id="townCode" type="text" />
+              </label>
+              <label>
+                <span>乡镇名称</span>
+                <input id="townName" type="text" />
+              </label>
+              <label>
+                <span>村代码</span>
+                <input id="villageCode" type="text" />
+              </label>
+              <label>
+                <span>村名称</span>
+                <input id="villageName" type="text" />
+              </label>
+              <label>
+                <span>基地类型</span>
+                <select id="baseType">
+                  <option value="">未填写</option>
+                  <option value="self_operated">自营</option>
+                  <option value="franchise">加盟</option>
+                </select>
+              </label>
+              <label>
+                <span>经营类型</span>
+                <select id="operationType">
+                  <option value="">未填写</option>
+                  <option value="timber">竹材用林</option>
+                  <option value="dual_regular">常规笋竹两用林</option>
+                  <option value="dual_high_yield">高产笋竹两用林</option>
+                  <option value="understory">林下经济</option>
+                </select>
+              </label>
+              <label>
+                <span>林种</span>
+                <input id="forestType" type="text" />
+              </label>
+              <label>
+                <span>面积(亩)</span>
+                <input id="areaMu" type="number" min="0" step="0.01" />
+              </label>
+              <label>
+                <span>质量等级</span>
+                <input id="qualityGrade" type="text" />
+              </label>
+              <label>
+                <span>健康状态</span>
+                <input id="healthStatus" type="text" />
+              </label>
+              <label>
+                <span>风险等级</span>
+                <select id="riskLevel">
+                  <option value="">未填写</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="critical">严重</option>
+                </select>
+              </label>
+              <label>
+                <span>经营状态</span>
+                <input id="managementStatus" type="text" />
+              </label>
+              <label>
+                <span>权属状态</span>
+                <input id="ownershipStatus" type="text" />
+              </label>
+              <label>
+                <span>标签</span>
+                <input id="tags" type="text" placeholder="逗号分隔" />
+              </label>
+              <label class="field-span-2">
+                <span>附加属性 JSON</span>
+                <textarea id="properties" rows="5" spellcheck="false">{}</textarea>
+              </label>
+              <label class="field-span-2">
+                <span>GeoJSON 几何</span>
+                <textarea id="geometry" rows="10" spellcheck="false">null</textarea>
+              </label>
+            </div>
+          </form>
+        </section>
+
+        <section id="importWorkbench" class="panel import-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">批量导入</p>
+              <h2>导入森林小班</h2>
+            </div>
+            <button id="submitImport" type="submit" form="importForm">上传并导入</button>
+          </div>
+
+          <form id="importForm" class="field-grid field-grid-wide">
+            <label class="field-span-2">
+              <span>导入文件</span>
+              <input id="importFile" type="file" accept=".geojson,.json,.csv,.xlsx,.zip" />
+            </label>
+            <label>
+              <span>导入策略</span>
+              <select id="importStrategy">
+                <option value="upsert">重复编号时更新</option>
+                <option value="skip">重复编号时跳过</option>
+              </select>
+            </label>
+          </form>
+
+          <div class="report-grid">
+            <div class="report-metrics">
+              <div>
+                <span>总行数</span>
+                <strong id="reportTotal">0</strong>
+              </div>
+              <div>
+                <span>有效行</span>
+                <strong id="reportValid">0</strong>
+              </div>
+              <div>
+                <span>无效行</span>
+                <strong id="reportInvalid">0</strong>
+              </div>
+              <div>
+                <span>状态</span>
+                <strong id="reportStatus">未执行</strong>
+              </div>
+            </div>
+            <pre id="importReport" class="report-output">等待导入结果</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="admin.js"></script>
+  </body>
+</html>
