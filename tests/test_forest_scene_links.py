@@ -12,18 +12,29 @@ from server.modules.auth import AuthContext
 from tests.test_forest_blocks import sample_block_payload
 
 
-def seed_catalog(reload_platform_modules, *scene_ids: str) -> None:
+def seed_catalog(reload_platform_modules, *scene_specs: str | dict[str, object]) -> None:
     _, database_module = reload_platform_modules()
     catalog_path = database_module.get_data_dir() / "catalog.json"
-    scenes = [
-        {
-            "id": scene_id,
-            "name": scene_id,
-            "cogPath": f"cogs/{scene_id}.tif",
-            "bounds": [117.0, 27.0, 118.0, 28.0],
-        }
-        for scene_id in scene_ids
-    ]
+    scenes = []
+    for scene_spec in scene_specs:
+        if isinstance(scene_spec, str):
+            scenes.append(
+                {
+                    "id": scene_spec,
+                    "name": scene_spec,
+                    "cogPath": f"cogs/{scene_spec}.tif",
+                    "bounds": [117.0, 27.0, 118.0, 28.0],
+                }
+            )
+            continue
+        scenes.append(
+            {
+                "name": str(scene_spec.get("id") or "scene"),
+                "cogPath": f"cogs/{scene_spec.get('id')}.tif",
+                "bounds": [117.0, 27.0, 118.0, 28.0],
+                **scene_spec,
+            }
+        )
     catalog_path.write_text(json.dumps({"scenes": scenes}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -78,6 +89,11 @@ def reload_scene_links_module(reload_platform_modules):
 
     importlib.reload(forest_scene_links_module)
     return forest_scene_links_module
+
+
+def seed_scene_links(reload_platform_modules, *items: dict[str, object]) -> None:
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    forest_scene_links_module.save_scene_links(list(items))
 
 
 class FakeCursor:
@@ -329,6 +345,210 @@ def test_scene_links_reject_nonexistent_scene_id(app_client):
     assert response.json() == {"detail": "Scene not found"}
 
 
+def test_create_scene_link_rejects_hidden_scene_for_current_context(app_client, reload_platform_modules):
+    seed_catalog(
+        reload_platform_modules,
+        {
+            "id": "scene-open",
+            "projectId": "project-alpha",
+            "areaCode": "350703",
+            "allowedRoles": ["operator"],
+            "allowedUsers": ["alice"],
+        },
+        {
+            "id": "scene-hidden-project",
+            "projectId": "project-secret",
+        },
+        {
+            "id": "scene-hidden-area",
+            "areaCode": "350702",
+        },
+        {
+            "id": "scene-hidden-role",
+            "allowedRoles": ["gis-admin"],
+        },
+        {
+            "id": "scene-hidden-user",
+            "allowedUsers": ["bob"],
+        },
+    )
+    block = create_block(app_client, "LINK-SCENE-CREATE-VIS-001")
+    allowed_headers = {
+        "X-RS-Roles": "operator",
+        "X-RS-Projects": "project-alpha",
+        "X-RS-Areas": "350703",
+        "X-RS-User": "alice",
+    }
+
+    visible = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-open", "relationType": "coverage"},
+        headers=allowed_headers,
+    )
+    hidden_project = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-hidden-project", "relationType": "coverage"},
+        headers=allowed_headers,
+    )
+    hidden_area = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-hidden-area", "relationType": "coverage"},
+        headers=allowed_headers,
+    )
+    hidden_role = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-hidden-role", "relationType": "coverage"},
+        headers=allowed_headers,
+    )
+    hidden_user = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-hidden-user", "relationType": "coverage"},
+        headers=allowed_headers,
+    )
+
+    assert visible.status_code == 200
+    for response in (hidden_project, hidden_area, hidden_role, hidden_user):
+        assert response.status_code == 403
+        assert response.json() == {"detail": "Scene is not visible for current context"}
+
+
+def test_list_scene_links_filters_hidden_scenes_for_current_context(app_client, reload_platform_modules):
+    seed_catalog(
+        reload_platform_modules,
+        {
+            "id": "scene-open",
+            "projectId": "project-alpha",
+            "areaCode": "350703",
+            "allowedRoles": ["operator"],
+            "allowedUsers": ["alice"],
+        },
+        {"id": "scene-hidden-project", "projectId": "project-secret"},
+        {"id": "scene-hidden-area", "areaCode": "350702"},
+        {"id": "scene-hidden-role", "allowedRoles": ["gis-admin"]},
+        {"id": "scene-hidden-user", "allowedUsers": ["bob"]},
+    )
+    block = create_block(app_client, "LINK-SCENE-LIST-VIS-001")
+    seed_scene_links(
+        reload_platform_modules,
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-open",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-hidden-project",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-hidden-area",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-hidden-role",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-hidden-user",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+    )
+
+    allowed_headers = {
+        "X-RS-Roles": "operator",
+        "X-RS-Projects": "project-alpha",
+        "X-RS-Areas": "350703",
+        "X-RS-User": "alice",
+    }
+    listed = list_links(app_client, block["id"], headers=allowed_headers)
+
+    assert listed.status_code == 200
+    assert listed.json() == {
+        "items": [
+            {
+                "forestBlockId": block["id"],
+                "sceneId": "scene-open",
+                "relationType": "coverage",
+                "capturedAt": None,
+                "confidence": None,
+            }
+        ],
+        "total": 1,
+    }
+
+
+def test_delete_scene_link_rejects_hidden_scene_for_current_context(app_client, reload_platform_modules):
+    seed_catalog(
+        reload_platform_modules,
+        {"id": "scene-open", "projectId": "project-alpha"},
+        {"id": "scene-hidden", "projectId": "project-secret"},
+    )
+    block = create_block(app_client, "LINK-SCENE-DELETE-VIS-001")
+    seed_scene_links(
+        reload_platform_modules,
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-open",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+        {
+            "forestBlockId": block["id"],
+            "sceneId": "scene-hidden",
+            "relationType": "coverage",
+            "capturedAt": None,
+            "confidence": None,
+        },
+    )
+
+    allowed_headers = {
+        "X-RS-Roles": "operator",
+        "X-RS-Projects": "project-alpha",
+        "X-RS-User": "alice",
+    }
+
+    hidden_deleted = delete_scene_link(
+        app_client,
+        block["id"],
+        "scene-hidden",
+        headers=allowed_headers,
+    )
+    visible_deleted = delete_scene_link(
+        app_client,
+        block["id"],
+        "scene-open",
+        headers=allowed_headers,
+    )
+    listed = list_links(app_client, block["id"], headers={"X-RS-Roles": "admin", "X-RS-Projects": "project-secret"})
+
+    assert hidden_deleted.status_code == 403
+    assert hidden_deleted.json() == {"detail": "Scene is not visible for current context"}
+    assert visible_deleted.status_code == 200
+    assert visible_deleted.json() == {"ok": True, "deleted": 1}
+    assert {(item["sceneId"], item["relationType"]) for item in listed.json()["items"]} == {
+        ("scene-hidden", "coverage"),
+    }
+
+
 def test_postgis_list_scene_links_returns_api_shape(monkeypatch, reload_platform_modules):
     forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
     block_id = "8ab8cd2e-f574-4fd8-bdf6-b7788e632111"
@@ -546,10 +766,11 @@ def test_postgis_link_storage_inserts_when_scene_exists_in_json_catalog(
 def test_postgis_scene_links_raise_503_when_connect_fails(monkeypatch, reload_platform_modules):
     forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
     monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    database_url = "postgresql://forest_user:super-secret@db.internal:5432/forest"
     monkeypatch.setattr(
         forest_scene_links_module,
         "get_settings",
-        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+        lambda: SimpleNamespace(database_url=database_url),
     )
 
     def fail_connect(database_url: str):
@@ -562,7 +783,9 @@ def test_postgis_scene_links_raise_503_when_connect_fails(monkeypatch, reload_pl
 
     assert excinfo.value.status_code == 503
     assert "forest scene links PostGIS database is unavailable" in excinfo.value.detail
-    assert "postgresql://smart-bamboo" in excinfo.value.detail
+    assert database_url not in excinfo.value.detail
+    assert "super-secret" not in excinfo.value.detail
+    assert "boom for" not in excinfo.value.detail
 
 
 def test_postgis_delete_scene_links_scopes_relation_type_when_requested(monkeypatch, reload_platform_modules):
@@ -590,3 +813,55 @@ def test_postgis_delete_scene_links_scopes_relation_type_when_requested(monkeypa
             ("8ab8cd2e-f574-4fd8-bdf6-b7788e632225", "scene-a", "orthophoto"),
         )
     ]
+
+
+def test_postgis_list_scene_links_filters_hidden_scenes_for_current_context(monkeypatch, reload_platform_modules):
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    block_id = "8ab8cd2e-f574-4fd8-bdf6-b7788e632334"
+    seed_catalog(
+        reload_platform_modules,
+        {"id": "scene-open", "projectId": "project-alpha", "allowedRoles": ["operator"]},
+        {"id": "scene-hidden", "projectId": "project-secret"},
+    )
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "require_visible_block",
+        lambda block_id, context: {"id": block_id},
+    )
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "list_scene_links_postgis",
+        lambda block_id: [
+            {
+                "forestBlockId": block_id,
+                "sceneId": "scene-open",
+                "relationType": "coverage",
+                "capturedAt": None,
+                "confidence": None,
+            },
+            {
+                "forestBlockId": block_id,
+                "sceneId": "scene-hidden",
+                "relationType": "coverage",
+                "capturedAt": None,
+                "confidence": None,
+            },
+        ],
+    )
+
+    context = AuthContext(user="alice", roles={"operator"}, projects={"project-alpha"}, areas=set())
+    response = forest_scene_links_module.list_forest_block_scene_links(block_id, context=context)
+
+    assert response == {
+        "items": [
+            {
+                "forestBlockId": block_id,
+                "sceneId": "scene-open",
+                "relationType": "coverage",
+                "capturedAt": None,
+                "confidence": None,
+            }
+        ],
+        "total": 1,
+    }

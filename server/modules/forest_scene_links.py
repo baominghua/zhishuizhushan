@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -46,7 +47,7 @@ def connect_postgis(database_url: str, purpose: str):
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"{purpose} is unavailable for {database_url}. {exc}",
+            detail=f"{purpose} is unavailable",
         ) from exc
 
 
@@ -85,6 +86,55 @@ def require_catalog_scene(scene_id: str) -> dict[str, Any]:
         if scene.get("id") == scene_id:
             return scene
     raise HTTPException(status_code=404, detail="Scene not found")
+
+
+def split_tokens(value: str | list[str] | None) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        items = value
+    else:
+        items = re.split(r"[,;\s]+", value)
+    return sorted({str(item).strip() for item in items if str(item).strip()})
+
+
+def context_matches(values: set[str], required: str) -> bool:
+    return not values or "*" in values or required in values
+
+
+def scene_allowed(scene: dict[str, Any], context: AuthContext) -> bool:
+    project_id = str(scene.get("projectId") or "").strip()
+    area_code = str(scene.get("areaCode") or "").strip()
+    allowed_users = set(split_tokens(scene.get("allowedUsers")))
+    allowed_roles = set(split_tokens(scene.get("allowedRoles")))
+
+    if project_id and not context_matches(context.projects, project_id):
+        return False
+    if area_code and not context_matches(context.areas, area_code):
+        return False
+    if allowed_users and context.user not in allowed_users and "*" not in allowed_users:
+        return False
+    if allowed_roles and "*" not in context.roles and not (allowed_roles & context.roles):
+        return False
+    return True
+
+
+def require_visible_scene(scene_id: str, context: AuthContext) -> dict[str, Any]:
+    scene = require_catalog_scene(scene_id)
+    if not scene_allowed(scene, context):
+        raise HTTPException(status_code=403, detail="Scene is not visible for current context")
+    return scene
+
+
+def scene_link_visible(item: dict[str, Any], context: AuthContext) -> bool:
+    scene_id = str(item.get("sceneId") or "").strip()
+    if not scene_id:
+        return False
+    try:
+        require_visible_scene(scene_id, context)
+    except HTTPException:
+        return False
+    return True
 
 
 def load_scene_links() -> list[dict[str, Any]]:
@@ -173,7 +223,7 @@ def list_forest_block_scene_links(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_visible_block(block_id, context)
-    items = scene_links_for_block(block_id)
+    items = [item for item in scene_links_for_block(block_id) if scene_link_visible(item, context)]
     return {"items": items, "total": len(items)}
 
 
@@ -197,7 +247,7 @@ def create_forest_block_scene_link(
         raise HTTPException(status_code=422, detail="sceneId cannot be empty")
     if not next_item["relationType"]:
         raise HTTPException(status_code=422, detail="relationType cannot be empty")
-    require_catalog_scene(next_item["sceneId"])
+    require_visible_scene(next_item["sceneId"], context)
 
     if use_postgis():
         upsert_scene_link_postgis(next_item)
@@ -226,6 +276,7 @@ def delete_forest_block_scene_link(
 ) -> dict[str, Any]:
     require_write_access(context)
     require_visible_block(block_id, context)
+    require_visible_scene(scene_id, context)
 
     relation_type = relationType.strip()
     if use_postgis():
