@@ -417,7 +417,7 @@ def test_create_scene_link_rejects_hidden_scene_for_current_context(app_client, 
         assert response.json() == {"detail": "Scene is not visible for current context"}
 
 
-def test_scene_links_allow_wildcard_allowed_roles_for_writer_context(app_client, reload_platform_modules):
+def test_scene_links_match_committed_wildcard_role_visibility_semantics(app_client, reload_platform_modules):
     seed_catalog(
         reload_platform_modules,
         {
@@ -427,33 +427,83 @@ def test_scene_links_allow_wildcard_allowed_roles_for_writer_context(app_client,
             "allowedRoles": ["*"],
         },
     )
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
     block = create_block(app_client, "LINK-SCENE-WILDCARD-001")
-    writer_headers = {"X-RS-Roles": "operator", "X-RS-Areas": "350703"}
+    operator_context = AuthContext(
+        user="alice",
+        roles={"operator"},
+        projects={"project-alpha"},
+        areas={"350703"},
+    )
+    wildcard_context = AuthContext(
+        user="alice",
+        roles={"*"},
+        projects={"project-alpha"},
+        areas={"350703"},
+    )
+    operator_headers = {"X-RS-Roles": "operator", "X-RS-Projects": "project-alpha", "X-RS-Areas": "350703"}
+    wildcard_headers = {"X-RS-Roles": "*", "X-RS-Projects": "project-alpha", "X-RS-Areas": "350703"}
 
-    created = link_scene(
+    assert forest_scene_links_module.scene_allowed(
+        {
+            "id": "scene-wildcard",
+            "projectId": "project-alpha",
+            "areaCode": "350703",
+            "allowedRoles": ["*"],
+        },
+        operator_context,
+    ) is False
+    assert forest_scene_links_module.scene_allowed(
+        {
+            "id": "scene-wildcard",
+            "projectId": "project-alpha",
+            "areaCode": "350703",
+            "allowedRoles": ["*"],
+        },
+        wildcard_context,
+    ) is True
+
+    operator_created = link_scene(
         app_client,
         block["id"],
         {"sceneId": "scene-wildcard", "relationType": "coverage"},
-        headers=writer_headers,
+        headers=operator_headers,
     )
-    listed = list_links(app_client, block["id"], headers=writer_headers)
-    deleted = delete_scene_link(
+    wildcard_created = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-wildcard", "relationType": "coverage"},
+        headers=wildcard_headers,
+    )
+    operator_listed = list_links(app_client, block["id"], headers=operator_headers)
+    wildcard_listed = list_links(app_client, block["id"], headers=wildcard_headers)
+    operator_deleted = delete_scene_link(
         app_client,
         block["id"],
         "scene-wildcard",
-        headers=writer_headers,
+        headers=operator_headers,
+    )
+    wildcard_deleted = delete_scene_link(
+        app_client,
+        block["id"],
+        "scene-wildcard",
+        headers=wildcard_headers,
     )
 
-    assert created.status_code == 200
-    assert created.json() == {
+    assert operator_created.status_code == 403
+    assert operator_created.json() == {"detail": "Scene is not visible for current context"}
+    assert wildcard_created.status_code == 200
+    assert wildcard_created.json() == {
         "forestBlockId": block["id"],
         "sceneId": "scene-wildcard",
         "relationType": "coverage",
         "capturedAt": None,
         "confidence": None,
     }
-    assert listed.status_code == 200
-    assert listed.json() == {
+    assert operator_listed.status_code == 200
+    assert operator_listed.json() == {"items": [], "total": 0}
+    assert wildcard_listed.status_code == 200
+    assert wildcard_listed.json() == {
         "items": [
             {
                 "forestBlockId": block["id"],
@@ -465,8 +515,10 @@ def test_scene_links_allow_wildcard_allowed_roles_for_writer_context(app_client,
         ],
         "total": 1,
     }
-    assert deleted.status_code == 200
-    assert deleted.json() == {"ok": True, "deleted": 1}
+    assert operator_deleted.status_code == 403
+    assert operator_deleted.json() == {"detail": "Scene is not visible for current context"}
+    assert wildcard_deleted.status_code == 200
+    assert wildcard_deleted.json() == {"ok": True, "deleted": 1}
 
 
 def test_list_scene_links_filters_hidden_scenes_for_current_context(app_client, reload_platform_modules):

@@ -114,7 +114,7 @@ def scene_allowed(scene: dict[str, Any], context: AuthContext) -> bool:
         return False
     if allowed_users and context.user not in allowed_users and "*" not in allowed_users:
         return False
-    if allowed_roles and "*" not in allowed_roles and not (allowed_roles & context.roles):
+    if allowed_roles and "*" not in context.roles and not (allowed_roles & context.roles):
         return False
     return True
 
