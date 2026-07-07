@@ -191,6 +191,7 @@ def build_report(
     file_name: str,
     total_rows: int,
     valid_rows: int,
+    invalid_rows: int,
     errors: list[dict[str, Any]],
 ) -> dict[str, Any]:
     suffix = Path(file_name).suffix.lower().lstrip(".")
@@ -201,7 +202,7 @@ def build_report(
         "status": "completed",
         "totalRows": total_rows,
         "validRows": valid_rows,
-        "invalidRows": len(errors),
+        "invalidRows": invalid_rows,
         "errors": errors,
     }
 
@@ -263,6 +264,7 @@ async def import_forest_blocks(
         file_name=file.filename or "upload",
         total_rows=len(records),
         valid_rows=valid_rows,
+        invalid_rows=len(records) - valid_rows,
         errors=errors,
     )
     IMPORT_REPORTS[batch_id] = report

@@ -163,6 +163,37 @@ def test_import_rejects_missing_name_with_invalid_report(app_client):
     assert listed.json()["total"] == 0
 
 
+def test_import_counts_invalid_rows_once_when_row_has_multiple_errors(app_client):
+    response = app_client.post(
+        "/api/imports/forest-blocks",
+        files={
+            "file": (
+                "missing-required-fields.geojson",
+                io.BytesIO(
+                    geojson_feature_bytes(
+                        {
+                            "countyCode": "350703",
+                        }
+                    )
+                ),
+                "application/geo+json",
+            )
+        },
+        data={"strategy": "upsert"},
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["totalRows"] == 1
+    assert body["validRows"] == 0
+    assert body["invalidRows"] == 1
+    assert body["report"]["errors"] == [
+        {"row": 1, "message": "blockCode is required"},
+        {"row": 1, "message": "name is required"},
+    ]
+
+
 def test_import_csv_endpoint_supports_chinese_aliases(app_client):
     response = app_client.post(
         "/api/imports/forest-blocks",
