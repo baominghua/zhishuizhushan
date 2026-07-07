@@ -37,12 +37,7 @@ def get_settings() -> PlatformSettings:
     data_dir = Path(
         os.environ.get("REMOTE_SENSING_DATA_DIR", str(ROOT_DIR / "data" / "remote-sensing"))
     ).expanduser().resolve()
-    database_url = (
-        os.environ.get("SMART_BAMBOO_DATABASE_URL")
-        or os.environ.get("REMOTE_SENSING_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-        or ""
-    ).strip()
+    database_url = os.environ.get("SMART_BAMBOO_DATABASE_URL", "").strip()
     storage_backend = os.environ.get("SMART_BAMBOO_STORAGE_BACKEND", "").strip().lower()
     if not storage_backend:
         storage_backend = "postgis" if database_url else "json"
