@@ -152,3 +152,84 @@ def test_health_includes_platform_schema_status(app_client):
         "postgisEnabled": False,
         "schemaReady": True,
     }
+
+
+SAMPLE_GEOMETRY = {
+    "type": "MultiPolygon",
+    "coordinates": [
+        [
+            [
+                [118.10, 26.50],
+                [118.12, 26.50],
+                [118.12, 26.52],
+                [118.10, 26.52],
+                [118.10, 26.50],
+            ]
+        ]
+    ],
+}
+
+
+def sample_block_payload(code: str = "FB-001") -> dict[str, object]:
+    return {
+        "blockCode": code,
+        "name": "北坡示范林班",
+        "countyCode": "350703",
+        "countyName": "建阳区",
+        "townCode": "350703101",
+        "townName": "麻沙镇",
+        "villageName": "黄坑村",
+        "baseType": "self_operated",
+        "operationType": "timber",
+        "forestType": "毛竹",
+        "areaMu": 126.5,
+        "qualityGrade": "A",
+        "healthStatus": "normal",
+        "riskLevel": "low",
+        "geometry": SAMPLE_GEOMETRY,
+    }
+
+
+def test_create_list_patch_and_delete_forest_block(app_client):
+    create = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload(),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert create.status_code == 200
+    block = create.json()
+    assert block["blockCode"] == "FB-001"
+    assert block["areaMu"] == 126.5
+
+    listed = app_client.get("/api/forest-blocks?countyCode=350703&q=北坡")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+    patched = app_client.patch(
+        f"/api/forest-blocks/{block['id']}",
+        json={"riskLevel": "medium", "managementStatus": "管护中"},
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["riskLevel"] == "medium"
+
+    deleted = app_client.delete(
+        f"/api/forest-blocks/{block['id']}",
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+
+
+def test_map_geojson_filters_by_bbox(app_client):
+    app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-002"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    response = app_client.get("/api/map/forest-blocks.geojson?bbox=118.09,26.49,118.13,26.53")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["type"] == "FeatureCollection"
+    assert len(body["features"]) == 1
+    assert body["features"][0]["properties"]["blockCode"] == "FB-002"
