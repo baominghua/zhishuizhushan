@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,17 +28,6 @@ def forest_scene_links_json_path():
 
 def remote_sensing_catalog_json_path():
     return get_data_dir() / "catalog.json"
-
-
-def use_postgis_catalog() -> bool:
-    return (
-        os.environ.get("REMOTE_SENSING_CATALOG_BACKEND", "json").strip().lower() == "postgis"
-        and bool(remote_sensing_catalog_database_url())
-    )
-
-
-def remote_sensing_catalog_database_url() -> str:
-    return os.environ.get("REMOTE_SENSING_DATABASE_URL", "").strip() or os.environ.get("DATABASE_URL", "").strip()
 
 
 def require_psycopg(purpose: str):
@@ -84,16 +72,6 @@ def normalize_scene_link_row(row: Any) -> dict[str, Any]:
 
 
 def require_catalog_scene(scene_id: str) -> dict[str, Any]:
-    if use_postgis_catalog():
-        database_url = remote_sensing_catalog_database_url()
-        with connect_postgis(database_url, "Remote sensing catalog PostGIS database") as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id FROM remote_sensing_scenes WHERE id = %s LIMIT 1", (scene_id,))
-                row = cur.fetchone()
-        if row:
-            return {"id": scene_id}
-        raise HTTPException(status_code=404, detail="Scene not found")
-
     catalog_path = remote_sensing_catalog_json_path()
     if not catalog_path.exists():
         raise HTTPException(status_code=404, detail="Scene catalog not found")

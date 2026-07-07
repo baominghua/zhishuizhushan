@@ -450,22 +450,96 @@ def test_postgis_create_and_delete_scene_links_use_database_storage(monkeypatch,
     ]
 
 
-def test_postgis_catalog_validation_queries_remote_sensing_scenes(
+def test_postgis_link_storage_still_rejects_scene_missing_from_json_catalog(
     isolated_env, monkeypatch, reload_platform_modules
 ):
+    seed_catalog(reload_platform_modules, "scene-in-catalog")
     monkeypatch.setenv("REMOTE_SENSING_CATALOG_BACKEND", "postgis")
     monkeypatch.setenv("REMOTE_SENSING_DATABASE_URL", "postgresql://remote-sensing")
     forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
-    cursor = FakeCursor(fetchone_result=("scene-postgis",))
+    cursor = FakeCursor(fetchone_result=("scene-only-in-db",))
     connect_calls: list[str] = []
     install_fake_psycopg(monkeypatch, cursor=cursor, connect_calls=connect_calls)
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "require_visible_block",
+        lambda block_id, context: {"id": block_id},
+    )
 
-    scene = forest_scene_links_module.require_catalog_scene("scene-postgis")
+    context = AuthContext(user="alice", roles={"admin"}, projects=set(), areas=set())
 
-    assert scene == {"id": "scene-postgis"}
-    assert connect_calls == ["postgresql://remote-sensing"]
+    with pytest.raises(HTTPException) as excinfo:
+        forest_scene_links_module.create_forest_block_scene_link(
+            "8ab8cd2e-f574-4fd8-bdf6-b7788e632223",
+            forest_scene_links_module.ForestSceneLinkIn(
+                sceneId="scene-only-in-db",
+                relationType="coverage",
+            ),
+            context=context,
+        )
+
+    assert excinfo.value.status_code == 404
+    assert excinfo.value.detail == "Scene not found"
+    assert connect_calls == []
+    assert cursor.executed == []
+
+
+def test_postgis_link_storage_inserts_when_scene_exists_in_json_catalog(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    seed_catalog(reload_platform_modules, "scene-in-catalog")
+    monkeypatch.setenv("REMOTE_SENSING_CATALOG_BACKEND", "postgis")
+    monkeypatch.setenv("REMOTE_SENSING_DATABASE_URL", "postgresql://remote-sensing")
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    cursor = FakeCursor(fetchone_result=("scene-in-catalog",))
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, cursor=cursor, connect_calls=connect_calls)
+    monkeypatch.setattr(forest_scene_links_module, "use_postgis", lambda: True)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "require_visible_block",
+        lambda block_id, context: {"id": block_id},
+    )
+
+    context = AuthContext(user="alice", roles={"admin"}, projects=set(), areas=set())
+    created = forest_scene_links_module.create_forest_block_scene_link(
+        "8ab8cd2e-f574-4fd8-bdf6-b7788e632224",
+        forest_scene_links_module.ForestSceneLinkIn(
+            sceneId="scene-in-catalog",
+            relationType="coverage",
+            capturedAt="2026-06-12",
+            confidence=0.8,
+        ),
+        context=context,
+    )
+
+    assert created == {
+        "forestBlockId": "8ab8cd2e-f574-4fd8-bdf6-b7788e632224",
+        "sceneId": "scene-in-catalog",
+        "relationType": "coverage",
+        "capturedAt": "2026-06-12",
+        "confidence": 0.8,
+    }
+    assert connect_calls == ["postgresql://smart-bamboo"]
     assert cursor.executed == [
-        ("SELECT id FROM remote_sensing_scenes WHERE id = %s LIMIT 1", ("scene-postgis",))
+        (
+            "INSERT INTO forest_block_scene_links ( forest_block_id, scene_id, relation_type, captured_at, confidence ) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (forest_block_id, scene_id, relation_type) DO UPDATE "
+            "SET captured_at = EXCLUDED.captured_at, confidence = EXCLUDED.confidence, created_at = now()",
+            ("8ab8cd2e-f574-4fd8-bdf6-b7788e632224", "scene-in-catalog", "coverage", "2026-06-12", 0.8),
+        )
     ]
 
 
@@ -489,3 +563,30 @@ def test_postgis_scene_links_raise_503_when_connect_fails(monkeypatch, reload_pl
     assert excinfo.value.status_code == 503
     assert "forest scene links PostGIS database is unavailable" in excinfo.value.detail
     assert "postgresql://smart-bamboo" in excinfo.value.detail
+
+
+def test_postgis_delete_scene_links_scopes_relation_type_when_requested(monkeypatch, reload_platform_modules):
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    cursor = FakeCursor(rowcount=1)
+    connect_calls: list[str] = []
+    install_fake_psycopg(monkeypatch, cursor=cursor, connect_calls=connect_calls)
+    monkeypatch.setattr(
+        forest_scene_links_module,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql://smart-bamboo"),
+    )
+
+    deleted = forest_scene_links_module.delete_scene_links_postgis(
+        "8ab8cd2e-f574-4fd8-bdf6-b7788e632225",
+        "scene-a",
+        "orthophoto",
+    )
+
+    assert deleted == 1
+    assert connect_calls == ["postgresql://smart-bamboo"]
+    assert cursor.executed == [
+        (
+            "DELETE FROM forest_block_scene_links WHERE forest_block_id = %s AND scene_id = %s AND relation_type = %s",
+            ("8ab8cd2e-f574-4fd8-bdf6-b7788e632225", "scene-a", "orthophoto"),
+        )
+    ]

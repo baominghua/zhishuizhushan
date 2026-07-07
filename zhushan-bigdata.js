@@ -1092,52 +1092,6 @@ function createOverlayLayer(layerType, color) {
 function openBlockCard(block) {
   cardTitle.textContent = "林班电子信息卡";
   cardSubtitle.textContent = `${block.name} · 影像信息`;
-  infoGrid.innerHTML = [
-    ["林班编号", block.code],
-    ["林班名称", block.name],
-    ["面积", block.area],
-    ["竹种", block.variety],
-    ["质量等级", block.level],
-    ["经营主体", block.owner],
-    ["海拔范围", block.altitude],
-    ["坡度范围", block.slope],
-    ["健康度", block.health],
-    ["数据状态", "已入库"],
-  ]
-    .map(([label, value]) => `<span>${label}</span><b>${value}</b>`)
-    .join("");
-
-  imageTabs.innerHTML = block.images
-    .map(([name], index) => `<button class="${index === 0 ? "active" : ""}" data-image="${index}">${name}</button>`)
-    .join("");
-
-  function renderImage(index) {
-    const [name, title, desc] = block.images[index];
-    imagePanel.innerHTML = `
-      <div class="preview">${name}</div>
-      <div>
-        <strong>${title}</strong>
-        <p>${desc}</p>
-      </div>
-    `;
-  }
-
-  imageTabs.querySelectorAll("[data-image]").forEach((button) => {
-    button.addEventListener("click", () => {
-      imageTabs.querySelectorAll("button").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-      renderImage(Number(button.dataset.image));
-    });
-  });
-
-  renderImage(0);
-  infoCard.classList.remove("hidden");
-  businessCard.classList.add("hidden");
-}
-
-function openBlockCard(block) {
-  cardTitle.textContent = "林班电子信息卡";
-  cardSubtitle.textContent = `${block.name} · 影像信息`;
   activeInfoCardBlockId = String(block.id || "");
   infoGrid.innerHTML = [
     ["林班编号", block.code],
