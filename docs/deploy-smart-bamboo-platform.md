@@ -8,21 +8,20 @@
 - `db`：PostGIS 数据库，承载森林班块等平台数据
 - `geoserver`：可选服务，按需通过 `geoserver` profile 启动
 
-默认情况下，森林数据使用 PostGIS；遥感场景目录 `/api/scenes` 仍保持 JSON 目录模式。若需要把遥感场景目录也切到 PostGIS，可额外设置 `REMOTE_SENSING_CATALOG_BACKEND=postgis`。
+默认情况下，森林班块/平台数据使用 PostGIS；当前分支的遥感 COG 场景目录 `/api/scenes` 仍使用 JSON 文件目录，不支持通过 Compose 环境变量切换到 PostGIS。当前目录文件固定保存在 `/app/data/remote-sensing/catalog.json`。
 
 ## 2. 启动前准备
 
 1. 安装 Docker 与 Docker Compose
 2. 在项目根目录执行命令
-3. 如需代理天地图或启用鉴权，先准备环境变量
+3. 如需调整数据库账号或端口，先准备环境变量
 
 推荐在项目根目录新建 `.env` 文件，例如：
 
 ```dotenv
 SMART_BAMBOO_DATABASE_URL=postgresql://smart_bamboo:smart_bamboo_dev@db:5432/smart_bamboo
-REMOTE_SENSING_TIANDITU_TK=你的天地图密钥
-REMOTE_SENSING_CORS_ORIGINS=*
-REMOTE_SENSING_AUTH_REQUIRED=0
+SMART_BAMBOO_STORAGE_BACKEND=postgis
+SMART_BAMBOO_APP_PORT=8010
 ```
 
 ## 3. 启动服务
@@ -56,21 +55,22 @@ http://127.0.0.1:8010/api/health
 | --- | --- |
 | `SMART_BAMBOO_STORAGE_BACKEND` | 平台森林数据存储方式，默认 `postgis` |
 | `SMART_BAMBOO_DATABASE_URL` | 森林数据 PostGIS 连接串 |
-| `REMOTE_SENSING_DATA_DIR` | 遥感数据目录，容器内默认 `/data/remote-sensing` |
+| `REMOTE_SENSING_PORT` | FastAPI 容器监听端口，默认 `8010` |
 | `REMOTE_SENSING_SERVE_STATIC` | 是否由 FastAPI 托管静态页面，默认 `1` |
 
 ### 可选变量
 
 | 变量 | 作用 |
 | --- | --- |
-| `REMOTE_SENSING_CATALOG_BACKEND` | 遥感场景目录后端，默认 `json`，可改为 `postgis` |
-| `REMOTE_SENSING_DATABASE_URL` | 遥感场景目录切到 PostGIS 时使用的连接串 |
-| `REMOTE_SENSING_GEOSERVER_URL` | 接入外部 GeoServer 时的基础地址 |
-| `REMOTE_SENSING_TIANDITU_TK` | 天地图密钥 |
-| `REMOTE_SENSING_AUTH_REQUIRED` | 是否开启遥感接口鉴权 |
-| `REMOTE_SENSING_API_TOKENS` | 遥感接口令牌配置，开启鉴权时使用 |
+| `SMART_BAMBOO_DB_PORT` | 宿主机暴露的 PostGIS 端口，默认 `5433` |
+| `POSTGRES_DB` | PostGIS 数据库名，默认 `smart_bamboo` |
+| `POSTGRES_USER` | PostGIS 用户名，默认 `smart_bamboo` |
+| `POSTGRES_PASSWORD` | PostGIS 密码，默认 `smart_bamboo_dev` |
+| `GEOSERVER_PORT` | 启用 `geoserver` profile 时宿主机暴露端口，默认 `8080` |
+| `GEOSERVER_ADMIN_USER` | GeoServer 管理员用户名 |
+| `GEOSERVER_ADMIN_PASSWORD` | GeoServer 管理员密码 |
 
-项目根目录的 `./data` 会挂载到容器内 `/data`，因此数据库外的遥感数据、缓存和导入文件都保存在宿主机本地。
+项目根目录的 `./data` 会挂载到容器内 `/app/data`。当前分支中，遥感场景目录、上传文件和生成后的 COG 都保存在 `/app/data/remote-sensing/` 下，其中目录清单文件为 `/app/data/remote-sensing/catalog.json`。
 
 ## 6. Nginx 反向代理
 
