@@ -12,7 +12,12 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from .auth import request_context, require_write_access
-from .forest_blocks import load_blocks, normalize_block, save_blocks
+from .forest_blocks import (
+    load_all_blocks,
+    normalize_block,
+    require_target_area_allowed,
+    save_blocks,
+)
 
 
 router = APIRouter(prefix="/api", tags=["forest-imports"])
@@ -175,6 +180,8 @@ def validate_record(record: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if not record.get("blockCode"):
         errors.append("blockCode is required")
+    if not record.get("name"):
+        errors.append("name is required")
     return errors
 
 
@@ -205,41 +212,50 @@ async def import_forest_blocks(
     file: UploadFile = File(...),
     strategy: str = Form(default="upsert"),
 ) -> dict[str, Any]:
-    require_write_access(request_context(request))
+    context = request_context(request)
+    require_write_access(context)
     if strategy not in {"upsert", "skip"}:
         raise HTTPException(status_code=400, detail="strategy must be 'upsert' or 'skip'")
 
     content = await file.read()
     records = parse_import_file(file.filename or "upload", content)
-    blocks = load_blocks()
-    by_code = {block["blockCode"]: block for block in blocks}
-    block_order = [block["blockCode"] for block in blocks]
+    blocks = load_all_blocks()
+    active_indexes = {
+        block["blockCode"]: index
+        for index, block in enumerate(blocks)
+        if block.get("blockCode") and not block.get("deletedAt")
+    }
 
     valid_rows = 0
     errors: list[dict[str, Any]] = []
     for row_number, record in enumerate(records, start=1):
         row_errors = validate_record(record)
+        try:
+            require_target_area_allowed(context, record.get("countyCode"))
+        except HTTPException as exc:
+            row_errors.append(str(exc.detail))
         if row_errors:
             errors.extend({"row": row_number, "message": message} for message in row_errors)
             continue
 
         valid_rows += 1
-        existing = by_code.get(record["blockCode"])
-        if existing and strategy == "skip":
+        existing_index = active_indexes.get(record["blockCode"])
+        if existing_index is not None and strategy == "skip":
             continue
 
         normalized = normalize_block(record)
-        if existing:
+        if existing_index is not None:
+            existing = blocks[existing_index]
             normalized["id"] = existing["id"]
             normalized["createdAt"] = existing.get("createdAt", normalized["createdAt"])
             normalized["deletedAt"] = existing.get("deletedAt")
-            by_code[record["blockCode"]] = normalized
+            blocks[existing_index] = normalized
             continue
 
-        by_code[record["blockCode"]] = normalized
-        block_order.append(record["blockCode"])
+        blocks.append(normalized)
+        active_indexes[record["blockCode"]] = len(blocks) - 1
 
-    save_blocks([by_code[block_code] for block_code in block_order])
+    save_blocks(blocks)
 
     batch_id = str(uuid.uuid4())
     report = build_report(
