@@ -12,6 +12,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from server.modules.database import init_platform_schema, use_postgis as smart_bamboo_use_postgis
+from server.modules.settings import get_settings
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +37,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+init_platform_schema()
 
 
 def ensure_dirs() -> None:
@@ -204,6 +208,13 @@ def health() -> dict[str, Any]:
             "rasterio": dependency_status("rasterio"),
             "rio_tiler": dependency_status("rio_tiler"),
             "titiler": dependency_status("titiler"),
+        },
+        "deployment": {
+            "smartBamboo": {
+                "storageBackend": get_settings().storage_backend,
+                "postgisEnabled": smart_bamboo_use_postgis(),
+                "schemaReady": True,
+            }
         },
     }
 
