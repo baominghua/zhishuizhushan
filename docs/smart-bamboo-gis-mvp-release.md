@@ -64,7 +64,7 @@ node --check satellite-manager.js
 Start-Process -WindowStyle Hidden .\.venv\Scripts\python.exe -ArgumentList '-m','uvicorn','server.app:app','--host','127.0.0.1','--port','8010'
 ```
 
-配套校验结果：
+以下校验均为 HTTP 状态与接口响应冒烟，不等同于浏览器内的人工视觉验收：
 
 - `GET /api/health` 返回 `ok: true`
 - `GET /admin.html` 返回 `HTTP/1.1 200 OK`
@@ -93,7 +93,6 @@ Start-Process -WindowStyle Hidden .\.venv\Scripts\python.exe -ArgumentList '-m',
 - 本机 Docker 不可用，因此未执行 `docker compose up` 或容器内联调。
 - 本次未使用浏览器做人工视觉验收，因此没有直接确认页面上的交互布局、地图点选弹窗和控制台可视化状态。
 - 卫星管理页仅完成接口级冒烟与脚本语法检查，未接入真实影像目录、真实 COG 转换任务或可视地图操作。
-- 本次本地冒烟为避免污染现有数据目录，使用了临时 `REMOTE_SENSING_DATA_DIR` 进行服务验证。
 
 ## 下一阶段路线图
 
