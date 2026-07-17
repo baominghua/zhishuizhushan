@@ -7,5 +7,16 @@ if [ ! -x ".venv/bin/python" ]; then
   python3 -m venv .venv
 fi
 
+: "${REMOTE_SENSING_DATA_DIR:=$(pwd)/data/remote-sensing}"
+: "${REMOTE_SENSING_CORS_ORIGINS:=*}"
+: "${REMOTE_SENSING_SERVE_STATIC:=1}"
+: "${REMOTE_SENSING_STATIC_DIR:=$(pwd)}"
+: "${REMOTE_SENSING_IMPORT_DIRS:=$REMOTE_SENSING_DATA_DIR/inbox}"
+: "${REMOTE_SENSING_TASK_WORKERS:=1}"
+: "${REMOTE_SENSING_TILE_CACHE:=1}"
+: "${REMOTE_SENSING_TIANDITU_TIMEOUT:=8}"
+: "${REMOTE_SENSING_PORT:=8010}"
+export REMOTE_SENSING_DATA_DIR REMOTE_SENSING_CORS_ORIGINS REMOTE_SENSING_SERVE_STATIC REMOTE_SENSING_STATIC_DIR REMOTE_SENSING_IMPORT_DIRS REMOTE_SENSING_TASK_WORKERS REMOTE_SENSING_TILE_CACHE REMOTE_SENSING_TIANDITU_TIMEOUT
+
 ./.venv/bin/python -m pip install -r server/requirements.txt
-./.venv/bin/python -m uvicorn server.app:app --host 0.0.0.0 --port 8010
+./.venv/bin/python -m uvicorn server.app:app --host 0.0.0.0 --port "$REMOTE_SENSING_PORT"

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台-林班空间台账</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="blocks" data-permission="forest.blocks.view" data-mode="ledger">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">空间地理单元</p>
+          <h1>林班空间台账</h1>
+          <p class="brand-copy">只维护空间地理单元与资源属性，不维护林权法律凭证。</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading">
+            <h2 id="apiStatusTitle">权限边界</h2>
+            <span id="statusBadge" class="status-badge idle">未连接</span>
+          </div>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">forest.blocks.manage</span></p>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow">空间地理单元</p>
+            <h2>林班空间台账</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="reloadBlocks" type="button">刷新林班</button>
+            <button id="newBlock" type="button" class="button-ghost" data-permission="forest.blocks.create">新增林班</button>
+          </div>
+        </header>
+
+        <section class="panel config-panel" aria-label="接口配置">
+          <div class="field-grid field-grid-wide">
+            <label><span>API 基地址</span><input id="apiBase" type="url" value="http://127.0.0.1:8010" /></label>
+            <label><span>角色头</span><input id="authRoles" type="text" value="admin" /></label>
+            <label><span>区域头</span><input id="authAreas" type="text" placeholder="350703,350724" /></label>
+            <label><span>用户头</span><input id="authUser" type="text" placeholder="admin" /></label>
+          </div>
+        </section>
+
+        <section class="metric-grid" aria-label="林班概览">
+          <article class="metric-tile"><span>林班总数</span><strong id="metricTotal">0</strong><small>当前筛选记录</small></article>
+          <article class="metric-tile"><span>面积合计</span><strong id="metricArea">0 亩</strong><small>当前页汇总</small></article>
+          <article class="metric-tile"><span>有边界</span><strong id="metricGeometry">0</strong><small>GeoJSON 已入库</small></article>
+          <article class="metric-tile"><span>待补图</span><strong id="metricNoGeometry">0</strong><small>缺少空间边界</small></article>
+        </section>
+
+        <section id="blockWorkbench" class="workbench-grid ledger-workbench ledger-workbench-full" data-admin-primary-ledger="true">
+          <div id="blockLedgerPanel" class="panel table-panel ledger-main-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">筛选与台账</p>
+                <h2>林班列表</h2>
+              </div>
+            </div>
+            <div class="field-grid filters-grid">
+              <label class="field-span-2"><span>关键词</span><input id="keyword" type="search" placeholder="林班编号、名称、县乡村、竹种、资源标签" /></label>
+              <label><span>基地类型</span><select id="baseTypeFilter"><option value="">全部</option><option value="self_operated">自营</option><option value="franchise">加盟</option><option value="cooperative">合作经营</option></select></label>
+              <label><span>经营类型</span><select id="operationTypeFilter"><option value="">全部</option><option value="timber">竹材用林</option><option value="dual_regular">常规笋竹两用林</option><option value="dual_high_yield">高产笋竹两用林</option><option value="understory">林下经济</option></select></label>
+              <label><span>风险等级</span><select id="riskLevelFilter"><option value="">全部</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">严重</option></select></label>
+              <label class="checkbox-field"><span>显示已删除</span><input id="includeDeletedBlocks" type="checkbox" /></label>
+            </div>
+            <div class="table-wrap ledger-table-wrap ledger-table-full">
+              <table>
+                <thead><tr><th>林班</th><th>区划与面积</th><th>资源经营</th><th>图形状态</th><th>更新时间</th><th>操作</th></tr></thead>
+                <tbody id="blockRows"><tr class="placeholder-row"><td colspan="6">等待加载林班</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <section id="blockDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+            <div class="panel detail-panel detail-drawer-panel">
+              <div class="panel-header">
+                <div><p class="eyebrow">台账详情</p><h2 id="detailTitle">选择林班查看详情</h2></div>
+                <div class="panel-actions">
+                  <button id="closeBlockDetail" type="button" class="button-ghost">关闭</button>
+                </div>
+              </div>
+              <p id="blockDetailEmpty" class="detail-empty">从台账选择一条林班记录查看详情。</p>
+              <dl id="blockDetailGrid" class="detail-grid"></dl>
+              <div class="task-events">
+                <h3>版本历史</h3>
+                <div id="blockVersionList" class="trace-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="blockEditorOverlay" class="crud-modal hidden" aria-hidden="true">
+            <form id="blockForm" class="panel form-panel crud-editor-panel">
+              <div class="panel-header">
+                <div><p class="eyebrow">独立表单</p><h2 id="formTitle">新增林班</h2></div>
+                <div class="panel-actions">
+                  <button id="cancelBlockEdit" type="button" class="button-ghost">取消</button>
+                  <button id="saveBlock" type="submit" data-permission="forest.blocks.create">保存林班</button>
+                </div>
+              </div>
+              <input id="blockId" type="hidden" />
+              <fieldset>
+                <legend>基础信息</legend>
+                <div class="field-grid">
+                  <label><span>林班编号</span><input id="blockCode" type="text" required /></label>
+                  <label><span>林班名称</span><input id="blockName" type="text" required /></label>
+                  <label><span>区县代码</span><input id="countyCode" type="text" /></label>
+                  <label><span>区县名称</span><input id="countyName" type="text" /></label>
+                  <label><span>乡镇代码</span><input id="townCode" type="text" /></label>
+                  <label><span>乡镇名称</span><input id="townName" type="text" /></label>
+                  <label><span>村代码</span><input id="villageCode" type="text" /></label>
+                  <label><span>村名称</span><input id="villageName" type="text" /></label>
+                  <label><span>面积(亩)</span><input id="areaMu" type="number" min="0" step="0.01" /></label>
+                  <label><span>竹种 / 林种</span><input id="forestType" type="text" /></label>
+                  <label><span>基地类型</span><select id="baseType"><option value="">未填写</option><option value="self_operated">自营</option><option value="franchise">加盟</option><option value="cooperative">合作经营</option></select></label>
+                  <label><span>经营类型</span><select id="operationType"><option value="">未填写</option><option value="timber">竹材用林</option><option value="dual_regular">常规笋竹两用林</option><option value="dual_high_yield">高产笋竹两用林</option><option value="understory">林下经济</option></select></label>
+                  <label><span>质量等级</span><input id="qualityGrade" type="text" /></label>
+                  <label><span>健康状态</span><input id="healthStatus" type="text" /></label>
+                  <label><span>风险等级</span><select id="riskLevel"><option value="">未填写</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">严重</option></select></label>
+                  <label><span>标签</span><input id="tags" type="text" placeholder="逗号分隔" /></label>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>空间与扩展</legend>
+                <div class="field-grid">
+                  <label class="field-span-2"><span>附加属性 JSON</span><textarea id="properties" rows="5" spellcheck="false">{}</textarea></label>
+                  <label class="field-span-2"><span>GeoJSON 几何</span><textarea id="geometry" rows="8" spellcheck="false">null</textarea></label>
+                </div>
+              </fieldset>
+            </form>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="admin-common.js"></script>
+    <script src="admin-blocks.js"></script>
+  </body>
+</html>

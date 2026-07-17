@@ -286,6 +286,30 @@ def test_delete_scene_links_supports_relation_type_and_full_scene_removal(app_cl
     }
 
 
+def test_deleting_imagery_scene_removes_forest_block_scene_link_records(app_client, reload_platform_modules):
+    from server.modules import forest_scene_links as forest_scene_links_module
+
+    seed_catalog(reload_platform_modules, "scene-delete-cleanup")
+    block = create_block(app_client, "LINK-SCENE-DELETE-001")
+    linked = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "scene-delete-cleanup", "relationType": "coverage"},
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert linked.status_code == 200
+    assert forest_scene_links_module.load_scene_links()[0]["sceneId"] == "scene-delete-cleanup"
+
+    deleted = app_client.delete(
+        "/api/scenes/scene-delete-cleanup",
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert deleted.status_code == 200
+    assert forest_scene_links_module.load_scene_links() == []
+
+
 def test_scene_links_require_visible_block_for_read_and_write(app_client, reload_platform_modules):
     seed_catalog(reload_platform_modules, "cog-demo-005")
     block = create_block(app_client, "LINK-VIS-001")
@@ -329,6 +353,62 @@ def test_scene_links_require_write_access_for_mutations(app_client, reload_platf
 
     assert created.status_code == 403
     assert deleted.status_code == 403
+
+
+def test_scene_link_permission_allows_linkage_writes_without_admin_role(app_client, reload_platform_modules):
+    app_client.post(
+        "/api/admin/roles",
+        json={
+            "roleCode": "linkage_editor",
+            "name": "Linkage editor",
+            "status": "active",
+            "permissions": ["forest.linkages.manage"],
+            "menuModules": ["linkages"],
+            "dataScopes": {},
+            "properties": {},
+        },
+        headers={"X-RS-Roles": "admin"},
+    )
+    seed_catalog(reload_platform_modules, "cog-demo-perm-001")
+    block = create_block(app_client, "LINK-PERM-001")
+
+    created = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "cog-demo-perm-001", "relationType": "coverage"},
+        headers={"X-RS-Roles": "linkage_editor", "X-RS-Areas": "350703"},
+    )
+
+    assert created.status_code == 200
+    assert created.json()["sceneId"] == "cog-demo-perm-001"
+
+
+def test_scene_link_permission_is_required_for_linkage_writes(app_client, reload_platform_modules):
+    app_client.post(
+        "/api/admin/roles",
+        json={
+            "roleCode": "rights_editor",
+            "name": "Rights editor",
+            "status": "active",
+            "permissions": ["forest.rights.manage"],
+            "menuModules": ["rights"],
+            "dataScopes": {},
+            "properties": {},
+        },
+        headers={"X-RS-Roles": "admin"},
+    )
+    seed_catalog(reload_platform_modules, "cog-demo-perm-002")
+    block = create_block(app_client, "LINK-PERM-002")
+
+    denied = link_scene(
+        app_client,
+        block["id"],
+        {"sceneId": "cog-demo-perm-002", "relationType": "coverage"},
+        headers={"X-RS-Roles": "rights_editor", "X-RS-Areas": "350703"},
+    )
+
+    assert denied.status_code == 403
+    assert "forest.linkages.manage" in denied.json()["detail"]
 
 
 def test_scene_links_reject_nonexistent_scene_id(app_client):
@@ -863,6 +943,51 @@ def test_postgis_link_storage_inserts_when_scene_exists_in_json_catalog(
             "ON CONFLICT (forest_block_id, scene_id, relation_type) DO UPDATE "
             "SET captured_at = EXCLUDED.captured_at, confidence = EXCLUDED.confidence, created_at = now()",
             ("8ab8cd2e-f574-4fd8-bdf6-b7788e632224", "scene-in-catalog", "coverage", "2026-06-12", 0.8),
+        )
+    ]
+
+
+def test_mysql_catalog_scene_lookup_uses_remote_catalog_database(
+    isolated_env, monkeypatch, reload_platform_modules
+):
+    monkeypatch.setenv("REMOTE_SENSING_CATALOG_BACKEND", "mysql")
+    catalog_url = "mysql://catalog_user:super-secret@catalog-db:3306/smart_bamboo"
+    monkeypatch.setenv("REMOTE_SENSING_DATABASE_URL", catalog_url)
+    forest_scene_links_module = reload_scene_links_module(reload_platform_modules)
+    cursor = FakeCursor(
+        fetchone_result=(
+            json.dumps(
+                {
+                    "id": "scene-only-in-mysql",
+                    "name": "MySQL scene",
+                    "projectId": "project-alpha",
+                    "areaCode": "350703",
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    connect_calls: list[str] = []
+
+    def fake_mysql_connect(database_url: str | None = None):
+        connect_calls.append(str(database_url or ""))
+        return FakeConnection(cursor)
+
+    monkeypatch.setattr(forest_scene_links_module, "mysql_connect", fake_mysql_connect)
+
+    scene = forest_scene_links_module.require_catalog_scene("scene-only-in-mysql")
+
+    assert scene == {
+        "id": "scene-only-in-mysql",
+        "name": "MySQL scene",
+        "projectId": "project-alpha",
+        "areaCode": "350703",
+    }
+    assert connect_calls == [catalog_url]
+    assert cursor.executed == [
+        (
+            "SELECT scene FROM remote_sensing_scenes WHERE id = %s AND deleted_at IS NULL LIMIT 1",
+            ("scene-only-in-mysql",),
         )
     ]
 

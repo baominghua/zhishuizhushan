@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>智慧竹山后台登录</title>
+    <link rel="stylesheet" href="admin.css?v=20260715-auth1" />
+  </head>
+  <body class="admin-login-page">
+    <main class="admin-login-shell">
+      <section class="admin-login-brand" aria-labelledby="loginTitle">
+        <p class="eyebrow">Smart Bamboo GIS</p>
+        <h1 id="loginTitle">智慧竹山综合管理平台</h1>
+        <p>林班空间、林权档案、经营主体与遥感成果统一管理</p>
+      </section>
+
+      <section class="admin-login-panel" aria-label="后台登录">
+        <div class="admin-login-heading">
+          <p class="eyebrow">安全访问</p>
+          <h2>登录后台</h2>
+        </div>
+        <form id="loginForm">
+          <label>
+            <span>API 地址</span>
+            <input id="apiBase" type="url" value="http://127.0.0.1:8010" autocomplete="url" required />
+          </label>
+          <label>
+            <span>访问令牌</span>
+            <input id="accessToken" type="password" autocomplete="current-password" required />
+          </label>
+          <label class="checkbox-field admin-login-remember">
+            <span>在此浏览器保持登录</span>
+            <input id="rememberToken" type="checkbox" />
+          </label>
+          <button id="loginButton" type="submit">登录后台</button>
+        </form>
+        <p id="loginStatus" class="admin-login-status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="admin-login.js?v=20260715-auth1"></script>
+  </body>
+</html>

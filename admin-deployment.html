@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台-部署诊断</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="deployment" data-permission="system.deployment.view">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">Deployment Readiness</p>
+          <h1>部署诊断</h1>
+          <p class="brand-copy">检查数据库、目录、影像目录、依赖、缓存和外部服务配置，作为正式部署前的验收台账。</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采伐计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading">
+            <h2 id="apiStatusTitle">权限边界</h2>
+            <span id="statusBadge" class="status-badge idle">未连接</span>
+          </div>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">system.deployment.view</span></p>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow">部署与运维</p>
+            <h2>部署诊断</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="exportDeploymentReport" type="button" class="button-ghost" data-permission="system.deployment.view">导出报告</button>
+            <button id="reloadDeployment" type="button" data-permission="system.deployment.view">刷新诊断</button>
+          </div>
+        </header>
+
+        <section class="panel config-panel" aria-label="接口配置">
+          <div class="field-grid field-grid-wide">
+            <label><span>API 基地地址</span><input id="apiBase" type="url" value="http://127.0.0.1:8010" /></label>
+            <label><span>角色头 X-RS-Roles</span><input id="authRoles" type="text" value="admin" /></label>
+            <label><span>区域头 X-RS-Areas</span><input id="authAreas" type="text" placeholder="350703,350724" /></label>
+            <label><span>用户头 X-RS-User</span><input id="authUser" type="text" placeholder="admin" /></label>
+          </div>
+        </section>
+
+        <section class="metric-grid" aria-label="部署摘要">
+          <article class="metric-tile"><span>整体状态</span><strong id="deploymentHealthMetric">待检查</strong><small>来自 /api/health</small></article>
+          <article class="metric-tile"><span>生产就绪</span><strong id="deploymentReadinessMetric">待检查</strong><small>阻断与警告汇总</small></article>
+          <article class="metric-tile"><span>平台存储</span><strong id="platformStorageMetric">-</strong><small>JSON / PostGIS</small></article>
+          <article class="metric-tile"><span>影像目录</span><strong id="imageryCatalogMetric">-</strong><small>遥感目录后端</small></article>
+          <article class="metric-tile"><span>数据集</span><strong id="datasetMetric">0</strong><small>核心数据库存</small></article>
+        </section>
+
+        <section class="panel table-panel" aria-label="生产就绪结论">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">上线验收</p>
+              <h2>生产就绪结论</h2>
+            </div>
+          </div>
+          <div class="table-wrap ledger-table-wrap">
+            <table>
+              <thead><tr><th>级别</th><th>事项</th><th>说明</th><th>建议动作</th></tr></thead>
+              <tbody id="readinessRows"><tr class="placeholder-row"><td colspan="4">等待加载生产就绪结论</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel" aria-label="部署检查">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Readiness</p>
+              <h2>部署检查台账</h2>
+            </div>
+          </div>
+          <div class="table-wrap ledger-table-wrap">
+            <table>
+              <thead><tr><th>检查项</th><th>状态</th><th>配置</th><th>说明</th></tr></thead>
+              <tbody id="deploymentRows"><tr class="placeholder-row"><td colspan="4">等待加载部署检查</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="apiCheckPanel" class="panel table-panel" aria-label="关键业务接口">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Core API</p>
+              <h2>关键业务接口</h2>
+            </div>
+          </div>
+          <div id="apiCheckGroupSummary" class="api-check-group-summary" aria-label="API 检查分组摘要"></div>
+          <div class="table-wrap ledger-table-wrap">
+            <table>
+              <thead><tr><th>接口模块</th><th>状态</th><th>路由</th><th>权限</th></tr></thead>
+              <tbody id="apiCheckRows"><tr class="placeholder-row"><td colspan="4">等待加载关键业务接口</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel" aria-label="依赖检查">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Runtime</p>
+              <h2>运行依赖</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>依赖</th><th>状态</th><th>版本/路径</th><th>说明</th></tr></thead>
+              <tbody id="dependencyRows"><tr class="placeholder-row"><td colspan="4">等待加载依赖状态</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel" aria-label="数据库存">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Inventory</p>
+              <h2>数据库存</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>数据集</th><th>状态</th><th>记录</th><th>路径</th></tr></thead>
+              <tbody id="datasetRows"><tr class="placeholder-row"><td colspan="4">等待加载数据库存</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel" aria-label="缓存与外部服务">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Cache & Service</p>
+              <h2>缓存与外部服务</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>项目</th><th>状态</th><th>配置</th><th>说明</th></tr></thead>
+              <tbody id="cacheRows"><tr class="placeholder-row"><td colspan="4">等待加载缓存状态</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="admin-common.js"></script>
+    <script src="admin-deployment.js"></script>
+  </body>
+</html>

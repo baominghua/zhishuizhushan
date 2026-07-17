@@ -1,17 +1,22 @@
 services:
   db:
-    image: postgis/postgis:16-3.4
+    image: mysql:8.4
     restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
     environment:
-      POSTGRES_DB: "${POSTGRES_DB:-smart_bamboo}"
-      POSTGRES_USER: "${POSTGRES_USER:-smart_bamboo}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-smart_bamboo_dev}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-smart_bamboo}"
+      MYSQL_USER: "${MYSQL_USER:-smart_bamboo}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}"
     ports:
-      - "${SMART_BAMBOO_DB_PORT:-5433}:5432"
+      - "${SMART_BAMBOO_DB_PORT:-3307}:3306"
     volumes:
-      - smart_bamboo_pg:/var/lib/postgresql/data
+      - smart_bamboo_mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -24,16 +29,34 @@ services:
       db:
         condition: service_healthy
     environment:
+      SMART_BAMBOO_DEPLOYMENT_MODE: "${SMART_BAMBOO_DEPLOYMENT_MODE:-production}"
       REMOTE_SENSING_PORT: "8010"
       REMOTE_SENSING_SERVE_STATIC: "1"
-      REMOTE_SENSING_AUTH_REQUIRED: "${REMOTE_SENSING_AUTH_REQUIRED:-0}"
-      REMOTE_SENSING_API_TOKENS: "${REMOTE_SENSING_API_TOKENS:-}"
-      SMART_BAMBOO_STORAGE_BACKEND: "${SMART_BAMBOO_STORAGE_BACKEND:-postgis}"
-      SMART_BAMBOO_DATABASE_URL: "${SMART_BAMBOO_DATABASE_URL:-postgresql://smart_bamboo:smart_bamboo_dev@db:5432/smart_bamboo}"
+      REMOTE_SENSING_AUTH_REQUIRED: "${REMOTE_SENSING_AUTH_REQUIRED:-1}"
+      REMOTE_SENSING_API_TOKENS: "${REMOTE_SENSING_API_TOKENS:?Set REMOTE_SENSING_API_TOKENS in .env}"
+      REMOTE_SENSING_CORS_ORIGINS: "${REMOTE_SENSING_CORS_ORIGINS:?Set REMOTE_SENSING_CORS_ORIGINS in .env}"
+      REMOTE_SENSING_CATALOG_BACKEND: "${REMOTE_SENSING_CATALOG_BACKEND:-mysql}"
+      REMOTE_SENSING_DATABASE_URL: "${REMOTE_SENSING_DATABASE_URL:?Set REMOTE_SENSING_DATABASE_URL in .env}"
+      REMOTE_SENSING_DATA_DIR: "${REMOTE_SENSING_DATA_DIR:-/app/data/remote-sensing}"
+      REMOTE_SENSING_IMPORT_DIRS: "${REMOTE_SENSING_IMPORT_DIRS:-/app/data/remote-sensing/inbox}"
+      REMOTE_SENSING_TASK_WORKERS: "${REMOTE_SENSING_TASK_WORKERS:-1}"
+      SMART_BAMBOO_STORAGE_BACKEND: "${SMART_BAMBOO_STORAGE_BACKEND:-mysql}"
+      SMART_BAMBOO_DATABASE_URL: "${SMART_BAMBOO_DATABASE_URL:?Set SMART_BAMBOO_DATABASE_URL in .env}"
+      SMART_BAMBOO_MYSQL_WRITE_BATCH_SIZE: "${SMART_BAMBOO_MYSQL_WRITE_BATCH_SIZE:-500}"
+      SMART_BAMBOO_IDENTITY_LOOKUP_BATCH_SIZE: "${SMART_BAMBOO_IDENTITY_LOOKUP_BATCH_SIZE:-500}"
+      SMART_BAMBOO_VECTOR_TILE_CACHE_TTL_SECONDS: "${SMART_BAMBOO_VECTOR_TILE_CACHE_TTL_SECONDS:-300}"
+      SMART_BAMBOO_VECTOR_TILE_CACHE_MAX_BYTES: "${SMART_BAMBOO_VECTOR_TILE_CACHE_MAX_BYTES:-2147483648}"
+      SMART_BAMBOO_VECTOR_TILE_CACHE_MAX_AGE_SECONDS: "${SMART_BAMBOO_VECTOR_TILE_CACHE_MAX_AGE_SECONDS:-86400}"
+      SMART_BAMBOO_VECTOR_TILE_CACHE_PRUNE_INTERVAL_SECONDS: "${SMART_BAMBOO_VECTOR_TILE_CACHE_PRUNE_INTERVAL_SECONDS:-60}"
     ports:
       - "${SMART_BAMBOO_APP_PORT:-8010}:8010"
     volumes:
       - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8010/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
 
   geoserver:
     image: docker.osgeo.org/geoserver:2.25.x
@@ -48,5 +71,5 @@ services:
       - geoserver_data:/opt/geoserver_data
 
 volumes:
-  smart_bamboo_pg:
+  smart_bamboo_mysql:
   geoserver_data:

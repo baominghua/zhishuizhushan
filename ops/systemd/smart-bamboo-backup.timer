@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Smart Bamboo database backup every day
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=10m
+Persistent=true
+Unit=smart-bamboo-backup.service
+
+[Install]
+WantedBy=timers.target

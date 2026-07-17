@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Bamboo database backup and private object storage upload
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/smart-bamboo
+EnvironmentFile=-/srv/smart-bamboo/config/backup-upload.env
+ExecStart=/opt/smart-bamboo/ops/scripts/backup-mysql.sh
+ExecStartPost=/opt/smart-bamboo/ops/scripts/upload-backups.sh
+User=root
+Group=root
+UMask=0077

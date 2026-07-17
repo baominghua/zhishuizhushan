@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>智慧竹山大数据</title>
     <link rel="stylesheet" href="assets/ol/ol.css" />
-    <link rel="stylesheet" href="zhushan-bigdata.css" />
+    <link rel="stylesheet" href="zhushan-bigdata.css?v=20260716-interaction5" />
   </head>
   <body>
     <main class="screen">
@@ -13,7 +13,42 @@
         <span></span>
         <h1>智慧竹山大数据</h1>
         <span></span>
+        <button
+          class="forest-filter-toggle"
+          id="forestFilterToggle"
+          type="button"
+          aria-controls="forestFilterPanel"
+          aria-expanded="false"
+          aria-label="展开林班筛选"
+        >
+          <i aria-hidden="true">⌕</i>
+          <b>筛选</b>
+          <em id="forestFilterBadge" hidden>0</em>
+        </button>
       </header>
+
+      <section
+        class="forest-filter-panel forest-filter-popover"
+        id="forestFilterPanel"
+        hidden
+        aria-label="林班分层筛选"
+      >
+        <div class="filter-head">
+          <div>
+            <strong>林班分层筛选</strong>
+            <p id="forestFilterSummary">正在读取后台林班维度</p>
+          </div>
+          <button id="resetForestFilters" type="button">清除条件</button>
+        </div>
+        <label><span>区县</span><select data-forest-filter="countyCode"><option value="">全部</option></select></label>
+        <label><span>乡镇</span><select data-forest-filter="townCode"><option value="">全部</option></select></label>
+        <label><span>村</span><select data-forest-filter="villageCode"><option value="">全部</option></select></label>
+        <label><span>基地类型</span><select data-forest-filter="baseType"><option value="">全部</option></select></label>
+        <label><span>经营类型</span><select data-forest-filter="operationType"><option value="">全部</option></select></label>
+        <label><span>质量等级</span><select data-forest-filter="qualityGrade"><option value="">全部</option></select></label>
+        <label><span>健康状态</span><select data-forest-filter="healthStatus"><option value="">全部</option></select></label>
+        <label><span>风险等级</span><select data-forest-filter="riskLevel"><option value="">全部</option></select></label>
+      </section>
 
       <aside class="left-tools">
         <nav class="tool-menu" aria-label="功能菜单">
@@ -42,6 +77,20 @@
             <label><input type="checkbox" data-layer="ovobj" checked /> 导入点位</label>
             <label><input type="checkbox" data-layer="history" /> 历史影像</label>
           </div>
+          <section class="dashboard-workflow-status" aria-label="数据交付闭环">
+            <div class="dashboard-published-head">
+              <strong>数据交付闭环</strong>
+              <span>成果入库 / 影像 / 图层</span>
+            </div>
+            <div id="dashboardWorkflowStatus" class="dashboard-workflow-list">加载中</div>
+          </section>
+          <section class="dashboard-published-layers" aria-label="后台发布图层">
+            <div class="dashboard-published-head">
+              <strong>后台发布图层</strong>
+              <span>地图图层发布</span>
+            </div>
+            <div id="dashboardPublishedLayerControls" class="dashboard-published-list">加载中</div>
+          </section>
         </section>
       </aside>
 
@@ -56,19 +105,6 @@
 
       <section class="map-scene" id="mapScene" aria-label="竹山三维地图">
         <div class="webgis-map" id="webgisMap"></div>
-        <div class="layer layer-bamboo" data-map-layer="bamboo"></div>
-        <div class="layer layer-quality" data-map-layer="quality"></div>
-        <div class="layer layer-soil" data-map-layer="soil"></div>
-        <div class="layer layer-growth" data-map-layer="growth"></div>
-        <div class="layer layer-yield" data-map-layer="yield"></div>
-        <div class="layer layer-pest" data-map-layer="pest"></div>
-        <div class="layer layer-ownership" data-map-layer="ownership"></div>
-        <div class="layer layer-farmer" data-map-layer="farmer"></div>
-        <div class="layer layer-cooperative" data-map-layer="cooperative"></div>
-        <div class="layer layer-uav" data-map-layer="uav"></div>
-        <div class="layer layer-satellite" data-map-layer="satellite"></div>
-        <div class="layer layer-ovobj" data-map-layer="ovobj"></div>
-        <div class="layer layer-history" data-map-layer="history"></div>
         <div id="forestBlocks"></div>
       </section>
 
@@ -90,6 +126,7 @@
         <button data-business="plant"><span>✚</span>植保</button>
         <button data-business="material"><span>▥</span>农资</button>
         <button data-business="policy"><span>§</span>政策法规</button>
+        <button data-business="industry"><span>产</span>产业平台</button>
         <button type="button" onclick="window.location.href='admin.html'"><span>管</span>管理台账</button>
       </nav>
 
@@ -98,6 +135,7 @@
         <header>
           <h2 id="businessTitle">业务信息</h2>
           <span id="businessSubtitle">智慧竹山业务数据</span>
+          <nav class="business-admin-links" id="businessAdminLinks" aria-label="后台管理入口"></nav>
         </header>
         <div class="business-metrics" id="businessMetrics"></div>
         <div class="business-table-wrap">
@@ -109,9 +147,9 @@
       </section>
 
       <div class="zoom">
-        <button id="zoomIn">+</button>
+        <button id="zoomIn" type="button" aria-label="放大地图" title="放大地图">+</button>
         <b id="zoomValue">100%</b>
-        <button id="zoomOut">−</button>
+        <button id="zoomOut" type="button" aria-label="缩小地图" title="缩小地图">−</button>
       </div>
 
       <div class="basemap-switch" aria-label="底图模式">
@@ -122,11 +160,11 @@
     </main>
 
     <script src="assets/ol/ol.js"></script>
-    <script src="satellite-config.local.js?v=20260610-sdk2"></script>
-    <script src="sdk/remote-sensing-sdk.js?v=20260610-sdk2"></script>
+  <script src="satellite-config.local.js?v=20260611-dev2"></script>
+  <script src="sdk/remote-sensing-sdk.js?v=20260611-dev2"></script>
     <script src="offline-maps/fujian-basemap.geojson.js"></script>
     <script src="assets/huang-keng-bamboo-geojson.js"></script>
     <script src="assets/kang-village-geojson.js"></script>
-    <script src="zhushan-bigdata.js?v=20260610-sdk2"></script>
-  </body>
+  <script src="zhushan-bigdata.js?v=20260716-interaction5"></script>
+</body>
 </html>

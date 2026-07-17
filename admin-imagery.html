@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台-影像管理</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="imagery" data-permission="imagery.scenes.view">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">遥感影像目录</p>
+          <h1>影像管理</h1>
+          <p class="brand-copy">管理服务端 COG 影像目录、项目区域权限、转换任务和影像入库。</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading">
+            <h2 id="apiStatusTitle">权限边界</h2>
+            <span id="statusBadge" class="status-badge idle">未连接</span>
+          </div>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">imagery.scenes.view</span></p>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow">影像目录</p>
+            <h2>影像管理</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="reloadScenes" type="button">刷新影像</button>
+            <button id="openUploadPanel" type="button" class="button-ghost" data-permission="imagery.scenes.create">影像入库</button>
+          </div>
+        </header>
+
+        <section class="panel config-panel">
+          <div class="field-grid field-grid-wide">
+            <label><span>API 基地址</span><input id="apiBase" type="url" value="http://127.0.0.1:8010" /></label>
+            <label><span>角色头</span><input id="authRoles" type="text" value="admin" /></label>
+            <label><span>关键词</span><input id="sceneKeyword" type="search" placeholder="名称、卫星、传感器" /></label>
+            <label>
+              <span>状态</span>
+              <select id="sceneStatusFilter">
+                <option value="">全部状态</option>
+                <option value="active">可用</option>
+                <option value="archived" data-permission="imagery.scenes.archive">已归档</option>
+                <option value="deleted" data-permission="imagery.scenes.restore">已删除</option>
+              </select>
+            </label>
+            <label>
+              <span>发布状态</span>
+              <select id="scenePublishedFilter">
+                <option value="">全部发布状态</option>
+                <option value="false">未发布图层</option>
+                <option value="true">已发布图层</option>
+              </select>
+            </label>
+            <label>
+              <span>交付状态</span>
+              <select id="sceneDeliveryStatusFilter">
+                <option value="">全部交付</option>
+                <option value="pending">待交付</option>
+                <option value="delivered">已交付</option>
+                <option value="needs_correction">需整改</option>
+                <option value="rejected">交付驳回</option>
+              </select>
+            </label>
+            <label><span>项目 ID</span><input id="projectFilter" type="search" /></label>
+            <label><span>区域编码</span><input id="areaFilter" type="search" /></label>
+            <label><span>用户头</span><input id="authUser" type="text" /></label>
+            <label class="checkbox-field"><span>显示已删除</span><input id="includeDeletedScenes" type="checkbox" data-permission="imagery.scenes.restore" /></label>
+          </div>
+        </section>
+
+        <section class="panel workflow-summary-panel" aria-labelledby="imageryWorkflowSummaryTitle">
+          <div class="panel-header">
+            <div><p class="eyebrow">影像闭环</p><h2 id="imageryWorkflowSummaryTitle">影像入库与发布摘要</h2></div>
+            <div class="panel-actions"><button id="exportImageryWorkflowSummary" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出摘要</button><button id="refreshImageryWorkflowSummary" type="button" class="button-ghost">刷新摘要</button></div>
+          </div>
+          <div id="imageryWorkflowSummary" class="workflow-summary-grid" aria-live="polite">
+            <article class="workflow-summary-card"><span>待加载</span><strong>--</strong><small>正在读取后台数据</small></article>
+          </div>
+        </section>
+
+        <section class="panel operation-queue-panel" aria-labelledby="imageryOperationQueueTitle">
+          <div class="panel-header">
+            <div><p class="eyebrow">影像队列</p><h2 id="imageryOperationQueueTitle">影像入库操作队列</h2></div>
+            <div class="panel-actions"><button id="refreshImageryOperationQueue" type="button" class="button-ghost">刷新队列</button></div>
+          </div>
+          <div id="imageryOperationQueueRows" class="operation-queue-grid" aria-live="polite">
+            <article class="operation-queue-item"><div class="operation-queue-head"><div><span>待加载</span><strong>--</strong><small>正在读取后台队列</small></div></div></article>
+          </div>
+        </section>
+
+        <section class="workbench-grid ledger-workbench ledger-workbench-full" data-admin-primary-ledger="true">
+          <div class="panel table-panel ledger-main-panel">
+            <div class="panel-header">
+              <div><p class="eyebrow">服务端影像</p><h2>影像列表</h2></div>
+            </div>
+            <div class="table-wrap ledger-table-wrap ledger-table-full imagery-scene-table-wrap">
+              <table>
+                <thead><tr><th>影像</th><th>项目/区域</th><th>卫星传感器</th><th>拍摄时间</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="imageryRows"><tr class="placeholder-row"><td colspan="6">等待加载影像</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <section id="imageryDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+            <div class="panel detail-panel detail-drawer-panel">
+              <div class="panel-header">
+                <div><p class="eyebrow">影像详情</p><h2 id="imageryDetailTitle">选择影像查看详情</h2></div>
+                <div class="panel-actions">
+                  <button id="publishSceneLayer" type="button" class="button-ghost" data-permission="imagery.layers.publish" data-permission-all="map.layers.publish" data-permission-any="map.layers.create map.layers.update">发布图层</button>
+                  <button id="exportScenePublicationReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出发布回执</button>
+                  <button id="exportSceneDeliveryReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出交付回执</button>
+                  <button id="closeImageryDetail" type="button" class="button-ghost">关闭</button>
+                </div>
+              </div>
+              <p id="imageryDetailEmpty" class="detail-empty">从台账选择一景影像记录查看详情。</p>
+              <figure id="imageryPreview" class="imagery-preview" aria-labelledby="imageryPreviewCaption">
+                <div class="imagery-preview-canvas">
+                  <img id="imageryPreviewImage" alt="" hidden />
+                  <p id="imageryPreviewStatus" role="status">选择影像后显示成果预览</p>
+                </div>
+                <figcaption id="imageryPreviewCaption">影像成果预览</figcaption>
+              </figure>
+              <dl id="imageryDetailGrid" class="detail-grid"></dl>
+              <div id="sceneDeliveryReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
+              <div id="sceneLayerPublishConfig" class="task-events scene-publish-config">
+                <h3>图层发布配置</h3>
+                <div class="field-grid scene-publish-grid">
+                  <label><span>图层名称</span><input id="sceneLayerName" type="text" placeholder="默认使用影像名称" /></label>
+                  <label><span>图层层级</span><input id="sceneLayerZIndex" type="number" step="1" placeholder="留空沿用后端默认" /></label>
+                  <label class="field-span-2"><span>关联林班编号</span><input id="sceneLayerLinkedBlockCodes" type="text" placeholder="多个编号用逗号分隔" /></label>
+                  <label class="field-span-2"><span>关联林权档案编号</span><input id="sceneLayerLinkedRightArchiveCodes" type="text" placeholder="多个档案编号用逗号分隔" /></label>
+                  <label>
+                    <span>大屏可见</span>
+                    <select id="sceneLayerVisibleOnDashboard">
+                      <option value="true">发布到大屏</option>
+                      <option value="false">仅后台管理</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div class="task-events scene-delivery-config">
+                <h3>交付状态</h3>
+                <div class="field-grid scene-publish-grid">
+                  <label><span>交付结论</span><select id="sceneDeliveryStatus"><option value="pending">待交付</option><option value="delivered">已交付</option><option value="needs_correction">需整改</option><option value="rejected">交付驳回</option></select></label>
+                  <label class="field-span-2"><span>交付意见</span><input id="sceneDeliveryComment" type="text" placeholder="填写影像、切片、图层和入库追溯交付意见" /></label>
+                  <div class="form-command"><button id="updateSceneDelivery" type="button" class="button-ghost" data-permission="imagery.scenes.delivery">确认交付</button></div>
+                </div>
+              </div>
+              <div id="sceneOperationResult" class="operation-result-shell" aria-live="polite"></div>
+              <div class="task-events"><h3>发布记录</h3><div id="scenePublishEventList" class="trace-list"></div></div>
+              <div class="task-events"><h3>交付记录</h3><div id="sceneDeliveryEventList" class="trace-list"></div></div>
+              <div class="task-events"><h3>生命周期</h3><div id="sceneLifecycleEventList" class="trace-list"></div></div>
+              <div class="task-events"><h3>入库批次追溯</h3><div id="sceneImportBatchLinksList" class="trace-list"></div></div>
+            </div>
+          </section>
+
+          <form id="imageryForm" class="crud-modal hidden" aria-hidden="true">
+            <div class="panel form-panel crud-editor-panel">
+              <div class="panel-header">
+                <div><p class="eyebrow">影像档案</p><h2 id="imageryFormTitle">编辑影像</h2></div>
+                <div class="panel-actions">
+                  <button id="cancelImageryEdit" type="button" class="button-ghost">关闭</button>
+                  <button id="deleteImagery" type="button" class="button-ghost" data-permission="imagery.scenes.delete">删除</button>
+                  <button id="saveImagery" type="submit" data-permission="imagery.scenes.update">保存影像</button>
+                </div>
+              </div>
+              <input id="imageryId" type="hidden" />
+              <fieldset>
+                <legend>基础元数据与访问范围</legend>
+                <div class="field-grid">
+                  <label><span>影像名称</span><input id="imageryName" type="text" required /></label>
+                  <label><span>卫星/平台</span><input id="imagerySatellite" type="text" /></label>
+                  <label><span>传感器</span><input id="imagerySensor" type="text" /></label>
+                  <label><span>拍摄日期</span><input id="imageryCapturedAt" type="date" /></label>
+                  <label><span>分辨率</span><input id="imageryResolution" type="text" /></label>
+                  <label><span>项目 ID</span><input id="imageryProjectId" type="text" /></label>
+                  <label><span>区域编码</span><input id="imageryAreaCode" type="text" /></label>
+                  <label class="field-span-2"><span>覆盖范围 W,S,E,N</span><input id="imageryBounds" type="text" /></label>
+                  <label><span>透明度</span><input id="imageryOpacity" type="number" min="0" max="1" step="0.05" /></label>
+                  <label class="checkbox-field"><span>默认显示</span><input id="imageryVisible" type="checkbox" /></label>
+                  <label><span>可见角色</span><input id="imageryAllowedRoles" type="text" placeholder="逗号分隔" /></label>
+                  <label class="field-span-2"><span>可见用户</span><input id="imageryAllowedUsers" type="text" placeholder="逗号分隔" /></label>
+                </div>
+              </fieldset>
+            </div>
+          </form>
+
+          <section id="uploadPanel" class="crud-modal hidden" aria-hidden="true">
+            <div class="panel form-panel crud-editor-panel">
+              <div class="panel-header">
+                <div><p class="eyebrow">影像入库</p><h2>上传或注册影像</h2></div>
+                <div class="panel-actions"><button id="closeUploadPanel" type="button" class="button-ghost">关闭</button></div>
+              </div>
+              <form id="uploadForm" class="field-grid import-upload-grid">
+                <label class="field-span-2"><span>上传 GeoTIFF / TIFF</span><input id="imageryFile" type="file" accept=".tif,.tiff,.geotiff,image/tiff" /></label>
+                <label><span>影像名称</span><input id="uploadName" type="text" /></label>
+                <label><span>卫星/平台</span><input id="uploadSatellite" type="text" /></label>
+                <label><span>传感器</span><input id="uploadSensor" type="text" /></label>
+                <label><span>拍摄日期</span><input id="uploadCapturedAt" type="date" /></label>
+                <label><span>分辨率</span><input id="uploadResolution" type="text" /></label>
+                <label class="field-span-2"><span>覆盖范围 W,S,E,N</span><input id="uploadBounds" type="text" value="117.55,26.05,118.85,27.20" /></label>
+                <label><span>项目 ID</span><input id="uploadProjectId" type="text" /></label>
+                <label><span>区域编码</span><input id="uploadAreaCode" type="text" /></label>
+                <label><span>可见角色</span><input id="uploadAllowedRoles" type="text" /></label>
+                <label><span>可见用户</span><input id="uploadAllowedUsers" type="text" /></label>
+                <div class="form-command"><button id="uploadImagery" type="submit" data-permission="imagery.scenes.create">上传入库</button></div>
+              </form>
+              <form id="registerForm" class="field-grid import-upload-grid">
+                <label class="field-span-2"><span>NAS / 服务器文件路径</span><input id="registerPath" type="text" placeholder="inbox/zhushan-2026.tif" /></label>
+                <label><span>注册名称</span><input id="registerName" type="text" /></label>
+                <div class="form-command"><button id="registerImagery" type="submit" data-permission="imagery.scenes.create">注册文件</button></div>
+              </form>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">影像审计</p><h2>影像事件流</h2></div>
+            <div class="panel-actions"><button id="exportSceneEvents" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出事件</button><button id="refreshSceneEvents" type="button">刷新事件</button></div>
+          </div>
+          <div class="field-grid field-grid-wide">
+            <label><span>关键词</span><input id="sceneEventKeyword" type="search" placeholder="影像、人员、图层、动作" /></label>
+            <label>
+              <span>事件类型</span>
+              <select id="sceneEventTypeFilter">
+                <option value="">全部类型</option>
+                <option value="publish">发布事件</option>
+                <option value="lifecycle">生命周期</option>
+                <option value="delivery">交付事件</option>
+              </select>
+            </label>
+            <label><span>动作</span><input id="sceneEventActionFilter" type="search" placeholder="发布、归档、删除、恢复" /></label>
+            <label><span>影像 ID</span><input id="sceneEventSceneFilter" type="search" placeholder="scene id" /></label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>事件</th><th>影像</th><th>图层</th><th>人员</th><th>时间</th><th>状态</th></tr></thead>
+              <tbody id="sceneEventRows"><tr class="placeholder-row"><td colspan="6">等待加载影像事件</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">转换状态</p><h2>影像任务</h2></div>
+            <div class="panel-actions">
+              <label class="checkbox-field task-archive-toggle"><span>显示已归档</span><input id="includeArchivedTasks" type="checkbox" data-permission="imagery.tasks.archive" /></label>
+              <button id="reloadTasks" type="button">刷新任务</button>
+            </div>
+          </div>
+          <div class="field-grid field-grid-wide">
+            <label>
+              <span>任务状态</span>
+              <select id="taskStatusFilter">
+                <option value="">全部任务</option>
+                <option value="queued">排队</option>
+                <option value="running">运行中</option>
+                <option value="completed">已完成</option>
+                <option value="failed">失败</option>
+                <option value="canceled">已取消</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>任务</th><th>影像</th><th>状态</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead>
+              <tbody id="taskRows"><tr class="placeholder-row"><td colspan="6">等待加载任务</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="taskDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+          <div class="panel detail-panel detail-drawer-panel">
+            <div class="panel-header">
+              <div><p class="eyebrow">任务详情</p><h2 id="taskDetailTitle">选择任务查看详情</h2></div>
+              <div class="panel-actions">
+                <button id="cancelTask" type="button" class="button-ghost" data-permission="imagery.tasks.cancel">取消任务</button>
+                <button id="retryTask" type="button" class="button-ghost" data-permission="imagery.tasks.retry">重试任务</button>
+                <button id="archiveTask" type="button" class="button-ghost" data-permission="imagery.tasks.archive">归档任务</button>
+                <button id="closeTaskDetail" type="button" class="button-ghost">关闭</button>
+              </div>
+            </div>
+            <p id="taskDetailEmpty" class="detail-empty">从任务台账选择一条记录查看转换状态。</p>
+            <dl id="taskDetailGrid" class="detail-grid"></dl>
+            <div class="task-events"><h3>任务追溯</h3><div id="taskTraceList" class="trace-list"></div></div>
+            <div class="task-events"><h3>过程日志</h3><div id="taskEventList" class="trace-list"></div></div>
+            <pre id="taskDetailOutput" class="report-output">{}</pre>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">任务审计</p><h2>任务事件流</h2></div>
+            <div class="panel-actions"><button id="exportTaskEvents" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出事件</button><button id="refreshTaskEvents" type="button">刷新事件</button></div>
+          </div>
+          <div class="field-grid field-grid-wide">
+            <label><span>关键词</span><input id="taskEventKeyword" type="search" placeholder="任务、影像、消息、人员" /></label>
+            <label>
+              <span>任务状态</span>
+              <select id="taskEventStatusFilter">
+                <option value="">全部状态</option>
+                <option value="queued">排队</option>
+                <option value="running">运行中</option>
+                <option value="completed">已完成</option>
+                <option value="failed">失败</option>
+                <option value="canceled">已取消</option>
+              </select>
+            </label>
+            <label><span>动作</span><input id="taskEventActionFilter" type="search" placeholder="状态、重试、取消、归档" /></label>
+            <label><span>任务 ID</span><input id="taskEventTaskFilter" type="search" placeholder="task id" /></label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>事件</th><th>任务</th><th>类型/影像</th><th>状态</th><th>进度</th><th>人员与时间</th></tr></thead>
+              <tbody id="taskEventRows"><tr class="placeholder-row"><td colspan="6">等待加载任务事件</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="panel-header">
+            <div><p class="eyebrow">影像异常</p><h2>影像异常问题台账</h2></div>
+            <div class="panel-actions">
+              <label class="checkbox-field task-archive-toggle"><span>显示已归档任务问题</span><input id="includeArchivedImageryIssues" type="checkbox" data-permission="imagery.tasks.archive" /></label>
+              <button id="exportImageryIssues" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出问题</button>
+              <button id="refreshImageryIssues" type="button">刷新问题</button>
+            </div>
+          </div>
+          <div class="field-grid field-grid-wide">
+            <label><span>关键词</span><input id="imageryIssueKeyword" type="search" placeholder="影像、任务、问题说明" /></label>
+            <label><span>问题类型</span><input id="imageryIssueTypeFilter" type="search" placeholder="任务失败、缺边界、缺 COG" /></label>
+            <label>
+              <span>严重程度</span>
+              <select id="imageryIssueSeverityFilter">
+                <option value="">全部</option>
+                <option value="blocked">阻断</option>
+                <option value="warning">预警</option>
+              </select>
+            </label>
+            <label><span>处理状态</span><select id="imageryIssueStatusFilter"><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">处理中</option><option value="resolved">已解决</option><option value="ignored">已忽略</option></select></label>
+            <label><span>影像 ID</span><input id="imageryIssueSceneFilter" type="search" placeholder="scene id" /></label>
+            <label><span>任务 ID</span><input id="imageryIssueTaskFilter" type="search" placeholder="task id" /></label>
+          </div>
+          <div class="table-wrap ledger-table-wrap ledger-table-full">
+            <table>
+              <thead><tr><th>级别</th><th>问题</th><th>影像</th><th>任务</th><th>处理状态</th><th>处理建议</th><th>操作</th></tr></thead>
+              <tbody id="imageryIssueRows"><tr class="placeholder-row"><td colspan="7">等待加载影像问题</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="admin-common.js"></script>
+    <script src="admin-imagery.js"></script>
+  </body>
+</html>

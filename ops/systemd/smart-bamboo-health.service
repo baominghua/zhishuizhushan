@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the Smart Bamboo primary node from the standby node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/srv/smart-bamboo-dr/config/health-watch.env
+ExecStart=/opt/smart-bamboo/ops/scripts/health-watch.sh
+User=root
+Group=root

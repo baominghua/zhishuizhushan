@@ -25,14 +25,14 @@
         </div>
       </header>
 
-      <section class="mobile-stats" aria-label="核心数据">
-        <article><span>竹林面积</span><strong>10.32 万亩</strong></article>
-        <article><span>林班数量</span><strong>486 个</strong></article>
-        <article><span>健康指数</span><strong>86%</strong></article>
+      <section class="mobile-stats" id="mobileStats" aria-label="核心数据">
+        <article><span>竹林面积</span><strong data-stat="totalAreaMu">加载中</strong></article>
+        <article><span>林班数量</span><strong data-stat="totalBlocks">加载中</strong></article>
+        <article><span>健康指数</span><strong data-stat="healthyRate">加载中</strong></article>
       </section>
 
       <section class="search-bar">
-        <input id="mobileSearch" type="search" placeholder="搜索林班、村镇、图层" autocomplete="off" />
+        <input id="mobileSearch" type="search" aria-label="搜索林班、村镇或图层" placeholder="搜索林班、村镇、图层" autocomplete="off" />
         <button id="searchClear">清空</button>
       </section>
       <section class="search-results" id="searchResults" aria-label="搜索结果"></section>
@@ -49,10 +49,18 @@
           <label><input type="checkbox" checked /> 长势监测</label>
           <label><input type="checkbox" checked /> 碳汇样方</label>
           <label><input type="checkbox" data-mobile-layer="imagery" /> 卫星影像</label>
+          <label><input type="checkbox" data-mobile-layer="backendBlocks" checked /> 后台林班</label>
           <label><input type="checkbox" data-mobile-layer="boundary" checked /> 黄坑边界</label>
           <label><input type="checkbox" data-mobile-layer="kangVillage" checked /> 康内部分村</label>
           <label><input type="checkbox" /> 历史影像</label>
         </div>
+        <section class="published-layer-controls" aria-label="后台发布图层">
+          <div class="published-layer-head">
+            <strong>后台发布图层</strong>
+            <span>地图图层发布</span>
+          </div>
+          <div id="publishedLayerControls" class="published-layer-list">加载中</div>
+        </section>
       </aside>
 
       <section class="plot-sheet" id="plotSheet">
@@ -78,16 +86,31 @@
         </div>
       </section>
 
+      <section class="mobile-industry-panel hidden" id="mobileIndustryPanel" aria-label="业务模块数据">
+        <header>
+          <div>
+            <span>业务模块</span>
+            <strong id="mobileIndustryTitle">业务模块信息卡</strong>
+          </div>
+          <button id="closeIndustryPanel" type="button">关闭</button>
+        </header>
+        <nav class="mobile-industry-admin-links" id="mobileIndustryAdminLinks" aria-label="业务后台入口"></nav>
+        <div class="mobile-industry-metrics" id="mobileIndustryMetrics"></div>
+        <div class="mobile-industry-rows" id="mobileIndustryRows"></div>
+      </section>
+
       <nav class="mobile-nav" aria-label="业务导航">
-        <button class="active" data-nav="竹农"><i>♧</i><span>竹农</span></button>
-        <button data-nav="合作社"><i>▤</i><span>合作社</span></button>
-        <button data-nav="竹企"><i>◉</i><span>竹企</span></button>
-        <button data-nav="植保"><i>✚</i><span>植保</span></button>
-        <button data-nav="碳汇"><i>◈</i><span>碳汇</span></button>
+        <button class="active" data-nav="farmers"><i>农</i><span>竹农</span></button>
+        <button data-nav="cooperatives"><i>合</i><span>合作社</span></button>
+        <button data-nav="enterprises"><i>企</i><span>竹企</span></button>
+        <button data-nav="plant-protection-events"><i>植</i><span>植保</span></button>
+        <button data-nav="carbon-estimates"><i>碳</i><span>碳汇</span></button>
+        <button data-nav="industry"><i>产</i><span>产业</span></button>
       </nav>
     </main>
 
     <script src="assets/ol/ol.js"></script>
+    <script src="satellite-config.local.js"></script>
     <script src="offline-maps/fujian-basemap.geojson.js"></script>
     <script src="assets/huang-keng-bamboo-geojson.js"></script>
     <script src="assets/kang-village-geojson.js"></script>

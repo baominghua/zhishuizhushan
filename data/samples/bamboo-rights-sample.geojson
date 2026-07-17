@@ -1,0 +1,97 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "blockCode": "BAMBOO-RIGHTS-001",
+        "name": "黄坑示范竹林林权档案",
+        "countyCode": "350703",
+        "countyName": "建阳区",
+        "townCode": "350703101",
+        "townName": "麻沙镇",
+        "villageName": "黄坑村",
+        "baseType": "self_operated",
+        "operationType": "dual_high_yield",
+        "forestType": "毛竹",
+        "areaMu": 1260,
+        "qualityGrade": "优质",
+        "healthStatus": "良好",
+        "riskLevel": "low",
+        "ownershipStatus": "certified",
+        "managementStatus": "active",
+        "rights": {
+          "holder": "黄坑村股份经济合作社",
+          "certificateNo": "闽林权证-350703-2026-0001",
+          "certificateType": "林权证",
+          "rightType": "经营权",
+          "rightStart": "2026-01-01",
+          "rightEnd": "2046-12-31",
+          "contractNo": "HK-ZL-2026-001",
+          "circulationStatus": "村集体合作经营",
+          "archiveStatus": "complete",
+          "missingItems": "无",
+          "registrar": "admin"
+        }
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [118.10, 26.50],
+            [118.13, 26.50],
+            [118.13, 26.53],
+            [118.10, 26.53],
+            [118.10, 26.50]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "blockCode": "BAMBOO-RIGHTS-002",
+        "name": "康内村托管竹林档案",
+        "countyCode": "350703",
+        "countyName": "建阳区",
+        "townCode": "350703101",
+        "townName": "麻沙镇",
+        "villageName": "康内村",
+        "baseType": "cooperative",
+        "operationType": "timber",
+        "forestType": "毛竹",
+        "areaMu": 890,
+        "qualityGrade": "良好",
+        "healthStatus": "巡护中",
+        "riskLevel": "medium",
+        "ownershipStatus": "pending",
+        "managementStatus": "archiving",
+        "rights": {
+          "holder": "康内村集体林场",
+          "certificateNo": "",
+          "certificateType": "林权证",
+          "rightType": "经营权",
+          "rightStart": "2026-03-01",
+          "rightEnd": "2041-02-28",
+          "contractNo": "KN-TG-2026-002",
+          "circulationStatus": "托管经营",
+          "archiveStatus": "partial",
+          "missingItems": "待补林权证号和边界复核材料",
+          "registrar": "admin"
+        }
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [118.18, 26.58],
+            [118.21, 26.58],
+            [118.21, 26.61],
+            [118.18, 26.61],
+            [118.18, 26.58]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台｜角色权限管理</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="roles" data-permission="system.roles.view">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">系统权限配置</p>
+          <h1>角色权限管理</h1>
+          <p class="brand-copy">配置角色、菜单模块、权限码和数据范围，为后续细粒度权限打基础。</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading"><h2 id="apiStatusTitle">权限边界</h2><span id="statusBadge" class="status-badge idle">未连接</span></div>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">system.roles.view</span></p>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy"><p class="eyebrow">系统配置</p><h2>角色权限管理</h2></div>
+          <div class="topbar-actions"><button id="reloadRoles" type="button">刷新角色</button><button id="newRole" type="button" class="button-ghost" data-permission="system.roles.create">新建角色</button></div>
+        </header>
+        <section class="panel config-panel">
+          <div class="field-grid field-grid-wide">
+            <label><span>API 基地址</span><input id="apiBase" type="url" value="http://127.0.0.1:8010" /></label>
+            <label><span>角色头</span><input id="authRoles" type="text" value="admin" /></label>
+            <label><span>权限筛选</span><input id="permissionFilter" type="search" list="permissionOptions" placeholder="forest.blocks.manage" /></label>
+            <label><span>菜单筛选</span><input id="menuModuleFilter" type="search" list="menuModuleOptions" placeholder="blocks" /></label>
+            <label><span>状态筛选</span><input id="roleStatusFilter" type="search" placeholder="启用、停用" /></label>
+            <label><span>关键词</span><input id="roleKeyword" type="search" placeholder="角色编码、名称、权限、备注" /></label>
+            <label><span>区域头</span><input id="authAreas" type="text" /></label>
+            <label><span>用户头</span><input id="authUser" type="text" /></label>
+            <label class="checkbox-field"><span>显示已删除</span><input id="includeDeletedRoles" type="checkbox" data-permission="system.roles.restore" /></label>
+          </div>
+        </section>
+
+        <section class="panel permission-catalog-panel" aria-labelledby="permissionCatalogHealthTitle">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">目录体检</p>
+              <h2 id="permissionCatalogHealthTitle">权限目录覆盖度</h2>
+            </div>
+            <div class="panel-actions">
+              <button id="exportPermissionCatalog" type="button" class="button-ghost" data-permission="system.roles.export">导出目录</button>
+              <button id="refreshPermissionCatalogHealth" type="button" class="button-ghost">刷新体检</button>
+            </div>
+          </div>
+          <div id="permissionCatalogHealth" class="workflow-summary-grid permission-catalog-health" aria-live="polite">
+            <article class="workflow-summary-card">
+              <span>等待加载</span>
+              <strong>0</strong>
+              <small>读取菜单模块、权限码与动作覆盖度</small>
+            </article>
+          </div>
+          <div id="permissionCatalogIssues" class="catalog-issue-list" aria-live="polite"></div>
+        </section>
+
+        <section class="panel permission-closure-panel" aria-labelledby="roleClosureGuidesTitle">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">闭环配置包</p>
+              <h2 id="roleClosureGuidesTitle">第一阶段权限闭环</h2>
+            </div>
+            <p class="panel-note">按业务闭环追加菜单与权限，保存前仍会进行入口权限、动作权限和跨模块依赖校验。</p>
+          </div>
+          <div id="roleClosureGuides" class="permission-closure-grid" aria-live="polite">
+            <article class="role-closure-card">
+              <strong>等待加载</strong>
+              <span>正在读取后台权限闭环配置包</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel operation-queue-panel" aria-labelledby="roleOperationQueueTitle">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">权限队列</p>
+              <h2 id="roleOperationQueueTitle">角色权限操作队列</h2>
+            </div>
+            <div class="panel-actions"><button id="refreshRoleOperationQueue" type="button" class="button-ghost">刷新队列</button></div>
+          </div>
+          <div id="roleOperationQueueRows" class="operation-queue-grid" aria-live="polite">
+            <article class="operation-queue-item">
+              <div class="operation-queue-head">
+                <div><span>等待加载</span><strong>0</strong><small>正在读取角色权限闭环状态</small></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="workbench-grid ledger-workbench ledger-workbench-full" data-admin-primary-ledger="true">
+          <div class="panel table-panel ledger-main-panel">
+            <div class="panel-header"><div><p class="eyebrow">角色列表</p><h2>角色与权限</h2></div></div>
+            <div class="table-wrap ledger-table-wrap ledger-table-full">
+              <table>
+                <thead><tr><th>角色</th><th>菜单模块</th><th>权限码</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="roleRows"><tr class="placeholder-row"><td colspan="5">等待加载角色</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <form id="roleForm" class="crud-modal hidden" aria-hidden="true">
+            <div class="panel form-panel crud-editor-panel">
+            <div class="panel-header">
+              <div><p class="eyebrow">角色编辑</p><h2 id="roleFormTitle">新建角色</h2></div>
+              <div class="panel-actions"><button id="cancelRoleEdit" type="button" class="button-ghost">关闭</button><button id="deleteRole" type="button" class="button-ghost" data-permission="system.roles.delete">删除</button><button id="saveRole" type="submit" data-permission="system.roles.create">保存角色</button></div>
+            </div>
+            <input id="roleId" type="hidden" />
+            <fieldset>
+              <legend>基础配置</legend>
+              <div class="field-grid">
+                <label><span>角色编码</span><input id="roleCode" type="text" required placeholder="forestry_operator" /></label>
+                <label><span>角色名称</span><input id="roleName" type="text" required /></label>
+                <label><span>状态</span><input id="roleStatus" type="text" placeholder="active" /></label>
+                <label><span>授权模板</span><select id="rolePresetSelect"><option value="">不使用模板</option></select></label>
+                <div class="field-span-2 role-preset-panel">
+                  <div id="rolePresetSummary" class="role-preset-summary" data-risk="empty" aria-live="polite"></div>
+                  <button id="applyRolePreset" type="button" class="button-ghost" data-permission-any="system.roles.create system.roles.update">套用模板</button>
+                </div>
+                <label><span>菜单模块</span><input id="menuModules" type="text" list="menuModuleOptions" placeholder="blocks, rights, mapLayers" /></label>
+                <label class="field-span-2"><span>权限码</span><textarea id="permissions" rows="4" placeholder="forest.blocks.manage&#10;forest.rights.manage"></textarea></label>
+                <div class="field-span-2 role-selection-panel">
+                  <span>菜单可见模块</span>
+                  <div id="menuModuleChecklist" class="role-checklist" data-role-selection="menuModules"></div>
+                </div>
+                <div class="field-span-2 role-selection-panel">
+                  <span>菜单预览</span>
+                  <div id="roleDraftSummary" class="role-draft-summary" data-risk="empty" aria-live="polite"></div>
+                  <div id="roleMenuPreview" class="role-menu-preview"></div>
+                </div>
+                <div class="field-span-2 role-selection-panel">
+                  <span>功能权限码</span>
+                  <div id="permissionChecklist" class="role-checklist permission-checklist" data-role-selection="permissions"></div>
+                </div>
+                <label><span>可见区域代码</span><input id="dataScopeAreas" type="text" data-role-scope="areas" placeholder="350703, 350784" /></label>
+                <label><span>可见项目代码</span><input id="dataScopeProjects" type="text" data-role-scope="projects" placeholder="project-001, project-002" /></label>
+                <label><span>可见乡镇代码</span><input id="dataScopeTowns" type="text" data-role-scope="towns" placeholder="350703101, 350703102" /></label>
+                <label><span>可见村代码</span><input id="dataScopeVillages" type="text" data-role-scope="villages" placeholder="350703101001" /></label>
+                <label class="field-span-2"><span>可见林班编号</span><input id="dataScopeBlockCodes" type="text" data-role-scope="blockCodes" placeholder="FB-001, FB-002" /></label>
+                <label class="field-span-2"><span>数据范围 JSON</span><textarea id="dataScopes" rows="4" spellcheck="false">{ "areas": [] }</textarea></label>
+                <label class="field-span-2"><span>扩展 JSON</span><textarea id="roleProperties" rows="5" spellcheck="false">{}</textarea></label>
+              </div>
+            </fieldset>
+            </div>
+          </form>
+          <section id="roleDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+            <div class="panel detail-panel detail-drawer-panel">
+              <div class="panel-header"><div><p class="eyebrow">台账详情</p><h2 id="roleDetailTitle">选择角色查看详情</h2></div><div class="panel-actions"><button id="exportRoleReceipt" type="button" class="button-ghost" data-permission="system.roles.export">导出回执</button><button id="closeRoleDetail" type="button" class="button-ghost">关闭</button></div></div>
+              <p id="roleDetailEmpty" class="detail-empty">从台账选择一个角色查看详情。</p>
+              <dl id="roleDetailGrid" class="detail-grid"></dl>
+              <div id="rolePermissionReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
+              <div class="task-events"><h3>菜单权限诊断</h3><div id="roleDetailMenuDiagnostics" class="role-menu-preview"></div></div>
+              <div class="task-events"><h3>有效权限覆盖矩阵</h3><div id="roleEffectivePermissionCoverage" class="permission-coverage-list" aria-live="polite"></div></div>
+              <div class="task-events"><h3>关联账号</h3><div id="roleAssignedUsersList" class="trace-list"></div></div>
+              <div class="task-events"><h3>变更审计</h3><div id="roleAuditEventList" class="trace-list"></div></div>
+            </div>
+          </section>
+        </section>
+        <section class="panel table-panel"><div class="panel-header"><div><p class="eyebrow">权限审计</p><h2>角色权限变更事件</h2></div><div class="panel-actions"><button id="refreshRoleEvents" type="button">刷新事件</button><button id="exportRoleEvents" type="button" data-permission="system.roles.export">导出事件</button></div></div><div class="field-grid field-grid-wide"><label><span>关键词</span><input id="roleEventKeyword" type="search" placeholder="角色、权限、菜单、人员" /></label><label><span>动作</span><input id="roleEventActionFilter" type="search" placeholder="新建、更新、删除、恢复" /></label><label><span>角色编码</span><input id="roleEventRoleFilter" type="search" placeholder="输入角色编码" /></label></div><div class="table-wrap"><table><thead><tr><th>事件</th><th>角色</th><th>动作</th><th>变更字段</th><th>人员</th><th>时间</th></tr></thead><tbody id="roleEventRows"><tr class="placeholder-row"><td colspan="6">等待加载角色权限变更事件</td></tr></tbody></table></div></section>
+      </section>
+    </main>
+    <datalist id="menuModuleOptions"></datalist>
+    <datalist id="permissionOptions"></datalist>
+    <script src="admin-common.js"></script>
+    <script src="admin-roles.js"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the Smart Bamboo primary node every minute
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=smart-bamboo-health.service
+
+[Install]
+WantedBy=timers.target

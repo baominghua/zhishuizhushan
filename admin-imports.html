@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台｜成果入库</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="imports" data-permission="imports.forestBlocks.view">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block"><p class="brand-kicker">成果数据入库</p><h1>成果入库</h1><p class="brand-copy">支持 KMZ、OVKML、OVOBJ、GeoJSON、Excel 等林班成果一键导入。</p></div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle"><div class="section-heading"><h2 id="apiStatusTitle">权限边界</h2><span id="statusBadge" class="status-badge idle">未连接</span></div><p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">imports.forestBlocks.view</span></p></section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar"><div class="topbar-copy"><p class="eyebrow">批量导入</p><h2>成果入库</h2></div><div class="topbar-actions"><button id="refreshImportBatches" type="button">刷新批次</button><button id="refreshSources" type="button">刷新待入库文件</button></div></header>
+        <section class="panel config-panel"><div class="field-grid field-grid-wide"><label><span>API 基地址</span><input id="apiBase" type="url" value="http://127.0.0.1:8010" /></label><label><span>角色头</span><input id="authRoles" type="text" value="admin" /></label><label><span>区域头</span><input id="authAreas" type="text" /></label><label><span>用户头</span><input id="authUser" type="text" /></label></div></section>
+        <section class="panel workflow-summary-panel" aria-labelledby="importWorkflowSummaryTitle">
+        <div class="panel-header"><div><p class="eyebrow">入库闭环</p><h2 id="importWorkflowSummaryTitle">成果入库工作流摘要</h2></div><div class="panel-actions"><button id="exportImportWorkflowSummary" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出摘要</button><button id="refreshImportWorkflowSummary" type="button" class="button-ghost">刷新摘要</button></div></div>
+          <div id="importWorkflowSummary" class="workflow-summary-grid" aria-live="polite">
+            <article class="workflow-summary-card"><span>待加载</span><strong>--</strong><small>正在读取后台数据</small></article>
+          </div>
+        </section>
+        <section class="panel operation-queue-panel" aria-labelledby="importOperationQueueTitle">
+          <div class="panel-header">
+            <div><p class="eyebrow">运维队列</p><h2 id="importOperationQueueTitle">成果 / 影像 / 图层待办</h2></div>
+            <div class="panel-actions"><button id="refreshImportOperationQueue" type="button" class="button-ghost">刷新队列</button></div>
+          </div>
+          <div id="importOperationQueueRows" class="operation-queue-grid" aria-live="polite">
+            <article class="operation-queue-item"><div><span>待加载</span><strong>--</strong><small>正在读取后台队列</small></div></article>
+          </div>
+        </section>
+        <section class="panel table-panel">
+          <div class="panel-header"><div><p class="eyebrow">交付闭环</p><h2>成果交付包台账</h2></div><div class="panel-actions"><button id="exportDeliveryPackages" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出CSV</button><button id="exportDeliveryPackagesJson" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出JSON回执</button><button id="refreshDeliveryPackages" type="button" class="button-ghost">刷新交付包</button></div></div>
+          <div class="field-grid field-grid-wide">
+            <label><span>关键词</span><input id="deliveryPackageKeyword" type="search" placeholder="批次、文件、影像、阻断原因" /></label>
+            <label><span>交付包状态</span><select id="deliveryPackageStatusFilter"><option value="">全部状态</option><option value="ready">可交付</option><option value="awaiting_review">待审核</option><option value="awaiting_acceptance">待验收</option><option value="awaiting_scene_link">待挂影像</option><option value="awaiting_publish">待发布</option><option value="awaiting_delivery">待交付</option><option value="blocked">阻断</option></select></label>
+            <label><span>验收状态</span><select id="deliveryPackageAcceptanceFilter"><option value="">全部验收</option><option value="pending">待验收</option><option value="accepted">已验收</option><option value="needs_correction">需整改</option><option value="rejected">验收驳回</option></select></label>
+            <label><span>影像交付</span><select id="deliveryPackageDeliveryFilter"><option value="">全部交付</option><option value="pending">待交付</option><option value="partial">部分交付</option><option value="needs_correction">需整改</option><option value="rejected">交付驳回</option><option value="delivered">已交付</option></select></label>
+            <label><span>林班编号</span><input id="deliveryPackageBlockFilter" type="search" placeholder="按挂接林班反查" /></label>
+          </div>
+          <div class="table-wrap ledger-table-wrap ledger-table-full">
+            <table>
+              <thead><tr><th>成果批次</th><th>验收状态</th><th>影像交付</th><th>图层与林班</th><th>交付判断</th><th>操作</th></tr></thead>
+              <tbody id="deliveryPackageRows"><tr class="placeholder-row"><td colspan="6">等待加载交付包台账</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="deliveryPackageDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+          <div class="panel detail-panel detail-drawer-panel">
+            <div class="panel-header">
+              <div><p class="eyebrow">交付包详情</p><h2 id="deliveryPackageDetailTitle">选择交付包查看详情</h2></div>
+              <div class="panel-actions"><button id="closeDeliveryPackageDetail" type="button" class="button-ghost">关闭</button></div>
+            </div>
+            <p id="deliveryPackageDetailEmpty" class="detail-empty">从交付包台账选择一条记录，查看批次、验收、影像、图层和阻断原因。</p>
+            <dl id="deliveryPackageDetailGrid" class="detail-grid"></dl>
+            <div id="deliveryPackageClosureSummary" class="receipt-summary-grid" aria-live="polite"></div>
+            <div class="trace-columns">
+              <section>
+                <h3>关联影像</h3>
+                <div id="deliveryPackageSceneList" class="trace-list"></div>
+              </section>
+              <section>
+                <h3>阻断原因</h3>
+                <div id="deliveryPackageBlockingList" class="trace-list"></div>
+              </section>
+              <section>
+                <h3>交付回执</h3>
+                <div id="deliveryPackageReceiptList" class="trace-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+        <section class="workbench-grid ledger-workbench ledger-workbench-full" data-admin-primary-ledger="true">
+          <div class="panel table-panel ledger-main-panel">
+            <div class="panel-header"><div><p class="eyebrow">入库审计</p><h2>成果入库批次台账</h2></div></div>
+            <div class="field-grid field-grid-wide">
+              <label><span>关键词</span><input id="batchKeyword" type="search" placeholder="文件名、批次号、错误信息" /></label>
+              <label><span>批次状态</span><input id="batchStatusFilter" type="search" placeholder="完成、删除、回滚" /></label>
+              <label><span>审核状态</span><input id="batchReviewStatusFilter" type="search" placeholder="待审、通过、驳回" /></label>
+              <label>
+                <span>验收状态</span>
+                <select id="batchAcceptanceStatusFilter">
+                  <option value="">全部验收</option>
+                  <option value="pending">待验收</option>
+                  <option value="accepted">已验收</option>
+                  <option value="needs_correction">需整改</option>
+                  <option value="rejected">验收驳回</option>
+                </select>
+              </label>
+              <label>
+                <span>工作队列</span>
+                <select id="batchWorkflowQueueFilter">
+                  <option value="">全部队列</option>
+                  <option value="pendingReview">待审核</option>
+                  <option value="approvedUnlinked">已审未挂影像</option>
+                  <option value="readyForLayerLink">可关联发布</option>
+                  <option value="linked">已挂影像</option>
+                </select>
+              </label>
+              <label><span>影像/场景 ID</span><input id="batchSceneIdFilter" type="search" placeholder="按已关联影像反查批次" /></label>
+              <label><span>质量状态</span><select id="batchQualityStatusFilter"><option value="">全部质量</option><option value="pending">待评估</option><option value="passed">通过</option><option value="warning">需复核</option><option value="blocked">不通过</option></select></label>
+              <label><span>发布风险</span><select id="batchPublishRiskStatusFilter"><option value="">全部风险</option><option value="unknown">未评估</option><option value="clear">低风险</option><option value="warning">需复核</option><option value="blocked">禁止发布</option></select></label>
+              <label class="checkbox-field"><span>显示已删除</span><input id="includeDeletedImportBatches" type="checkbox" data-permission="imports.forestBlocks.restore" /></label>
+            </div>
+            <div class="table-wrap ledger-table-wrap ledger-table-full import-batch-table-wrap">
+              <table>
+                <thead><tr><th>批次</th><th>文件类型</th><th>入库结果</th><th>创建人</th><th>完成时间</th><th>操作</th></tr></thead>
+                <tbody id="importBatchRows"><tr class="placeholder-row"><td colspan="6">等待加载入库批次</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <section id="importBatchDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+            <div class="panel detail-panel detail-drawer-panel">
+              <div class="panel-header"><div><p class="eyebrow">批次详情</p><h2 id="importBatchDetailTitle">选择批次查看详情</h2></div><div class="panel-actions"><button id="linkImportBatchSceneLayer" type="button" class="button-ghost" data-permission="imports.sceneLayers.link" data-permission-all="map.layers.publish" data-permission-any="map.layers.create map.layers.update">关联影像图层</button><button id="reviewImportBatch" type="button" class="button-ghost" data-permission="imports.forestBlocks.review">提交审核</button><button id="rollbackImportBatch" type="button" class="button-ghost" data-permission="imports.forestBlocks.rollback">撤销入库</button><button id="downloadImportBatchReport" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出报告</button><button id="downloadImportBatchErrors" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">下载错误行</button><button id="closeImportBatchDetail" type="button" class="button-ghost">关闭</button></div></div>
+              <div class="panel-actions detail-secondary-actions"><button id="downloadImportBatchReceipt" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出验收回执</button></div>
+              <p id="importBatchDetailEmpty" class="detail-empty">从台账选择一条入库批次查看报告。</p>
+              <dl id="importBatchDetailGrid" class="detail-grid"></dl>
+              <div id="importBatchReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
+              <div class="field-grid field-grid-wide">
+                <label><span>审核结论</span><select id="importBatchReviewDecision"><option value="approved">通过</option><option value="needs_correction">需修正</option><option value="rejected">驳回</option></select></label>
+                <label class="field-span-2"><span>审核意见</span><input id="importBatchReviewComment" type="text" placeholder="填写图斑、林权、影像追溯核验意见" /></label>
+              </div>
+              <div class="field-grid field-grid-wide">
+                <label><span>验收状态</span><select id="importBatchAcceptanceStatus"><option value="pending">待验收</option><option value="accepted">已验收</option><option value="needs_correction">需整改</option><option value="rejected">验收驳回</option></select></label>
+                <label class="field-span-2"><span>验收意见</span><input id="importBatchAcceptanceComment" type="text" placeholder="填写图档一致、数据入库和交付材料验收意见" /></label>
+                <div class="form-command"><button id="updateImportBatchAcceptance" type="button" class="button-ghost" data-permission="imports.forestBlocks.acceptance">记录验收</button></div>
+              </div>
+              <div class="field-grid field-grid-wide">
+                <label><span>影像搜索</span><input id="batchSceneKeyword" type="search" placeholder="名称、卫星、传感器、场景 ID" /></label>
+                <label><span>影像/场景 ID</span><input id="batchSceneId" type="text" list="batchSceneOptions" placeholder="选择或输入影像 ID" /></label>
+                <label><span>关联类型</span><input id="batchSceneRelationType" type="text" value="coverage" /></label>
+                <label><span>图层层级</span><input id="batchSceneZIndex" type="number" placeholder="42" /></label>
+                <div class="form-command"><button id="refreshBatchScenes" type="button" class="button-ghost">刷新影像</button></div>
+                <p id="batchScenePreview" class="trace-empty field-span-2">选择一景影像后显示目录信息。</p>
+              </div>
+              <div class="form-command"><button id="checkImportBatchPublishReadiness" type="button" class="button-ghost" data-permission="imports.sceneLayers.link" data-permission-all="map.layers.publish" data-permission-any="map.layers.create map.layers.update">发布预检</button></div>
+              <div id="importBatchOperationResult" class="operation-result-shell" aria-live="polite"></div>
+              <div class="trace-columns">
+                <section>
+                  <h3>入库林班</h3>
+                  <div id="importedBlocksList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>关联林权档案</h3>
+                  <div id="importedRightsList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>影像图层追溯</h3>
+                  <div id="importBatchImageryLinksList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>交付包追溯</h3>
+                  <div id="importBatchDeliveryPackageList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>覆盖预检</h3>
+                  <div id="importBatchCoverageCheck" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>发布预检</h3>
+                  <div id="importBatchPublishReadiness" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>审核记录</h3>
+                  <div id="importBatchReviewEventsList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>验收记录</h3>
+                  <div id="importBatchAcceptanceEventsList" class="trace-list"></div>
+                </section>
+                <section>
+                  <h3>操作审计</h3>
+                  <div id="importBatchAuditEventsList" class="trace-list"></div>
+                </section>
+              </div>
+              <pre id="importBatchDetailOutput" class="report-output">{}</pre>
+            </div>
+          </section>
+        </section>
+        <section class="panel table-panel">
+          <div class="panel-header"><div><p class="eyebrow">审计台账</p><h2>成果入库审计流</h2></div><div class="panel-actions"><button id="exportImportAuditEvents" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出审计</button><button id="refreshImportAuditEvents" type="button" class="button-ghost">刷新审计</button></div></div>
+          <div class="field-grid field-grid-wide">
+            <label><span>动作筛选</span><input id="importAuditActionFilter" type="search" placeholder="导入、审核、关联、回滚、删除" /></label>
+            <label><span>批次筛选</span><input id="importAuditBatchFilter" type="search" placeholder="批次 ID" /></label>
+            <label class="checkbox-field"><span>显示已删除批次</span><input id="includeDeletedImportAuditEvents" type="checkbox" data-permission="imports.forestBlocks.restore" /></label>
+          </div>
+          <div class="table-wrap ledger-table-wrap ledger-table-full">
+            <table>
+              <thead><tr><th>时间</th><th>动作</th><th>批次</th><th>操作人</th><th>状态</th><th>摘要</th></tr></thead>
+              <tbody id="importAuditRows"><tr class="placeholder-row"><td colspan="6">等待加载审计事件</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel table-panel">
+          <div class="panel-header"><div><p class="eyebrow">质量问题</p><h2>成果质检问题台账</h2></div><div class="panel-actions"><button id="exportQualityIssues" type="button" class="button-ghost" data-permission="imports.forestBlocks.export">导出问题</button><button id="refreshQualityIssues" type="button" class="button-ghost">刷新问题</button></div></div>
+          <div class="field-grid field-grid-wide">
+            <label><span>关键词</span><input id="qualityIssueKeyword" type="search" placeholder="批次、林班、影像、问题说明" /></label>
+            <label><span>问题类型</span><input id="qualityIssueTypeFilter" type="search" placeholder="覆盖、缺失、导入错误" /></label>
+            <label><span>严重程度</span><input id="qualityIssueSeverityFilter" type="search" placeholder="阻断、预警" /></label>
+            <label><span>处理状态</span><select id="qualityIssueStatusFilter"><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">处理中</option><option value="resolved">已解决</option><option value="ignored">已忽略</option></select></label>
+            <label><span>批次 ID</span><input id="qualityIssueBatchFilter" type="search" placeholder="批次 ID" /></label>
+            <label class="checkbox-field"><span>显示已删除批次</span><input id="includeDeletedQualityIssues" type="checkbox" data-permission="imports.forestBlocks.restore" /></label>
+          </div>
+          <div class="table-wrap ledger-table-wrap ledger-table-full">
+            <table>
+              <thead><tr><th>级别</th><th>问题</th><th>批次</th><th>林班</th><th>影像</th><th>处理建议</th><th>处理状态</th><th>操作</th></tr></thead>
+              <tbody id="qualityIssueRows"><tr class="placeholder-row"><td colspan="8">等待加载质量问题</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel import-panel">
+          <div class="panel-header"><div><p class="eyebrow">本地成果文件</p><h2>待入库目录</h2></div><button id="importSelectedSource" type="button" data-permission="imports.forestBlocks.create">导入选中文件</button></div>
+          <p id="sourceStatus" class="inline-status">等待加载待入库文件。</p>
+          <div class="table-wrap source-table-wrap"><table><thead><tr><th>选择</th><th>文件</th><th>类型</th><th>大小</th><th>更新时间</th></tr></thead><tbody id="sourceRows"><tr class="placeholder-row"><td colspan="5">等待加载</td></tr></tbody></table></div>
+          <form id="importForm" class="field-grid import-upload-grid">
+            <label class="field-span-2"><span>直接上传文件</span><input id="importFile" type="file" accept=".geojson,.json,.csv,.xlsx,.zip,.kmz,.kml,.ovkml,.ovobj" required /></label>
+            <label><span>导入策略</span><select id="importStrategy"><option value="upsert">更新或新增</option><option value="skip">已有编号跳过</option></select></label>
+            <div class="form-command"><button type="submit" data-permission="imports.forestBlocks.create">上传并入库</button></div>
+          </form>
+          <section id="importReport" class="report-grid">
+            <div class="report-metrics">
+              <div><span>总行数</span><strong id="reportTotal">0</strong></div>
+              <div><span>有效</span><strong id="reportValid">0</strong></div>
+              <div><span>无效</span><strong id="reportInvalid">0</strong></div>
+              <div><span>状态</span><strong id="reportStatus">待导入</strong></div>
+            </div>
+            <pre id="reportOutput" class="report-output">{}</pre>
+          </section>
+        </section>
+      </section>
+    </main>
+    <datalist id="batchSceneOptions"></datalist>
+    <script src="admin-common.js"></script>
+    <script src="admin-imports.js"></script>
+  </body>
+</html>

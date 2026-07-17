@@ -685,13 +685,13 @@ document.querySelector("#newTaskBtn").addEventListener("click", () => {
   showToast("已打开巡护工单，可继续派发任务");
 });
 
-document.querySelector("#resetLayersBtn").addEventListener("click", () => {
+document.querySelector("#resetLayersBtn")?.addEventListener("click", () => {
   dispatchState.layers = new Set(mapLayers.map((layer) => layer.id));
   renderDispatchCenter();
   showToast("地图图层已全部开启");
 });
 
-document.querySelector("#dispatchTaskBtn").addEventListener("click", () => {
+document.querySelector("#dispatchTaskBtn")?.addEventListener("click", () => {
   document.querySelector('[data-view="patrol"]').click();
   showToast("已根据当前预警生成调度派单入口");
 });

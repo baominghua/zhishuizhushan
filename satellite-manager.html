@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>卫星图传管理系统</title>
     <link rel="stylesheet" href="assets/ol/ol.css" />
-    <link rel="stylesheet" href="satellite-manager.css?v=20260610-tdt2" />
+    <link rel="stylesheet" href="satellite-manager.css?v=20260611-layout1" />
   </head>
   <body>
     <main class="rs-shell">
@@ -27,6 +27,25 @@
                 <input id="apiBase" type="url" value="http://127.0.0.1:8010" />
               </label>
               <button type="button" id="connectApi">连接</button>
+            </div>
+
+            <div class="auth-row">
+              <label>
+                <span>API Token</span>
+                <input id="authToken" type="password" placeholder="启用鉴权后填写" autocomplete="off" />
+              </label>
+              <label>
+                <span>用户</span>
+                <input id="authUser" type="text" placeholder="admin" />
+              </label>
+              <label>
+                <span>角色</span>
+                <input id="authRoles" type="text" placeholder="admin,manager" />
+              </label>
+              <label>
+                <span>项目/区域</span>
+                <input id="authScope" type="text" placeholder="project-001 / 350783" />
+              </label>
             </div>
 
             <div class="basemap-row">
@@ -81,11 +100,69 @@
               <input id="bounds" type="text" value="117.55,26.05,118.85,27.20" />
             </label>
 
+            <div class="permission-grid">
+              <label>
+                <span>项目 ID</span>
+                <input id="projectId" type="text" placeholder="project-001" />
+              </label>
+              <label>
+                <span>区域编码</span>
+                <input id="areaCode" type="text" placeholder="350783" />
+              </label>
+              <label>
+                <span>可见角色</span>
+                <input id="allowedRoles" type="text" placeholder="admin,manager" />
+              </label>
+              <label>
+                <span>可见用户</span>
+                <input id="allowedUsers" type="text" placeholder="user-a,user-b" />
+              </label>
+            </div>
+
             <div class="actions">
               <button type="submit">上传入库</button>
+              <button type="button" id="saveAccess">保存权限</button>
+              <button type="button" id="bulkAccess">批量套用权限</button>
               <button type="button" id="exportCatalog">导出目录</button>
             </div>
           </form>
+        </section>
+
+        <section class="rs-panel task-panel">
+          <div class="panel-title">
+            <h2>转换任务</h2>
+            <small id="taskCount">0 个</small>
+          </div>
+          <div class="task-tools">
+            <label>
+              <span>服务器/NAS 文件路径</span>
+              <input id="serverFilePath" type="text" placeholder="例如：inbox/zhushan-2026.tif" />
+            </label>
+            <button id="registerServerFile" type="button">注册入库</button>
+            <button id="refreshTasks" type="button">刷新</button>
+          </div>
+          <div class="task-list" id="taskList"></div>
+        </section>
+
+        <section class="rs-panel cache-panel">
+          <div class="panel-title">
+            <h2>缓存管理</h2>
+            <small id="cacheStatus">未读取</small>
+          </div>
+          <div class="cache-tools">
+            <label>
+              <span>最大容量 MB</span>
+              <input id="cacheMaxMb" type="number" min="0" placeholder="0 不限制" />
+            </label>
+            <label>
+              <span>保留天数</span>
+              <input id="cacheMaxAge" type="number" min="0" step="0.5" placeholder="0 不限制" />
+            </label>
+            <button id="refreshCache" type="button">刷新</button>
+            <button id="pruneCache" type="button">淘汰</button>
+            <button id="clearCogCache" type="button">清 COG</button>
+            <button id="clearTdtCache" type="button">清底图</button>
+          </div>
         </section>
 
         <section class="rs-panel list-panel">
@@ -94,7 +171,9 @@
             <small id="sceneCount">0 景</small>
           </div>
           <div class="catalog-search">
-            <input id="catalogFilter" type="search" placeholder="搜索名称、卫星、传感器..." />
+            <input id="catalogFilter" type="search" aria-label="搜索影像名称、卫星或传感器" placeholder="搜索名称、卫星、传感器..." />
+            <input id="catalogBbox" type="text" aria-label="影像空间范围坐标" placeholder="空间范围 W,S,E,N，可选" />
+            <button id="searchServer" type="button">服务端检索</button>
           </div>
           <div class="scene-list" id="sceneList"></div>
         </section>
@@ -123,8 +202,8 @@
     </main>
 
     <script src="assets/ol/ol.js"></script>
-    <script src="satellite-config.local.js?v=20260610-tdt2"></script>
-    <script src="sdk/remote-sensing-sdk.js?v=20260610-tdt2"></script>
-    <script src="satellite-manager.js?v=20260610-tdt2"></script>
-  </body>
+  <script src="satellite-config.local.js?v=20260611-layout1"></script>
+  <script src="sdk/remote-sensing-sdk.js?v=20260611-layout1"></script>
+  <script src="satellite-manager.js?v=20260611-layout1"></script>
+</body>
 </html>

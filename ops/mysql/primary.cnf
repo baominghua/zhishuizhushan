@@ -1,0 +1,14 @@
+[mysqld]
+server-id=1
+bind-address=0.0.0.0
+mysqlx=0
+log_bin=mysql-bin
+binlog_format=ROW
+binlog_row_image=FULL
+gtid_mode=ON
+enforce_gtid_consistency=ON
+log_replica_updates=ON
+binlog_expire_logs_seconds=1209600
+sync_binlog=1
+innodb_flush_log_at_trx_commit=1
+report_host=smart-bamboo-primary

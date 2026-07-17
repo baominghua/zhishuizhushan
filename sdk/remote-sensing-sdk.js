@@ -137,18 +137,50 @@
   class RemoteCogCatalog {
     constructor(options = {}) {
       this.baseUrl = normalizeBaseUrl(options.baseUrl || "");
+      this.token = options.token || "";
+      this.context = options.context || {};
+      this.headers = { ...(options.headers || {}) };
     }
 
     setBaseUrl(baseUrl) {
       this.baseUrl = normalizeBaseUrl(baseUrl);
     }
 
-    url(path) {
-      return `${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+    setToken(token = "") {
+      this.token = token;
+    }
+
+    setContext(context = {}) {
+      this.context = { ...this.context, ...context };
+    }
+
+    authHeaders() {
+      const headers = { ...this.headers };
+      if (this.token) headers.Authorization = `Bearer ${this.token}`;
+      if (this.context.user) headers["X-RS-User"] = this.context.user;
+      if (this.context.roles) headers["X-RS-Roles"] = Array.isArray(this.context.roles) ? this.context.roles.join(",") : this.context.roles;
+      if (this.context.projects) headers["X-RS-Projects"] = Array.isArray(this.context.projects) ? this.context.projects.join(",") : this.context.projects;
+      if (this.context.areas) headers["X-RS-Areas"] = Array.isArray(this.context.areas) ? this.context.areas.join(",") : this.context.areas;
+      return headers;
+    }
+
+    url(path, params = null) {
+      const base = `${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+      if (!params) return base;
+      const query = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") return;
+        query.set(key, value);
+      });
+      const suffix = query.toString();
+      return suffix ? `${base}?${suffix}` : base;
     }
 
     async request(path, options = {}) {
-      const response = await fetch(this.url(path), options);
+      const { params, headers, ...fetchOptions } = options;
+      const requestHeaders = { ...this.authHeaders(), ...(headers || {}) };
+      if (Object.keys(requestHeaders).length) fetchOptions.headers = requestHeaders;
+      const response = await fetch(this.url(path, params), fetchOptions);
       if (!response.ok) {
         let detail = response.statusText;
         try {
@@ -166,8 +198,8 @@
       return this.request("/api/health");
     }
 
-    async list() {
-      const data = await this.request("/api/scenes");
+    async list(params = {}) {
+      const data = await this.request("/api/scenes", { params });
       return (data.scenes || []).map((scene) => normalizeServerScene(scene));
     }
 
@@ -180,15 +212,100 @@
       form.append("capturedAt", metadata.capturedAt || "");
       form.append("resolution", metadata.resolution || "");
       form.append("bounds", (metadata.bounds || []).join(","));
+      form.append("projectId", metadata.projectId || "");
+      form.append("areaCode", metadata.areaCode || "");
+      form.append("allowedRoles", Array.isArray(metadata.allowedRoles) ? metadata.allowedRoles.join(",") : metadata.allowedRoles || "");
+      form.append("allowedUsers", Array.isArray(metadata.allowedUsers) ? metadata.allowedUsers.join(",") : metadata.allowedUsers || "");
+      if (metadata.asyncMode) form.append("asyncMode", "true");
       const scene = await this.request("/api/scenes/upload", {
         method: "POST",
         body: form,
       });
+      if (scene.task) return scene;
       return normalizeServerScene(scene);
     }
 
     async remove(id) {
       return this.request(`/api/scenes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+
+    async updateSceneAccess(id, payload = {}) {
+      const scene = await this.request(`/api/scenes/${encodeURIComponent(id)}/access`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return normalizeServerScene(scene);
+    }
+
+    async bulkUpdateSceneAccess(payload = {}) {
+      return this.request("/api/scenes/access/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    async registerFile(payload = {}) {
+      const response = await this.request("/api/scenes/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return response;
+    }
+
+    async listTasks() {
+      return this.request("/api/tasks");
+    }
+
+    async getTask(id) {
+      return this.request(`/api/tasks/${encodeURIComponent(id)}`);
+    }
+
+    async geoserverConfig() {
+      return this.request("/api/geoserver/config");
+    }
+
+    async geoserverLayers() {
+      const data = await this.request("/api/geoserver/layers");
+      return data.layers || [];
+    }
+
+    async tileCacheStatus() {
+      return this.request("/api/cache/tiles");
+    }
+
+    async clearTileCache(sceneId = "") {
+      return this.request("/api/cache/tiles", {
+        method: "DELETE",
+        params: sceneId ? { sceneId } : {},
+      });
+    }
+
+    async pruneTileCache(options = {}) {
+      return this.request("/api/cache/tiles/prune", {
+        method: "POST",
+        params: options,
+      });
+    }
+
+    async tiandituCacheStatus() {
+      return this.request("/api/cache/tianditu");
+    }
+
+    async clearTiandituCache(layer = "") {
+      return this.request("/api/cache/tianditu", {
+        method: "DELETE",
+        params: layer ? { layer } : {},
+      });
+    }
+
+    async pruneTiandituCache(options = {}) {
+      return this.request("/api/cache/tianditu/prune", {
+        method: "POST",
+        params: options,
+      });
     }
   }
 
@@ -279,17 +396,25 @@
     });
   }
 
-  function tiandituTileUrls(layer, tk) {
-    const token = encodeURIComponent(tk);
+  function tiandituTileUrls(layer, tk, options = {}) {
+    const layerId = `${layer}_w`;
+    const proxyBaseUrl = normalizeBaseUrl(options.proxyBaseUrl || "");
+    const token = encodeURIComponent(tk || "");
+    if (proxyBaseUrl) {
+      const query = token ? `?tk=${token}` : "";
+      return [`${proxyBaseUrl}/api/basemaps/tianditu/${layerId}/{z}/{x}/{y}.png${query}`];
+    }
+    if (!token) return [];
     return Array.from({ length: 8 }, (_, index) => {
-      return `https://t${index}.tianditu.gov.cn/DataServer?T=${layer}_w&x={x}&y={y}&l={z}&tk=${token}`;
+      return `https://t${index}.tianditu.gov.cn/DataServer?T=${layerId}&x={x}&y={y}&l={z}&tk=${token}`;
     });
   }
 
   function createTiandituLayers(options = {}) {
     assertOpenLayers();
     const tk = String(options.tk || "").trim();
-    if (!tk) return [];
+    const proxyBaseUrl = normalizeBaseUrl(options.proxyBaseUrl || "");
+    if (!tk && !proxyBaseUrl) return [];
 
     const type = options.type || "img";
     const pairs = {
@@ -302,17 +427,22 @@
 
     const createLayer = (layer, zIndex) => {
       const source = new ol.source.XYZ({
-        urls: tiandituTileUrls(layer, tk),
+        urls: tiandituTileUrls(layer, tk, { proxyBaseUrl }),
         maxZoom: 18,
         attributions: attribution,
+        crossOrigin: options.crossOrigin || "anonymous",
       });
       if (typeof options.onTileLoadError === "function") {
         source.on("tileloaderror", options.onTileLoadError);
+      }
+      if (typeof options.onTileLoadEnd === "function") {
+        source.on("tileloadend", options.onTileLoadEnd);
       }
       const tileLayer = new ol.layer.Tile({
         source,
         opacity: options.opacity ?? 1,
         visible: true,
+        preload: options.preload ?? 0,
       });
       tileLayer.setZIndex(zIndex);
       tileLayer.set("basemap", "tianditu");
@@ -337,6 +467,406 @@
         maxZoom: options.maxZoom || 20,
       }),
     });
+  }
+
+  const SourceAdapters = {
+    xyz(options = {}) {
+      assertOpenLayers();
+      const sourceOptions = {
+        maxZoom: options.maxZoom ?? 22,
+        minZoom: options.minZoom,
+        attributions: options.attributions,
+        tileSize: options.tileSize,
+      };
+      if (options.url) sourceOptions.url = options.url;
+      if (options.urls) sourceOptions.urls = options.urls;
+      if (options.crossOrigin !== false) sourceOptions.crossOrigin = options.crossOrigin || "anonymous";
+      const source = new ol.source.XYZ(sourceOptions);
+      if (typeof options.onTileLoadError === "function") {
+        source.on("tileloaderror", options.onTileLoadError);
+      }
+      return source;
+    },
+
+    tileWms(options = {}) {
+      assertOpenLayers();
+      const source = new ol.source.TileWMS({
+        url: options.url,
+        params: options.params || {},
+        serverType: options.serverType,
+        crossOrigin: options.crossOrigin || "anonymous",
+      });
+      if (typeof options.onTileLoadError === "function") {
+        source.on("tileloaderror", options.onTileLoadError);
+      }
+      return source;
+    },
+
+    geoserverWms(options = {}) {
+      const params = {
+        LAYERS: options.layer || options.layers,
+        TILED: options.tiled !== false,
+        STYLES: options.styles || "",
+        FORMAT: options.format || "image/png",
+        TRANSPARENT: options.transparent !== false,
+        ...(options.params || {}),
+      };
+      return SourceAdapters.tileWms({
+        url: options.url || options.wmsUrl,
+        params,
+        serverType: "geoserver",
+        crossOrigin: options.crossOrigin,
+        onTileLoadError: options.onTileLoadError,
+      });
+    },
+
+    wmts(options = {}) {
+      assertOpenLayers();
+      return new ol.source.WMTS(options);
+    },
+
+    imageStatic(options = {}) {
+      assertOpenLayers();
+      const bounds = parseBounds(options.bounds);
+      return new ol.source.ImageStatic({
+        url: options.url,
+        imageExtent: ol.proj.transformExtent(bounds, "EPSG:4326", "EPSG:3857"),
+        projection: "EPSG:3857",
+      });
+    },
+
+    vector(options = {}) {
+      assertOpenLayers();
+      const features = options.geojson
+        ? new ol.format.GeoJSON().readFeatures(options.geojson, {
+            dataProjection: options.dataProjection || "EPSG:4326",
+            featureProjection: options.featureProjection || "EPSG:3857",
+          })
+        : options.features || [];
+      return new ol.source.Vector({ features });
+    },
+
+    scene(scene, options = {}) {
+      assertOpenLayers();
+      const layerType = scene.layerType || scene.sourceType || (scene.tileUrl ? "xyz" : "imageStatic");
+      if (layerType === "xyz" || layerType === "cog" || layerType === "tile") {
+        return new ol.layer.Tile({
+          source: SourceAdapters.xyz({
+            url: scene.tileUrl || scene.url,
+            urls: scene.tileUrls || scene.urls,
+            maxZoom: scene.maxZoom ?? options.maxZoom,
+            crossOrigin: scene.crossOrigin ?? options.crossOrigin,
+            onTileLoadError: options.onTileLoadError,
+          }),
+          opacity: scene.opacity ?? options.opacity ?? 0.9,
+          visible: scene.visible !== false && options.visible !== false,
+        });
+      }
+
+      const imageUrl = scene.imageUrl || scene.url || (scene.blob ? URL.createObjectURL(scene.blob) : "");
+      if (!imageUrl) throw new Error("Scene needs tileUrl, imageUrl, url or blob.");
+      const layer = new ol.layer.Image({
+        source: SourceAdapters.imageStatic({
+          url: imageUrl,
+          bounds: scene.bounds || options.bounds,
+        }),
+        opacity: scene.opacity ?? options.opacity ?? 0.86,
+        visible: scene.visible !== false && options.visible !== false,
+      });
+      if (scene.blob && !scene.imageUrl && !scene.url) layer.set("objectUrl", imageUrl);
+      return layer;
+    },
+
+    tianditu(options = {}) {
+      return createTiandituLayers(options);
+    },
+  };
+
+  class LayerManager {
+    constructor(map, options = {}) {
+      assertOpenLayers();
+      this.map = map;
+      this.defaultGroup = options.defaultGroup || "remote-sensing";
+      this.defaultZIndex = options.defaultZIndex ?? 10;
+      this.entries = new Map();
+    }
+
+    add(scene, options = {}) {
+      return this.addScene(scene, options);
+    }
+
+    addScene(scene, options = {}) {
+      if (!scene?.id) throw new Error("Scene id is required.");
+      const layer = this.createLayerFromScene(scene, options);
+      return this.addLayer(scene.id, layer, {
+        ...options,
+        scene,
+        title: scene.name,
+        group: options.group || scene.group || this.defaultGroup,
+        zIndex: scene.zIndex ?? options.zIndex ?? this.defaultZIndex,
+      });
+    }
+
+    addLayer(id, layer, metadata = {}) {
+      if (!id) throw new Error("Layer id is required.");
+      this.remove(id);
+      const group = metadata.group || this.defaultGroup;
+      const zIndex = metadata.zIndex;
+      layer.set("sdkLayerId", id);
+      layer.set("sdkGroup", group);
+      if (metadata.title) layer.set("title", metadata.title);
+      if (metadata.scene?.id) layer.set("sceneId", metadata.scene.id);
+      if (metadata.scene?.name) layer.set("sceneName", metadata.scene.name);
+      if (zIndex !== undefined && zIndex !== null) layer.setZIndex(zIndex);
+      this.map.addLayer(layer);
+      const entry = {
+        id,
+        layer,
+        group,
+        scene: metadata.scene || null,
+        metadata,
+        objectUrl: layer.get("objectUrl"),
+      };
+      this.entries.set(id, entry);
+      return layer;
+    }
+
+    addGroup(group, layers, options = {}) {
+      this.removeGroup(group);
+      return layers.map((layer, index) => {
+        const id = `${group}:${options.ids?.[index] || index}`;
+        return this.addLayer(id, layer, {
+          ...options,
+          group,
+          zIndex: options.zIndex !== undefined ? options.zIndex + index : layer.getZIndex(),
+        });
+      });
+    }
+
+    createLayerFromScene(scene, options = {}) {
+      return SourceAdapters.scene(scene, options);
+    }
+
+    createTileLayer(scene, options = {}) {
+      return SourceAdapters.scene({ ...scene, layerType: "xyz" }, options);
+    }
+
+    createStaticImageLayer(scene, options = {}) {
+      return SourceAdapters.scene({ ...scene, layerType: "imageStatic" }, options);
+    }
+
+    syncScenes(scenes, options = {}) {
+      const group = options.group || this.defaultGroup;
+      this.removeGroup(group);
+      return scenes.map((scene, index) =>
+        this.addScene(
+          {
+            ...scene,
+            visible: options.visible === false ? false : scene.visible,
+            zIndex: scene.zIndex ?? options.zIndex ?? this.defaultZIndex + index,
+          },
+          { ...options, group },
+        ),
+      );
+    }
+
+    remove(id) {
+      const entry = this.entries.get(id);
+      if (!entry) return;
+      this.map.removeLayer(entry.layer);
+      if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+      this.entries.delete(id);
+    }
+
+    removeGroup(group) {
+      [...this.entries.values()]
+        .filter((entry) => entry.group === group)
+        .forEach((entry) => this.remove(entry.id));
+    }
+
+    setOpacity(id, opacity) {
+      this.entries.get(id)?.layer.setOpacity(Number(opacity));
+    }
+
+    setVisible(id, visible) {
+      this.entries.get(id)?.layer.setVisible(Boolean(visible));
+    }
+
+    setGroupVisible(group, visible) {
+      [...this.entries.values()]
+        .filter((entry) => entry.group === group)
+        .forEach((entry) => entry.layer.setVisible(Boolean(visible)));
+    }
+
+    get(id) {
+      return this.entries.get(id) || null;
+    }
+
+    list(group) {
+      return [...this.entries.values()].filter((entry) => !group || entry.group === group);
+    }
+
+    fit(id, options = {}) {
+      const entry = this.entries.get(id);
+      if (!entry) return false;
+      const extent = this.resolveExtent(entry, options);
+      if (!extent) return false;
+      this.map.getView().fit(extent, {
+        padding: options.padding || [84, 430, 84, 84],
+        maxZoom: options.maxZoom || 16,
+        duration: options.duration || 260,
+      });
+      return true;
+    }
+
+    resolveExtent(entry, options = {}) {
+      const bounds = options.bounds || entry.scene?.bounds || entry.metadata?.bounds;
+      if (bounds) return ol.proj.transformExtent(parseBounds(bounds), "EPSG:4326", "EPSG:3857");
+      const source = entry.layer.getSource?.();
+      const extent = source?.getExtent?.();
+      if (extent && !ol.extent.isEmpty(extent)) return extent;
+      return null;
+    }
+
+    clear() {
+      [...this.entries.keys()].forEach((id) => this.remove(id));
+    }
+  }
+
+  class RemoteSensingClient {
+    constructor(options = {}) {
+      this.map = options.map || null;
+      this.remote =
+        options.remote ||
+        new RemoteCogCatalog({
+          baseUrl: options.apiBase || options.baseUrl || "",
+          token: options.token,
+          context: options.context,
+          headers: options.headers,
+        });
+      this.catalog = options.catalog || null;
+      this.layers = options.layers || (this.map ? new LayerManager(this.map, options.layerOptions) : null);
+      this.scenes = [];
+    }
+
+    setMap(map, layerOptions = {}) {
+      this.map = map;
+      this.layers = new LayerManager(map, layerOptions);
+      return this.layers;
+    }
+
+    setApiBase(baseUrl) {
+      this.remote.setBaseUrl(baseUrl);
+    }
+
+    setAuthToken(token = "") {
+      this.remote.setToken(token);
+    }
+
+    setAuthContext(context = {}) {
+      this.remote.setContext(context);
+    }
+
+    health() {
+      return this.remote.health();
+    }
+
+    async listRemoteScenes(params = {}) {
+      this.scenes = await this.remote.list(params);
+      return this.scenes;
+    }
+
+    uploadCog(file, metadata = {}) {
+      return this.remote.upload(file, metadata);
+    }
+
+    removeRemoteScene(id) {
+      return this.remote.remove(id);
+    }
+
+    updateSceneAccess(id, payload = {}) {
+      return this.remote.updateSceneAccess(id, payload);
+    }
+
+    bulkUpdateSceneAccess(payload = {}) {
+      return this.remote.bulkUpdateSceneAccess(payload);
+    }
+
+    registerFile(payload = {}) {
+      return this.remote.registerFile(payload);
+    }
+
+    async listTasks() {
+      const data = await this.remote.listTasks();
+      return data.tasks || [];
+    }
+
+    getTask(id) {
+      return this.remote.getTask(id);
+    }
+
+    geoserverConfig() {
+      return this.remote.geoserverConfig();
+    }
+
+    geoserverLayers() {
+      return this.remote.geoserverLayers();
+    }
+
+    tileCacheStatus() {
+      return this.remote.tileCacheStatus();
+    }
+
+    clearTileCache(sceneId = "") {
+      return this.remote.clearTileCache(sceneId);
+    }
+
+    pruneTileCache(options = {}) {
+      return this.remote.pruneTileCache(options);
+    }
+
+    tiandituCacheStatus() {
+      return this.remote.tiandituCacheStatus();
+    }
+
+    clearTiandituCache(layer = "") {
+      return this.remote.clearTiandituCache(layer);
+    }
+
+    pruneTiandituCache(options = {}) {
+      return this.remote.pruneTiandituCache(options);
+    }
+
+    async syncCogScenes(options = {}) {
+      if (!this.layers) throw new Error("Map layer manager is not initialized.");
+      const scenes = await this.listRemoteScenes(options.params || {});
+      this.layers.syncScenes(scenes, {
+        group: options.group || "remote-cog",
+        visible: options.visible,
+        zIndex: options.zIndex ?? 10,
+        opacity: options.opacity,
+        onTileLoadError: options.onTileLoadError,
+      });
+      return scenes;
+    }
+
+    addScene(scene, options = {}) {
+      if (!this.layers) throw new Error("Map layer manager is not initialized.");
+      return this.layers.addScene(scene, options);
+    }
+
+    addTiandituBasemap(options = {}) {
+      if (!this.layers) throw new Error("Map layer manager is not initialized.");
+      const group = options.group || `tianditu-${options.type || "img"}`;
+      const layers = createTiandituLayers(options);
+      this.layers.addGroup(group, layers, {
+        group,
+        ids: ["base", "label"],
+        zIndex: options.zIndex ?? 0,
+      });
+      this.layers.setGroupVisible(group, options.visible !== false);
+      return layers;
+    }
   }
 
   class SceneLayerController {
@@ -424,7 +954,10 @@
     SUPPORTED_IMAGE_TYPES,
     RasterCatalog,
     RemoteCogCatalog,
+    LayerManager,
+    RemoteSensingClient,
     SceneLayerController,
+    SourceAdapters,
     createSceneFromFile,
     createOfflineBaseLayer,
     createTiandituLayers,

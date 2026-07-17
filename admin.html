@@ -3,40 +3,31 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>森林小班管理台账</title>
+    <title>智慧竹山后台｜模块首页</title>
     <link rel="stylesheet" href="admin.css" />
   </head>
-  <body>
+  <body data-admin-module="overview" data-permission="admin.overview.view">
     <main class="admin-shell">
       <aside class="admin-sidebar">
         <div class="brand-block">
-          <p class="brand-kicker">Smart Bamboo GIS</p>
-          <h1>森林小班管理台账</h1>
-          <p class="brand-copy">面向竹山地块维护、导入核验与批量修复的紧凑作业台。</p>
+          <p class="brand-kicker">智慧竹山后台</p>
+          <h1>智慧竹山后台</h1>
+          <p class="brand-copy">按业务域拆分的后台管理入口，便于后续做菜单权限、接口权限和数据范围权限。</p>
         </div>
 
-        <nav class="sidebar-nav" aria-label="页面导航">
-          <a href="zhushan-bigdata.html">返回竹山大屏</a>
-          <a href="satellite-manager.html">返回影像管理</a>
-          <a href="#blockWorkbench">小班台账</a>
-          <a href="#importWorkbench">批量导入</a>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
         </nav>
 
         <section class="sidebar-status" aria-labelledby="apiStatusTitle">
           <div class="section-heading">
-            <h2 id="apiStatusTitle">连接状态</h2>
+            <h2 id="apiStatusTitle">权限边界</h2>
             <span id="statusBadge" class="status-badge idle">未连接</span>
           </div>
-          <p id="statusText" class="status-text">请先确认接口地址与角色范围。</p>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">admin.overview.view</span></p>
           <dl class="status-meta">
-            <div>
-              <dt>活跃小班</dt>
-              <dd id="blockCount">0</dd>
-            </div>
-            <div>
-              <dt>最近导入</dt>
-              <dd id="lastImport">无</dd>
-            </div>
+            <div><dt>菜单模式</dt><dd>独立模块</dd></div>
+            <div><dt>接口基址</dt><dd>8010</dd></div>
           </dl>
         </section>
       </aside>
@@ -44,12 +35,11 @@
       <section class="admin-main">
         <header class="topbar">
           <div class="topbar-copy">
-            <p class="eyebrow">接口与权限</p>
-            <h2>森林小班管理</h2>
+            <p class="eyebrow">运营后台</p>
+            <h2>模块化管理首页</h2>
           </div>
           <div class="topbar-actions">
-            <button id="connectApi" type="button">连接接口</button>
-            <button id="reloadBlocks" type="button" class="button-ghost">刷新列表</button>
+            <button id="connectApi" type="button">刷新概览</button>
           </div>
         </header>
 
@@ -74,265 +64,271 @@
           </div>
         </section>
 
-        <section id="blockWorkbench" class="workbench-grid">
-          <div class="panel table-panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">筛选与列表</p>
-                <h2>小班列表</h2>
-              </div>
-              <button id="newBlock" type="button">新建小班</button>
-            </div>
-
-            <div class="field-grid filters-grid">
-              <label class="field-span-2">
-                <span>关键词</span>
-                <input
-                  id="keyword"
-                  type="search"
-                  placeholder="搜索编号、名称、区县、乡镇、村名"
-                />
-              </label>
-              <label>
-                <span>基地类型</span>
-                <select id="baseTypeFilter">
-                  <option value="">全部</option>
-                  <option value="self_operated">自营</option>
-                  <option value="franchise">加盟</option>
-                </select>
-              </label>
-              <label>
-                <span>经营类型</span>
-                <select id="operationTypeFilter">
-                  <option value="">全部</option>
-                  <option value="timber">竹材用林</option>
-                  <option value="dual_regular">常规笋竹两用林</option>
-                  <option value="dual_high_yield">高产笋竹两用林</option>
-                  <option value="understory">林下经济</option>
-                </select>
-              </label>
-              <label>
-                <span>风险等级</span>
-                <select id="riskLevelFilter">
-                  <option value="">全部</option>
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                  <option value="critical">严重</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>编号</th>
-                    <th>名称</th>
-                    <th>区县</th>
-                    <th>乡镇</th>
-                    <th>面积(亩)</th>
-                    <th>经营类型</th>
-                    <th>风险</th>
-                  </tr>
-                </thead>
-                <tbody id="blockRows">
-                  <tr class="placeholder-row">
-                    <td colspan="7">等待加载数据</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <form id="blockForm" class="panel form-panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">新建 / 编辑</p>
-                <h2>小班详情</h2>
-              </div>
-              <button id="saveBlock" type="submit">保存</button>
-            </div>
-
-            <input id="blockId" type="hidden" />
-
-            <div class="field-grid">
-              <label>
-                <span>小班编号</span>
-                <input id="blockCode" type="text" required />
-              </label>
-              <label>
-                <span>小班名称</span>
-                <input id="blockName" type="text" required />
-              </label>
-              <label>
-                <span>区县代码</span>
-                <input id="countyCode" type="text" />
-              </label>
-              <label>
-                <span>区县名称</span>
-                <input id="countyName" type="text" />
-              </label>
-              <label>
-                <span>乡镇代码</span>
-                <input id="townCode" type="text" />
-              </label>
-              <label>
-                <span>乡镇名称</span>
-                <input id="townName" type="text" />
-              </label>
-              <label>
-                <span>村代码</span>
-                <input id="villageCode" type="text" />
-              </label>
-              <label>
-                <span>村名称</span>
-                <input id="villageName" type="text" />
-              </label>
-              <label>
-                <span>基地类型</span>
-                <select id="baseType">
-                  <option value="">未填写</option>
-                  <option value="self_operated">自营</option>
-                  <option value="franchise">加盟</option>
-                </select>
-              </label>
-              <label>
-                <span>经营类型</span>
-                <select id="operationType">
-                  <option value="">未填写</option>
-                  <option value="timber">竹材用林</option>
-                  <option value="dual_regular">常规笋竹两用林</option>
-                  <option value="dual_high_yield">高产笋竹两用林</option>
-                  <option value="understory">林下经济</option>
-                </select>
-              </label>
-              <label>
-                <span>林种</span>
-                <input id="forestType" type="text" />
-              </label>
-              <label>
-                <span>面积(亩)</span>
-                <input id="areaMu" type="number" min="0" step="0.01" />
-              </label>
-              <label>
-                <span>质量等级</span>
-                <input id="qualityGrade" type="text" />
-              </label>
-              <label>
-                <span>健康状态</span>
-                <input id="healthStatus" type="text" />
-              </label>
-              <label>
-                <span>风险等级</span>
-                <select id="riskLevel">
-                  <option value="">未填写</option>
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                  <option value="critical">严重</option>
-                </select>
-              </label>
-              <label>
-                <span>经营状态</span>
-                <input id="managementStatus" type="text" />
-              </label>
-              <label>
-                <span>权属状态</span>
-                <input id="ownershipStatus" type="text" />
-              </label>
-              <label>
-                <span>标签</span>
-                <input id="tags" type="text" placeholder="逗号分隔" />
-              </label>
-              <label class="field-span-2">
-                <span>附加属性 JSON</span>
-                <textarea id="properties" rows="5" spellcheck="false">{}</textarea>
-              </label>
-              <label class="field-span-2">
-                <span>GeoJSON 几何</span>
-                <textarea id="geometry" rows="10" spellcheck="false">null</textarea>
-              </label>
-            </div>
-            <section class="scene-link-panel" aria-labelledby="sceneLinkTitle">
-              <div class="section-heading">
-                <h3 id="sceneLinkTitle">影像关联</h3>
-                <span id="sceneLinkStatus" class="scene-link-status">请选择一个林班</span>
-              </div>
-              <div class="field-grid scene-link-grid">
-                <label>
-                  <span>Scene ID</span>
-                  <input id="sceneLinkSceneId" type="text" placeholder="例如 cog-demo-001" />
-                </label>
-                <label>
-                  <span>关联类型</span>
-                  <input id="sceneLinkRelationType" type="text" placeholder="coverage / orthophoto" value="coverage" />
-                </label>
-                <label>
-                  <span>采集日期</span>
-                  <input id="sceneLinkCapturedAt" type="date" />
-                </label>
-                <label>
-                  <span>置信度</span>
-                  <input id="sceneLinkConfidence" type="number" min="0" max="1" step="0.01" placeholder="0.00 - 1.00" />
-                </label>
-              </div>
-              <div class="scene-link-toolbar">
-                <button id="linkScene" type="button">关联影像</button>
-              </div>
-              <div id="linkedScenes" class="scene-link-list">请选择一个林班后查看关联影像。</div>
-            </section>
-          </form>
+        <section class="metric-grid" aria-label="后台概览">
+          <article class="metric-tile">
+            <span>林班空间单元</span>
+            <strong id="metricBlocks">0</strong>
+            <small>来自林班台账接口</small>
+          </article>
+          <article class="metric-tile">
+            <span>林权档案</span>
+            <strong id="metricRights">0</strong>
+            <small>来自林权档案接口</small>
+          </article>
+          <article class="metric-tile">
+            <span>业务模块</span>
+            <strong id="metricBusiness">25</strong>
+            <small>经营主体、运营管护、经营决策、产业平台</small>
+          </article>
+          <article class="metric-tile">
+            <span>角色配置</span>
+            <strong id="metricRoles">0</strong>
+            <small>来自角色权限管理接口</small>
+          </article>
+          <article class="metric-tile">
+            <span>后台账号</span>
+            <strong id="metricUsers">0</strong>
+            <small>来自用户账号管理接口</small>
+          </article>
+          <article class="metric-tile">
+            <span>发布图层</span>
+            <strong id="metricLayers">0</strong>
+            <small>来自地图图层接口</small>
+          </article>
+          <article class="metric-tile">
+            <span>部署就绪</span>
+            <strong id="metricHealth">待检查</strong>
+            <small>来自 /api/health</small>
+          </article>
+          <article class="metric-tile">
+            <span>数据底座</span>
+            <strong id="metricStorage">未读取</strong>
+            <small>JSON / PostGIS</small>
+          </article>
+          <article class="metric-tile">
+            <span>影像目录</span>
+            <strong id="metricCatalog">未读取</strong>
+            <small>遥感目录库</small>
+          </article>
+          <article class="metric-tile">
+            <span>入库批次</span>
+            <strong id="metricImports">0</strong>
+            <small>成果入库批次</small>
+          </article>
+          <article class="metric-tile">
+            <span>影像场景</span>
+            <strong id="metricScenes">0</strong>
+            <small>影像目录场景</small>
+          </article>
+          <article class="metric-tile">
+            <span>闭环待办</span>
+            <strong id="metricOperationQueue">0</strong>
+            <small>成果、影像、图层发布队列</small>
+          </article>
         </section>
 
-        <section id="importWorkbench" class="panel import-panel">
+        <section id="platformWorkQueue" class="panel table-panel" aria-label="待办工作队列">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">批量导入</p>
-              <h2>导入森林小班</h2>
+              <p class="eyebrow">闭环待办</p>
+              <h2>数据与权限工作队列</h2>
             </div>
-            <button id="submitImport" type="submit" form="importForm">上传并导入</button>
-          </div>
-
-          <form id="importForm" class="field-grid field-grid-wide">
-            <label class="field-span-2">
-              <span>导入文件</span>
-              <input id="importFile" type="file" accept=".geojson,.json,.csv,.xlsx,.zip" />
-            </label>
-            <label>
-              <span>导入策略</span>
-              <select id="importStrategy">
-                <option value="upsert">重复编号时更新</option>
-                <option value="skip">重复编号时跳过</option>
-              </select>
-            </label>
-          </form>
-
-          <div class="report-grid">
-            <div class="report-metrics">
-              <div>
-                <span>总行数</span>
-                <strong id="reportTotal">0</strong>
-              </div>
-              <div>
-                <span>有效行</span>
-                <strong id="reportValid">0</strong>
-              </div>
-              <div>
-                <span>无效行</span>
-                <strong id="reportInvalid">0</strong>
-              </div>
-              <div>
-                <span>状态</span>
-                <strong id="reportStatus">未执行</strong>
-              </div>
+            <div class="panel-actions">
+              <button id="refreshAdminWorkflowSummary" type="button" class="button-ghost">刷新总览</button>
+              <button id="refreshWorkQueue" type="button" class="button-ghost">刷新明细</button>
             </div>
-            <pre id="importReport" class="report-output">等待导入结果</pre>
           </div>
+          <div id="adminWorkflowSummary" class="workflow-summary-grid admin-workflow-grid" aria-live="polite">
+            <article class="workflow-summary-card">
+              <span>等待加载</span>
+              <strong>0</strong>
+              <small>成果入库与影像管理闭环总览</small>
+            </article>
+          </div>
+          <div class="table-wrap ledger-table-wrap ledger-table-full work-queue-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>类型</th>
+                  <th>事项</th>
+                  <th>状态</th>
+                  <th>更新时间</th>
+                  <th>入口</th>
+                </tr>
+              </thead>
+              <tbody id="workQueueRows">
+                <tr class="placeholder-row"><td colspan="5">等待加载待办事项</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="module-grid" aria-label="模块入口">
+          <a class="module-card" href="admin-deployment.html">
+            <strong>部署诊断</strong>
+            <span>检查数据库、目录、影像目录、依赖、缓存和外部服务配置。</span>
+            <small>permission: system.deployment.view</small>
+          </a>
+          <a class="module-card" href="admin-blocks.html">
+            <strong>林班空间台账</strong>
+            <span>空间边界、区划、面积、竹种、质量与风险。</span>
+            <small>permission: forest.blocks.manage</small>
+          </a>
+          <a class="module-card" href="admin-rights.html">
+            <strong>林权档案台账</strong>
+            <span>证号、权利人、合同、期限、争议与附件档案。</span>
+            <small>permission: forest.rights.manage</small>
+          </a>
+          <a class="module-card" href="admin-linkages.html">
+            <strong>图档关联管理</strong>
+            <span>把林权档案挂接到林班编号，维护图、档、证一致。</span>
+            <small>permission: forest.linkages.manage</small>
+          </a>
+          <a class="module-card" href="admin-farmers.html">
+            <strong>竹农管理</strong>
+            <span>竹农档案、联系方式、所属村镇、经营林班。</span>
+            <small>permission: business.farmers.manage</small>
+          </a>
+          <a class="module-card" href="admin-cooperatives.html">
+            <strong>合作社管理</strong>
+            <span>合作社成员、服务范围、托管林班和订单状态。</span>
+            <small>permission: business.cooperatives.manage</small>
+          </a>
+          <a class="module-card" href="admin-enterprises.html">
+            <strong>竹企管理</strong>
+            <span>企业档案、加工方向、采购批次和库存状态。</span>
+            <small>permission: business.enterprises.manage</small>
+          </a>
+          <a class="module-card" href="admin-plant-protection.html">
+            <strong>植保管理</strong>
+            <span>病虫害事件、等级、处置建议和闭环状态。</span>
+            <small>permission: business.plantProtection.manage</small>
+          </a>
+          <a class="module-card" href="admin-materials.html">
+            <strong>农资管理</strong>
+            <span>物资品类、库存、领用记录和库存预警。</span>
+            <small>permission: business.materials.manage</small>
+          </a>
+          <a class="module-card" href="admin-policies.html">
+            <strong>政策法规管理</strong>
+            <span>政策文件、申报事项、截止时间和审核状态。</span>
+            <small>permission: business.policies.manage</small>
+          </a>
+          <a class="module-card" href="admin-stewardship-agreements.html">
+            <strong>托管协议</strong>
+            <span>托管主体、服务期限、关联林班和协议状态。</span>
+            <small>permission: business.stewardshipAgreements.manage</small>
+          </a>
+          <a class="module-card" href="admin-franchise-bases.html">
+            <strong>加盟基地</strong>
+            <span>基地档案、加盟主体、服务范围和运营状态。</span>
+            <small>permission: business.franchiseBases.manage</small>
+          </a>
+          <a class="module-card" href="admin-maintenance-tasks.html">
+            <strong>管护任务</strong>
+            <span>巡护、抚育、除草、施肥等任务派发与闭环。</span>
+            <small>permission: business.maintenanceTasks.manage</small>
+          </a>
+          <a class="module-card" href="admin-work-logs.html">
+            <strong>作业记录</strong>
+            <span>人员、机械、作业面积、工时和现场凭证。</span>
+            <small>permission: business.workLogs.manage</small>
+          </a>
+          <a class="module-card" href="admin-drone-tasks.html">
+            <strong>无人机任务</strong>
+            <span>飞行任务、航线、成果关联和巡检状态。</span>
+            <small>permission: business.droneTasks.manage</small>
+          </a>
+          <a class="module-card" href="admin-equipment.html">
+            <strong>设备台账</strong>
+            <span>无人机、监控、传感器等设备资产和运维记录。</span>
+            <small>permission: business.equipment.manage</small>
+          </a>
+          <a class="module-card" href="admin-pest-warnings.html">
+            <strong>病虫害预警</strong>
+            <span>预警等级、空间范围、处置建议和闭环进度。</span>
+            <small>permission: business.pestWarnings.manage</small>
+          </a>
+          <a class="module-card" href="admin-material-services.html">
+            <strong>农资服务</strong>
+            <span>配送服务、领用记录、服务对象和库存联动。</span>
+            <small>permission: business.materialServices.manage</small>
+          </a>
+          <a class="module-card" href="admin-yield-forecasts.html">
+            <strong>产量预测</strong>
+            <span>竹材、竹笋、林下经济产量预测和模型参数。</span>
+            <small>permission: business.yieldForecasts.manage</small>
+          </a>
+          <a class="module-card" href="admin-harvest-plans.html">
+            <strong>采挖计划</strong>
+            <span>采伐、挖笋、抚育采收计划与执行排程。</span>
+            <small>permission: business.harvestPlans.manage</small>
+          </a>
+          <a class="module-card" href="admin-income-estimates.html">
+            <strong>收益测算</strong>
+            <span>经营收益、成本投入、现金流和主体分成测算。</span>
+            <small>permission: business.incomeEstimates.manage</small>
+          </a>
+          <a class="module-card" href="admin-performance-dashboards.html">
+            <strong>绩效看板</strong>
+            <span>管护绩效、经营绩效、主体绩效与指标口径。</span>
+            <small>permission: business.performanceDashboards.manage</small>
+          </a>
+          <a class="module-card" href="admin-carbon-estimates.html">
+            <strong>碳汇测算</strong>
+            <span>碳储量、碳汇增量、项目边界与核证测算。</span>
+            <small>permission: business.carbonEstimates.manage</small>
+          </a>
+          <a class="module-card" href="admin-trade-matches.html">
+            <strong>交易撮合</strong>
+            <span>竹材、竹笋、林下产品供需发布、询价报价与订单撮合。</span>
+            <small>permission: business.tradeMatches.manage</small>
+          </a>
+          <a class="module-card" href="admin-logistics-traces.html">
+            <strong>物流溯源</strong>
+            <span>采收批次、运输节点、仓储流转与质量追溯记录。</span>
+            <small>permission: business.logisticsTraces.manage</small>
+          </a>
+          <a class="module-card" href="admin-product-qrcodes.html">
+            <strong>二维码管理</strong>
+            <span>林班、批次、产品、订单二维码生成与扫码访问配置。</span>
+            <small>permission: business.productQrcodes.manage</small>
+          </a>
+          <a class="module-card" href="admin-supply-chain-finance.html">
+            <strong>供应链金融</strong>
+            <span>订单融资、库存质押、主体授信与还款风险台账。</span>
+            <small>permission: business.supplyChainFinance.manage</small>
+          </a>
+          <a class="module-card" href="admin-price-indexes.html">
+            <strong>价格指数</strong>
+            <span>竹材、竹笋、加工品价格采集、指数发布与行情监测。</span>
+            <small>permission: business.priceIndexes.manage</small>
+          </a>
+          <a class="module-card" href="admin-mobile-service-channels.html">
+            <strong>移动端服务</strong>
+            <span>林农、合作社、企业移动端功能入口、服务事项与上线状态。</span>
+            <small>permission: business.mobileServiceChannels.manage</small>
+          </a>
+          <a class="module-card" href="admin-map-layers.html">
+            <strong>地图图层发布</strong>
+            <span>图层目录、数据来源、样式、层级与发布开关。</span>
+            <small>permission: map.layers.publish</small>
+          </a>
+          <a class="module-card" href="admin-imports.html">
+            <strong>成果入库</strong>
+            <span>KMZ、OVKML、OVOBJ、GeoJSON、Excel 批量导入。</span>
+            <small>permission: imports.forestBlocks.manage</small>
+          </a>
+          <a class="module-card" href="admin-roles.html">
+            <strong>角色权限管理</strong>
+            <span>配置后台角色、菜单模块、权限码和数据范围。</span>
+            <small>permission: system.roles.manage</small>
+          </a>
         </section>
       </section>
     </main>
 
-    <script src="admin.js"></script>
+    <script src="admin-common.js"></script>
+    <script src="admin-dashboard.js"></script>
   </body>
 </html>
