@@ -97,12 +97,19 @@ def test_bclinux_install_script_installs_pinned_docker_tooling():
     script = read_text("ops/scripts/install-docker-bclinux.sh")
 
     assert "BigCloud Enterprise Linux" in script
-    assert "download.docker.com/linux/rhel/docker-ce.repo" in script
-    assert "docker-ce-29.6.2-1.el8" in script
-    assert "docker-ce-cli-29.6.2-1.el8" in script
-    assert "containerd.io-2.2.6-1.el8" in script
-    assert "docker-buildx-plugin-0.35.0-1.el8" in script
-    assert "docker-compose-plugin-5.3.1-1.el8" in script
+    assert "download.docker.com/linux/rhel/8/x86_64/stable/Packages" in script
+    assert "docker-ce-29.6.2-1.el8.x86_64.rpm" in script
+    assert "docker-ce-cli-29.6.2-1.el8.x86_64.rpm" in script
+    assert "containerd.io-2.2.6-1.el8.x86_64.rpm" in script
+    assert "docker-buildx-plugin-0.35.0-1.el8.x86_64.rpm" in script
+    assert "docker-compose-plugin-5.3.1-1.el8.x86_64.rpm" in script
+    assert "--retry-all-errors" in script
+    assert "download.docker.com/linux/rhel/gpg" in script
+    assert "060A61C51B558A7F742B77AAC52FEB6B621E9F35" in script
+    assert "--show-keys" in script
+    assert "rpm --import" in script
+    assert "rpm -Kv" in script
+    assert "--disablerepo=docker-ce-stable" in script
     assert "systemctl enable --now docker" in script
     assert "docker compose version" in script
 
