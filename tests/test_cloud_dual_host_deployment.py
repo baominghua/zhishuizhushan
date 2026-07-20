@@ -91,6 +91,8 @@ def test_disk_bootstrap_requires_explicit_empty_disk_confirmation():
     assert "/srv/smart-bamboo-dr" in script
     assert "UUID=" in script
     assert "/etc/fstab" in script
+    assert 'label="bamboo-pri"' in script
+    assert 'label="bamboo-dr"' in script
 
 
 def test_bclinux_install_script_installs_pinned_docker_tooling():

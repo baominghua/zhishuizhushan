@@ -50,10 +50,14 @@ if wipefs -n "${DEVICE}" | grep -q .; then
 fi
 
 mount_point="/srv/smart-bamboo"
-label="smart-bamboo-primary"
+label="bamboo-pri"
 if [[ "${ROLE}" == "standby" ]]; then
   mount_point="/srv/smart-bamboo-dr"
-  label="smart-bamboo-standby"
+  label="bamboo-dr"
+fi
+if (( ${#label} > 12 )); then
+  echo "ERROR: XFS label exceeds the 12-character limit: ${label}" >&2
+  exit 10
 fi
 
 echo "Creating GPT/XFS on confirmed empty disk ${DEVICE} for ${ROLE}."
@@ -69,7 +73,7 @@ mkfs.xfs -L "${label}" "${partition}"
 uuid="$(blkid -s UUID -o value "${partition}")"
 if [[ -z "${uuid}" ]]; then
   echo "ERROR: failed to read XFS UUID." >&2
-  exit 10
+  exit 11
 fi
 mkdir -p "${mount_point}"
 if ! grep -q "^UUID=${uuid}[[:space:]]" /etc/fstab; then
