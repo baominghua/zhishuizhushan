@@ -17,7 +17,7 @@ services:
       - "192.168.0.32:3306:3306"
     volumes:
       - /srv/smart-bamboo/mysql:/var/lib/mysql
-      - ./mysql/primary.cnf:/etc/mysql/conf.d/replication.cnf:ro
+      - ./ops/mysql/primary.cnf:/etc/mysql/conf.d/replication.cnf:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
@@ -27,7 +27,7 @@ services:
 
   app:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     image: smart-bamboo-app:${SMART_BAMBOO_RELEASE_TAG:?Set SMART_BAMBOO_RELEASE_TAG}
     restart: unless-stopped
@@ -97,4 +97,4 @@ services:
     ports:
       - "0.0.0.0:80:80"
     volumes:
-      - ./nginx/smart-bamboo.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ops/nginx/smart-bamboo.conf:/etc/nginx/conf.d/default.conf:ro

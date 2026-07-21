@@ -61,6 +61,25 @@ def test_standby_compose_stays_dormant_until_manual_failover():
     assert "3306:3306" not in compose
 
 
+@pytest.mark.parametrize(
+    ("compose_path", "mysql_config"),
+    [
+        ("ops/compose.primary.yml", "primary.cnf"),
+        ("ops/compose.standby.yml", "replica.cnf"),
+    ],
+)
+def test_compose_paths_resolve_from_repository_project_directory(
+    compose_path: str,
+    mysql_config: str,
+):
+    compose = read_text(compose_path)
+
+    assert "context: ." in compose
+    assert "context: .." not in compose
+    assert f"./ops/mysql/{mysql_config}:/etc/mysql/conf.d/replication.cnf:ro" in compose
+    assert "./ops/nginx/smart-bamboo.conf:/etc/nginx/conf.d/default.conf:ro" in compose
+
+
 def test_mysql_replication_configs_use_gtid_and_read_only_replica():
     primary = read_text("ops/mysql/primary.cnf")
     replica = read_text("ops/mysql/replica.cnf")
