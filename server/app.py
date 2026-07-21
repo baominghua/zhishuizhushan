@@ -22,6 +22,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+try:
+    from fastapi.routing import iter_route_contexts as fastapi_iter_route_contexts
+except ImportError:
+    fastapi_iter_route_contexts = None
 from server.modules.admin_roles import (
     effective_data_scopes_for_context,
     json_download_response,
@@ -3780,7 +3785,12 @@ CORE_API_READINESS_TARGETS: list[dict[str, str]] = [
 
 def route_methods_by_path() -> dict[str, set[str]]:
     routes: dict[str, set[str]] = {}
-    for route in app.routes:
+    route_contexts = (
+        fastapi_iter_route_contexts(app.routes)
+        if fastapi_iter_route_contexts is not None
+        else app.routes
+    )
+    for route in route_contexts:
         path = str(getattr(route, "path", "") or "")
         methods = getattr(route, "methods", None)
         if not path or not methods:

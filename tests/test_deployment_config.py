@@ -402,6 +402,26 @@ def test_health_payload_exposes_core_api_deployment_checks(app_client):
     assert "user_operation_queue" in readiness_checks["core_api_routes"]["message"]
 
 
+def test_route_inventory_uses_fastapi_effective_route_contexts(monkeypatch):
+    import server.app as app_module
+
+    class LazyRouteContext:
+        path = "/api/lazy-router-endpoint"
+        methods = {"GET", "HEAD"}
+
+    monkeypatch.setattr(app_module.app.router, "routes", [object()])
+    monkeypatch.setattr(
+        app_module,
+        "fastapi_iter_route_contexts",
+        lambda routes: [LazyRouteContext()],
+        raising=False,
+    )
+
+    assert app_module.route_methods_by_path() == {
+        "/api/lazy-router-endpoint": {"GET", "HEAD"},
+    }
+
+
 def test_deployment_report_can_be_exported_with_view_permission(app_client):
     denied = app_client.get(
         "/api/deployment/report.json",
