@@ -157,7 +157,7 @@ git commit -m "Add password hashing primitives"
 - Produces: `save_credential(record: CredentialRecord) -> None`
 - Produces: `record_failed_login(user_id: str, now: datetime) -> CredentialRecord`
 - Produces: `reset_failed_login(user_id: str) -> CredentialRecord`
-- Produces: `create_session(user_id: str, credential_version: int, request: Request) -> tuple[str, str, SessionRecord]`
+- Produces: `create_session(user_id: str, credential_version: int, now: datetime, ip_address: str, user_agent: str) -> tuple[str, str, SessionRecord]`
 - Produces: `session_for_token(raw_token: str, now: datetime) -> SessionRecord | None`
 - Produces: `revoke_session(raw_token: str) -> None` and `revoke_user_sessions(user_id: str, except_session_id: str | None = None) -> int`
 
@@ -171,8 +171,8 @@ from server.modules.auth_store import (
     new_credential,
     record_failed_login,
     save_credential,
+    create_session,
     session_for_token,
-    store_session,
 )
 
 
@@ -187,8 +187,9 @@ def test_fifth_failure_locks_for_fifteen_minutes(isolated_env):
 
 def test_session_lookup_uses_hash_and_rejects_expired_token(isolated_env):
     now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
-    raw_token, record = store_session("user-1", 1, "csrf-hash", now, "127.0.0.1", "pytest")
+    raw_token, csrf_token, record = create_session("user-1", 1, now, "127.0.0.1", "pytest")
     assert raw_token not in str(record)
+    assert csrf_token not in str(record)
     assert session_for_token(raw_token, now)["userId"] == "user-1"
     assert session_for_token(raw_token, now + timedelta(hours=25)) is None
 ```
