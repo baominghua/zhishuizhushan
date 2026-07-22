@@ -18,6 +18,14 @@ from .admin_roles import (
     safe_download_stem,
 )
 from .auth import AuthContext, request_context, split_header_list
+from .auth_store import (
+    credential_for_user,
+    iso_utc,
+    new_credential,
+    revoke_user_sessions,
+    save_credential,
+    utc_now,
+)
 from .database import (
     admin_users_json_path,
     load_json_records,
@@ -27,6 +35,7 @@ from .database import (
     use_postgis,
 )
 from .settings import get_settings
+from .passwords import hash_password, password_errors
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin-users"])
@@ -220,6 +229,12 @@ class AdminUserPatch(BaseModel):
     @classmethod
     def normalize_patch_roles(cls, values: list[str] | None) -> list[str] | None:
         return None if values is None else compact_list(values)
+
+    model_config = {"extra": "forbid"}
+
+
+class TemporaryPasswordIn(BaseModel):
+    temporaryPassword: str = Field(min_length=1)
 
     model_config = {"extra": "forbid"}
 
@@ -739,6 +754,20 @@ def save_users(users: list[dict[str, Any]]) -> None:
         upsert_users_postgis(users)
         return
     save_json_records(admin_users_json_path(), users)
+
+
+def save_user(user: dict[str, Any]) -> None:
+    if use_mysql() or use_postgis():
+        save_users([user])
+        return
+    users = load_all_users()
+    for index, existing in enumerate(users):
+        if str(existing.get("id")) == str(user.get("id")):
+            users[index] = user
+            break
+    else:
+        users.append(user)
+    save_users(users)
 
 
 def text_matches(user: dict[str, Any], q: str) -> bool:
@@ -1287,6 +1316,67 @@ def patch_user(user_id: str, payload: AdminUserPatch, context: AuthContext = Dep
         save_users(users)
         return AdminUserOut.model_validate(updated)
     raise HTTPException(status_code=404, detail="User not found")
+
+
+def set_temporary_password(user: dict[str, Any], temporary_password: str) -> None:
+    errors = password_errors(temporary_password)
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
+    now = utc_now()
+    credential = credential_for_user(str(user["id"]))
+    if credential is None:
+        credential = new_credential(str(user["id"]), hash_password(temporary_password))
+    else:
+        credential["passwordHash"] = hash_password(temporary_password)
+        credential["credentialVersion"] += 1
+    credential["passwordChangedAt"] = iso_utc(now)
+    credential["mustChangePassword"] = True
+    credential["failedLoginCount"] = 0
+    credential["lockedUntil"] = None
+    credential["updatedAt"] = iso_utc(now)
+    save_credential(credential)
+
+
+@router.post("/users/{user_id}/set-password")
+def set_user_password(
+    user_id: str,
+    payload: TemporaryPasswordIn,
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    require_permission(context, "system.users.setPassword")
+    user = find_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    set_temporary_password(user, payload.temporaryPassword)
+    revoke_user_sessions(str(user["id"]))
+    audited = append_user_audit_event(
+        user,
+        "set_password",
+        context,
+        changed_fields=[
+            "passwordHash",
+            "passwordChangedAt",
+            "mustChangePassword",
+            "failedLoginCount",
+            "lockedUntil",
+            "credentialVersion",
+            "sessions",
+        ],
+    )
+    save_user(audited)
+    return {"ok": True, "mustChangePassword": True}
+
+
+@router.post("/users/{user_id}/revoke-sessions")
+def revoke_sessions(user_id: str, context: AuthContext = Depends(request_context)) -> dict[str, Any]:
+    require_permission(context, "system.users.revokeSessions")
+    user = find_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    revoked = revoke_user_sessions(str(user["id"]))
+    audited = append_user_audit_event(user, "revoke_sessions", context, changed_fields=["sessions"])
+    save_user(audited)
+    return {"ok": True, "revoked": revoked}
 
 
 @router.delete("/users/{user_id}")

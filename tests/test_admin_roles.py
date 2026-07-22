@@ -7,6 +7,15 @@ import re
 from pathlib import Path
 
 from server.modules.auth import AuthContext
+from server.modules.auth_store import (
+    create_session,
+    credential_for_user,
+    new_credential,
+    save_credential,
+    session_for_token,
+    utc_now,
+)
+from server.modules.passwords import hash_password, verify_password
 from tests.test_forest_blocks import FakeCursor, install_fake_psycopg
 
 
@@ -744,6 +753,83 @@ def test_user_crud_endpoints_use_independent_action_permissions(app_client):
     assert restored.status_code == 200
 
 
+def test_password_reset_requires_independent_permission_and_revokes_sessions(app_client):
+    created = app_client.post(
+        "/api/admin/users",
+        json=sample_user("password_reset_user"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    user = created.json()
+    original = new_credential(user["id"], hash_password("Original-Bamboo-2026!"))
+    original["failedLoginCount"] = 5
+    original["lockedUntil"] = "2026-07-22T10:00:00+00:00"
+    save_credential(original)
+    token, _csrf, _session = create_session(user["id"], 1, utc_now(), "127.0.0.1", "pytest")
+    temporary_password = "Temporary-Bamboo-2026!"
+
+    denied = app_client.post(
+        f"/api/admin/users/{user['id']}/set-password",
+        json={"temporaryPassword": temporary_password},
+        headers={"X-RS-Roles": "system.users.update"},
+    )
+    allowed = app_client.post(
+        f"/api/admin/users/{user['id']}/set-password",
+        json={"temporaryPassword": temporary_password},
+        headers={"X-RS-Roles": "system.users.setPassword", "X-RS-User": "security_admin"},
+    )
+    credential = credential_for_user(user["id"])
+    stored_user = app_client.get(
+        f"/api/admin/users/{user['id']}", headers={"X-RS-Roles": "system.users.view"}
+    ).json()
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json() == {"ok": True, "mustChangePassword": True}
+    assert credential is not None
+    assert credential["credentialVersion"] == 2
+    assert credential["mustChangePassword"] is True
+    assert credential["failedLoginCount"] == 0
+    assert credential["lockedUntil"] is None
+    assert verify_password(credential["passwordHash"], temporary_password)
+    assert session_for_token(token, utc_now()) is None
+    audit = stored_user["properties"]["auditEvents"][-1]
+    serialized_audit = json.dumps(audit)
+    assert audit["action"] == "set_password"
+    assert audit["changedFields"] == ["passwordHash", "passwordChangedAt", "mustChangePassword", "failedLoginCount", "lockedUntil", "credentialVersion", "sessions"]
+    assert temporary_password not in serialized_audit
+    assert original["passwordHash"] not in serialized_audit
+    assert credential["passwordHash"] not in serialized_audit
+    assert token not in serialized_audit
+
+
+def test_session_revocation_requires_independent_permission(app_client):
+    created = app_client.post(
+        "/api/admin/users",
+        json=sample_user("session_revocation_user"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200
+    user = created.json()
+    first_token, _csrf, _session = create_session(user["id"], 1, utc_now(), "127.0.0.1", "pytest")
+    second_token, _csrf, _session = create_session(user["id"], 1, utc_now(), "127.0.0.1", "pytest")
+
+    denied = app_client.post(
+        f"/api/admin/users/{user['id']}/revoke-sessions",
+        headers={"X-RS-Roles": "system.users.update"},
+    )
+    allowed = app_client.post(
+        f"/api/admin/users/{user['id']}/revoke-sessions",
+        headers={"X-RS-Roles": "system.users.revokeSessions"},
+    )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json() == {"ok": True, "revoked": 2}
+    assert session_for_token(first_token, utc_now()) is None
+    assert session_for_token(second_token, utc_now()) is None
+
+
 def test_user_permission_catalog_exposes_granular_crud_actions(app_client):
     response = app_client.get(
         "/api/admin/permission-catalog",
@@ -760,6 +846,8 @@ def test_user_permission_catalog_exposes_granular_crud_actions(app_client):
         "system.users.delete",
         "system.users.restore",
         "system.users.export",
+        "system.users.setPassword",
+        "system.users.revokeSessions",
     }
     assert expected <= codes
     assert expected <= set(body["permissionImplications"]["system.users.manage"])
