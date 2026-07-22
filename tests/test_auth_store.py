@@ -90,6 +90,79 @@ def test_human_auth_storage_readiness_queries_mysql_tables_and_active_credential
     assert "admin_users" in connection.cursor_instance.statements[1]
 
 
+@pytest.mark.parametrize(
+    ("case", "active_credential_count"),
+    [
+        ("active_admin_credential", 1),
+        ("ordinary_user_credential", 0),
+        ("inactive_user", 0),
+        ("deleted_user", 0),
+        ("inactive_admin_role", 0),
+        ("deleted_admin_role", 0),
+        ("invalid_credential", 0),
+    ],
+)
+def test_human_auth_storage_readiness_requires_active_admin_role_and_valid_credential(
+    monkeypatch, case, active_credential_count
+):
+    class Cursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, statement):
+            self.statements.append(statement)
+
+        def fetchall(self):
+            return [("admin_user_credentials",), ("admin_sessions",)]
+
+        def fetchone(self):
+            return (active_credential_count,)
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return self.cursor_instance
+
+    connection = Connection()
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
+    monkeypatch.setattr(auth_store, "mysql_connect", lambda: connection)
+
+    readiness = auth_store.human_auth_storage_readiness()
+    query = connection.cursor_instance.statements[1]
+
+    assert readiness["activeAdminCredential"] is (active_credential_count == 1), case
+    for predicate in (
+        "admin_user_roles",
+        "admin_roles",
+        "admin_user.status = 'active'",
+        "admin_user.deleted_at IS NULL",
+        "admin_role.role_code = 'admin'",
+        "admin_role.status = 'active'",
+        "admin_role.deleted_at IS NULL",
+        "credential.password_hash IS NOT NULL",
+        "TRIM(credential.password_hash) <> ''",
+        "credential.password_changed_at IS NOT NULL",
+        "credential.credential_version > 0",
+        "credential.created_at IS NOT NULL",
+        "credential.updated_at IS NOT NULL",
+    ):
+        assert predicate in query
+
+
 def test_human_auth_storage_readiness_fails_closed_when_mysql_is_unreachable(monkeypatch):
     monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
 

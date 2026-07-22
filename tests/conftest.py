@@ -38,10 +38,11 @@ def reload_platform_modules():
 
 
 @pytest.fixture()
-def app_client(isolated_env):
+def app_client(isolated_env, monkeypatch):
     import server.modules.settings as settings
     import server.modules.database as database
 
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "1")
     settings.get_settings.cache_clear()
     importlib.reload(settings)
     importlib.reload(database)

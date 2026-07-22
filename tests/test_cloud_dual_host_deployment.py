@@ -1,6 +1,8 @@
 from pathlib import Path
+import re
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +10,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read_text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+COMPOSE_VARIABLE = re.compile(r"^\$\{(?P<name>[A-Z0-9_]+)(?::-(?P<default>[^}]*))?\}$")
+
+
+def compose_app_environment(path: str, environ: dict[str, str] | None = None) -> dict[str, str]:
+    compose = yaml.safe_load(read_text(path))
+    raw_environment = compose["services"]["app"]["environment"]
+    values = dict(environ or {})
+    expanded: dict[str, str] = {}
+    for key, value in raw_environment.items():
+        match = COMPOSE_VARIABLE.match(str(value))
+        if match is None:
+            expanded[key] = str(value)
+        else:
+            expanded[key] = values.get(match["name"], match["default"] or "")
+    return expanded
 
 
 def test_public_deployment_branch_excludes_secrets_and_operational_data():
@@ -252,14 +271,16 @@ def test_production_frontends_use_same_origin_and_a_read_only_dashboard_token():
 
 
 def test_primary_human_auth_configuration_keeps_http_acceptance_mode_but_locks_security_controls():
-    compose = read_text("ops/compose.primary.yml")
+    environment = compose_app_environment("ops/compose.primary.yml")
     env_generator = read_text("ops/scripts/generate-primary-env.sh")
     nginx = read_text("ops/nginx/smart-bamboo.conf")
 
-    assert 'SMART_BAMBOO_HUMAN_AUTH_ENABLED: "${SMART_BAMBOO_HUMAN_AUTH_ENABLED:-0}"' in compose
-    assert 'SMART_BAMBOO_AUTH_REQUIRE_HTTPS: "1"' in compose
-    assert 'SMART_BAMBOO_TRUST_PROXY_HEADERS: "1"' in compose
-    assert 'SMART_BAMBOO_SESSION_COOKIE_SECURE: "1"' in compose
+    assert {
+        "SMART_BAMBOO_HUMAN_AUTH_ENABLED": "0",
+        "SMART_BAMBOO_AUTH_REQUIRE_HTTPS": "1",
+        "SMART_BAMBOO_TRUST_PROXY_HEADERS": "1",
+        "SMART_BAMBOO_SESSION_COOKIE_SECURE": "1",
+    }.items() <= environment.items()
     assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED=0" in env_generator
     assert "SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1" in env_generator
     assert "SMART_BAMBOO_TRUST_PROXY_HEADERS=1" in env_generator
@@ -268,3 +289,18 @@ def test_primary_human_auth_configuration_keeps_http_acceptance_mode_but_locks_s
     assert '"roles":["viewer"]' in env_generator
     assert "proxy_set_header X-Forwarded-Proto $scheme;" in nginx
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in nginx
+
+
+@pytest.mark.parametrize(
+    "compose_path",
+    ["docker-compose.yml", "ops/compose.primary.yml", "ops/compose.standby.yml"],
+)
+def test_compose_human_auth_environment_expands_to_safe_defaults(compose_path):
+    environment = compose_app_environment(compose_path)
+
+    assert {
+        "SMART_BAMBOO_HUMAN_AUTH_ENABLED": "0",
+        "SMART_BAMBOO_AUTH_REQUIRE_HTTPS": "1",
+        "SMART_BAMBOO_TRUST_PROXY_HEADERS": "1",
+        "SMART_BAMBOO_SESSION_COOKIE_SECURE": "1",
+    }.items() <= environment.items()

@@ -328,6 +328,7 @@ def append_user_audit_event(
     *,
     before: dict[str, Any] | None = None,
     changed_fields: list[str] | None = None,
+    client_ip: str | None = None,
 ) -> dict[str, Any]:
     updated = dict(user)
     properties = dict(updated.get("properties") or {})
@@ -340,6 +341,8 @@ def append_user_audit_event(
         "changedFields": changed_fields or [],
         "after": user_snapshot(updated),
     }
+    if client_ip:
+        event["clientIp"] = client_ip
     if before is not None:
         event["before"] = user_snapshot(before)
     events.append(event)

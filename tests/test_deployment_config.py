@@ -168,6 +168,17 @@ def test_production_configuration_accepts_mysql_auth_and_restricted_cors():
     assert issues == []
 
 
+def test_runtime_human_auth_default_is_disabled_when_environment_is_missing(monkeypatch):
+    from server.modules.settings import get_settings
+
+    monkeypatch.delenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", raising=False)
+    get_settings.cache_clear()
+    try:
+        assert get_settings().human_auth_enabled is False
+    finally:
+        get_settings.cache_clear()
+
+
 def test_production_configuration_rejects_enabled_human_auth_without_https_cookie_and_proxy_controls():
     from server.modules.settings import production_configuration_issues
 

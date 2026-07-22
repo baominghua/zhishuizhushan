@@ -155,7 +155,7 @@ def get_settings() -> PlatformSettings:
         database_url=database_url,
         auth_required=env_bool("REMOTE_SENSING_AUTH_REQUIRED", False),
         cors_origins=env_list("REMOTE_SENSING_CORS_ORIGINS", ["*"]),
-        human_auth_enabled=env_bool("SMART_BAMBOO_HUMAN_AUTH_ENABLED", True),
+        human_auth_enabled=env_bool("SMART_BAMBOO_HUMAN_AUTH_ENABLED", False),
         auth_require_https=env_bool("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", deployment_mode in PRODUCTION_MODES),
         trust_proxy_headers=env_bool("SMART_BAMBOO_TRUST_PROXY_HEADERS", False),
         session_cookie_secure=env_bool("SMART_BAMBOO_SESSION_COOKIE_SECURE", deployment_mode in PRODUCTION_MODES),

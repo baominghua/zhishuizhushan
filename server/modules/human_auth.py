@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import os
 from datetime import timedelta
 from typing import Any
@@ -59,6 +60,19 @@ def _request_is_https(request: Request) -> bool:
     return request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower() == "https"
 
 
+def trusted_client_ip(request: Request) -> str:
+    if get_settings().trust_proxy_headers:
+        for value in request.headers.get("X-Forwarded-For", "").split(","):
+            candidate = value.strip()
+            if not candidate:
+                continue
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                continue
+    return request.client.host if request.client else ""
+
+
 def _https_is_required() -> bool:
     mode = os.environ.get("SMART_BAMBOO_DEPLOYMENT_MODE", "development").strip().lower()
     if mode in PRODUCTION_MODES:
@@ -77,8 +91,13 @@ def _context_for_user(user: dict[str, Any]) -> AuthContext:
     )
 
 
-def _save_user_audit(user: dict[str, Any], action: str) -> None:
-    updated = admin_users.append_user_audit_event(user, action, _context_for_user(user))
+def _save_user_audit(user: dict[str, Any], action: str, client_ip: str | None = None) -> None:
+    updated = admin_users.append_user_audit_event(
+        user,
+        action,
+        _context_for_user(user),
+        client_ip=client_ip,
+    )
     if admin_users.use_mysql() or admin_users.use_postgis():
         admin_users.save_users([updated])
         return
@@ -181,28 +200,29 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict[s
     if _https_is_required() and not _request_is_https(request):
         raise HTTPException(status_code=426, detail="HTTPS is required for password login")
 
+    client_ip = trusted_client_ip(request)
     username = admin_users.canonical_username(payload.username)
     user = admin_users.user_by_username(username)
     if not _is_active_user(user):
         if user is not None:
-            _save_user_audit(user, "login_failure")
+            _save_user_audit(user, "login_failure", client_ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
     credential = credential_for_user(user["id"])
     if credential is None:
-        _save_user_audit(user, "login_failure")
+        _save_user_audit(user, "login_failure", client_ip)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     now = utc_now()
     locked_until = parse_utc(credential["lockedUntil"])
     if locked_until is not None and locked_until > now:
-        _save_user_audit(user, "login_locked")
+        _save_user_audit(user, "login_locked", client_ip)
         raise HTTPException(status_code=423, detail="Account temporarily locked")
     if not verify_password(credential["passwordHash"], payload.password):
         updated_credential = record_failed_login(user["id"], now)
-        _save_user_audit(user, "login_failure")
+        _save_user_audit(user, "login_failure", client_ip)
         updated_locked_until = parse_utc(updated_credential["lockedUntil"])
         if updated_locked_until is not None and updated_locked_until > now:
-            _save_user_audit(user, "login_locked")
+            _save_user_audit(user, "login_locked", client_ip)
             raise HTTPException(status_code=423, detail="Account temporarily locked")
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
@@ -215,12 +235,12 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict[s
         user["id"],
         credential["credentialVersion"],
         now,
-        request.client.host if request.client else "",
+        client_ip,
         request.headers.get("User-Agent", ""),
     )
     session["expiresAt"] = _session_expiry(now, now, settings)
     save_session(session)
-    _save_user_audit(user, "login_success")
+    _save_user_audit(user, "login_success", client_ip)
     _set_session_cookie(response, raw_token, request)
     return {**_profile(user, credential), "csrfToken": csrf_token}
 
