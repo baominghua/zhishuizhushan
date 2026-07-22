@@ -44,6 +44,7 @@ from server.modules.auth import (
     role_data_scope_values as platform_role_data_scope_values,
 )
 from server.modules.auth import router as auth_router
+from server.modules.human_auth import router as human_auth_router
 from server.modules.business import (
     MAP_LAYER_PERMISSIONS,
     append_map_layer_audit_event,
@@ -277,6 +278,7 @@ except Exception as exc:
 app.include_router(admin_roles_router)
 app.include_router(admin_users_router)
 app.include_router(auth_router)
+app.include_router(human_auth_router)
 app.include_router(business_router)
 app.include_router(forest_blocks_router)
 app.include_router(forest_rights_router)

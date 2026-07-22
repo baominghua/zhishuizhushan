@@ -35,6 +35,16 @@ def env_list(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def env_positive_int(name: str, default: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return default
+
+
 def production_configuration_issues(environ: Mapping[str, str] | None = None) -> list[str]:
     values = environ if environ is not None else os.environ
     mode = str(values.get("SMART_BAMBOO_DEPLOYMENT_MODE", "development")).strip().lower()
@@ -108,6 +118,12 @@ class PlatformSettings:
     database_url: str
     auth_required: bool
     cors_origins: list[str]
+    human_auth_enabled: bool
+    auth_require_https: bool
+    trust_proxy_headers: bool
+    session_idle_seconds: int
+    session_absolute_seconds: int
+    session_cookie_name: str
 
 
 @lru_cache(maxsize=1)
@@ -122,10 +138,18 @@ def get_settings() -> PlatformSettings:
             storage_backend = "mysql"
         else:
             storage_backend = "postgis" if database_url else "json"
+    deployment_mode = os.environ.get("SMART_BAMBOO_DEPLOYMENT_MODE", "development").strip().lower()
     return PlatformSettings(
         data_dir=data_dir,
         storage_backend=storage_backend,
         database_url=database_url,
         auth_required=env_bool("REMOTE_SENSING_AUTH_REQUIRED", False),
         cors_origins=env_list("REMOTE_SENSING_CORS_ORIGINS", ["*"]),
+        human_auth_enabled=env_bool("SMART_BAMBOO_HUMAN_AUTH_ENABLED", True),
+        auth_require_https=env_bool("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", deployment_mode in PRODUCTION_MODES),
+        trust_proxy_headers=env_bool("SMART_BAMBOO_TRUST_PROXY_HEADERS", False),
+        session_idle_seconds=env_positive_int("SMART_BAMBOO_SESSION_IDLE_SECONDS", 8 * 60 * 60),
+        session_absolute_seconds=env_positive_int("SMART_BAMBOO_SESSION_ABSOLUTE_SECONDS", 24 * 60 * 60),
+        session_cookie_name=os.environ.get("SMART_BAMBOO_SESSION_COOKIE_NAME", "smart_bamboo_session").strip()
+        or "smart_bamboo_session",
     )
