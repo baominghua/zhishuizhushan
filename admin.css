@@ -897,6 +897,17 @@ button:disabled {
   border-radius: 6px;
 }
 
+.user-ledger-table th:last-child,
+.user-ledger-table td:last-child {
+  width: 224px;
+  min-width: 224px;
+}
+
+.user-row-actions {
+  min-width: 208px;
+  flex-wrap: nowrap;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -2649,6 +2660,16 @@ input[readonly] {
     min-width: 44px;
     height: 44px;
     min-height: 44px;
+  }
+
+  .user-ledger-table th:last-child,
+  .user-ledger-table td:last-child {
+    width: 260px;
+    min-width: 260px;
+  }
+
+  .user-row-actions {
+    min-width: 252px;
   }
 
   .admin-shell {

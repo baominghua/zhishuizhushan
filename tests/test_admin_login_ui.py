@@ -60,7 +60,8 @@ def test_admin_common_uses_cookie_sessions_and_csrf_for_human_mutations():
     assert 'credentials: "include"' in script
     assert 'headers.set("X-CSRF-Token", csrfToken())' in script
     assert 'api("/api/auth/logout", { method: "POST" })' in script
-    assert "smartBambooAdminTokenPersistent" not in script
+    assert "const LEGACY_TOKEN_KEYS" in script
+    assert "localStorage.removeItem(key)" in script
 
 
 def test_user_page_has_separate_password_security_actions():
@@ -78,3 +79,19 @@ def test_every_admin_fetch_explicitly_includes_cookie_credentials():
     for script_path in root.glob("admin-*.js"):
         script = script_path.read_text(encoding="utf-8")
         assert script.count('credentials: "include"') >= script.count("fetch("), script_path.name
+
+
+def test_user_ledger_security_actions_have_stable_space_and_await_revoke_failures():
+    root = project_root()
+    html = (root / "admin-users.html").read_text(encoding="utf-8")
+    script = (root / "admin-users.js").read_text(encoding="utf-8")
+    css = (root / "admin.css").read_text(encoding="utf-8")
+
+    assert 'class="user-ledger-table"' in html
+    assert "user-row-actions" in script
+    assert "await revokeUserSessions(user)" in script
+    assert ".user-ledger-table th:last-child" in css
+    assert ".user-row-actions" in css
+    mobile_css = css.split("@media (max-width: 860px)", 1)[1]
+    assert ".user-ledger-table th:last-child" in mobile_css
+    assert "min-width: 260px;" in mobile_css

@@ -282,6 +282,9 @@
       `;
     }
     return rowActionButtons({ edit: USER_UPDATE_PERMISSION, delete: USER_DELETE_PERMISSION }).replace(
+      'class="row-actions"',
+      'class="row-actions user-row-actions"',
+    ).replace(
       "</div>",
       `<button type="button" class="icon-button" data-user-security-action="set-password" data-permission="${USER_SET_PASSWORD_PERMISSION}" aria-label="设置临时密码" title="设置临时密码">${PASSWORD_ICON}</button><button type="button" class="icon-button danger" data-user-security-action="revoke-sessions" data-permission="${USER_REVOKE_SESSIONS_PERMISSION}" aria-label="撤销会话" title="撤销会话">${REVOKE_ICON}</button></div>`,
     );
@@ -1098,7 +1101,7 @@
     }
   }
 
-  function handleRowAction(event) {
+  async function handleRowAction(event) {
     const securityButton = event.target.closest("[data-user-security-action]");
     if (securityButton) {
       event.stopPropagation();
@@ -1108,7 +1111,13 @@
       if (!user) return true;
       state.activeId = user.id;
       if (securityButton.dataset.userSecurityAction === "set-password") openTemporaryPasswordDialog(user);
-      if (securityButton.dataset.userSecurityAction === "revoke-sessions") revokeUserSessions(user);
+      if (securityButton.dataset.userSecurityAction === "revoke-sessions") {
+        try {
+          await revokeUserSessions(user);
+        } catch (error) {
+          setStatus("offline", `撤销会话失败：${error.message}`);
+        }
+      }
       return true;
     }
     const userButton = event.target.closest("[data-user-action]");
@@ -1172,7 +1181,13 @@
     $("#closeUserDetail").addEventListener("click", closeUserDetail);
     $("#deleteUser").addEventListener("click", () => deleteUser(activeUser()));
     $("#setTemporaryPassword").addEventListener("click", () => openTemporaryPasswordDialog(activeUser()));
-    $("#revokeUserSessions").addEventListener("click", () => revokeUserSessions(activeUser()));
+    $("#revokeUserSessions").addEventListener("click", async () => {
+      try {
+        await revokeUserSessions(activeUser());
+      } catch (error) {
+        setStatus("offline", `撤销会话失败：${error.message}`);
+      }
+    });
     $("#temporaryPasswordForm").addEventListener("submit", submitTemporaryPassword);
     $("#cancelTemporaryPassword").addEventListener("click", closeTemporaryPasswordDialog);
     $("#exportUserAccessReceipt")?.addEventListener("click", () => exportUserAccessReceipt(activeUser()));
@@ -1209,12 +1224,16 @@
       });
     });
     $("#includeDeletedUsers").addEventListener("change", reloadUsersFromFirstPage);
-    $("#userRows").addEventListener("click", (event) => {
-      if (handleRowAction(event)) return;
-      const row = event.target.closest("tr[data-id]");
-      if (!row) return;
-      state.activeId = row.dataset.id;
-      renderDetail(activeUser());
+    $("#userRows").addEventListener("click", async (event) => {
+      try {
+        if (await handleRowAction(event)) return;
+        const row = event.target.closest("tr[data-id]");
+        if (!row) return;
+        state.activeId = row.dataset.id;
+        renderDetail(activeUser());
+      } catch (error) {
+        setStatus("offline", `账号操作失败：${error.message}`);
+      }
     });
     loadUsers();
     loadUserEvents();

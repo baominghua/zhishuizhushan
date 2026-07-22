@@ -565,7 +565,7 @@ def test_admin_pages_use_page_specific_scripts_with_shared_shell():
 def test_shared_admin_shell_loads_effective_menu_permissions_from_session_profile():
     js = _read("admin-common.js")
 
-    assert 'api("/api/auth/me"' in js
+    assert 'authApi("/api/auth/me")' in js
     assert "function refreshSession" in js
     assert "applyMenuAndPermissions(payload)" in js
     assert "function visibleMenuKeys" in js
@@ -1847,7 +1847,8 @@ def test_admin_login_uses_cookie_session_and_preserves_safe_return_path():
     assert "safeReturnPath" in js
     assert 'credentials: "include"' in common
     assert 'headers.set("X-CSRF-Token", csrfToken())' in common
-    assert "smartBambooAdminTokenPersistent" not in common
+    assert "const LEGACY_TOKEN_KEYS" in common
+    assert "clearLegacyTokenState" in common
     assert "redirectToLogin" in common
     assert "clearSessionState" in common
 
@@ -2911,7 +2912,9 @@ def test_admin_shell_defers_permissions_to_the_session_profile():
     assert "currentProfile" in js
     assert "sessionReadyPromise" in js
     assert "document.body.classList.add(\"admin-session-pending\")" in js
-    assert "path !== \"/api/auth/me\" && sessionReadyPromise" in js
+    assert "sessionReadyPromise" in js
+    assert "blockBusinessRequests" in js
+    assert "releaseBusinessRequests" in js
 
 
 def test_admin_shell_rebuilds_sidebar_navigation_from_effective_menu_modules():

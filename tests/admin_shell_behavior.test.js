@@ -5,6 +5,10 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const source = `${fs.readFileSync(path.join(process.cwd(), "admin-common.js"), "utf8")}\nglobalThis.__AdminCommon = AdminCommon;`;
+const dashboardSource = fs.readFileSync(path.join(process.cwd(), "admin-dashboard.js"), "utf8").replace(
+  /\n  initialize\(\);\n\}\)\(\);\s*$/,
+  "\n  globalThis.__AdminDashboard = { fetchDeploymentHealth };\n})();",
+);
 
 class ClassList {
   constructor() { this.values = new Set(); }
@@ -75,7 +79,7 @@ function storage(initial = {}) {
   };
 }
 
-function createHarness({ responses, href = "https://zhushan.example/admin-users.html?role=operator#ledger" }) {
+function createHarness({ responses, href = "https://zhushan.example/admin-users.html?role=operator#ledger", script = source, session = {}, local = {} }) {
   const elements = new Map();
   const documentRef = {
     elements,
@@ -91,7 +95,8 @@ function createHarness({ responses, href = "https://zhushan.example/admin-users.
   }
   const calls = [];
   const queue = [...responses];
-  const sessionStorage = storage({ smartBambooCsrfToken: "csrf-secret", smartBambooAuthProfile: "old profile" });
+  const sessionStorage = storage({ smartBambooCsrfToken: "csrf-secret", smartBambooAuthProfile: "old profile", ...session });
+  const localStorage = storage(local);
   const location = {
     href,
     origin: new URL(href).origin,
@@ -108,7 +113,7 @@ function createHarness({ responses, href = "https://zhushan.example/admin-users.
     URLSearchParams,
     document: documentRef,
     sessionStorage,
-    localStorage: storage(),
+    localStorage,
     window: { location, setTimeout(callback) { callback(); } },
     fetch(url, options = {}) {
       calls.push({ url, options });
@@ -117,8 +122,8 @@ function createHarness({ responses, href = "https://zhushan.example/admin-users.
       return response;
     },
   };
-  vm.runInNewContext(source, context, { filename: "admin-common.js" });
-  return { calls, context, documentRef, elements, location, sessionStorage };
+  vm.runInNewContext(script, context, { filename: "admin-common.js" });
+  return { calls, context, documentRef, elements, location, localStorage, sessionStorage };
 }
 
 async function settle() {
@@ -167,8 +172,12 @@ test("session refresh renders effective permissions and blocks then releases for
   assert.equal(harness.elements.get("#confirmPassword").value, "");
 });
 
-test("logout posts before clearing session state and returning to login", async () => {
-  const harness = createHarness({ responses: [jsonResponse(200, { ok: true })] });
+test("startup and successful logout remove legacy token keys after the server confirms logout", async () => {
+  const harness = createHarness({
+    responses: [jsonResponse(200, { ok: true })],
+    session: { smartBambooAdminToken: "legacy-human" },
+    local: { smartBambooAdminTokenPersistent: "legacy-service" },
+  });
   await harness.context.__AdminCommon.logout();
 
   assert.equal(harness.calls[0].url, "https://zhushan.example/api/auth/logout");
@@ -176,7 +185,32 @@ test("logout posts before clearing session state and returning to login", async 
   assert.equal(harness.calls[0].options.headers.get("X-CSRF-Token"), "csrf-secret");
   assert.equal(harness.sessionStorage.has("smartBambooCsrfToken"), false);
   assert.equal(harness.sessionStorage.has("smartBambooAuthProfile"), false);
+  assert.equal(harness.sessionStorage.has("smartBambooAdminToken"), false);
+  assert.equal(harness.localStorage.has("smartBambooAdminTokenPersistent"), false);
   assert.equal(harness.location.replacedWith, "admin-login.html?returnTo=admin-users.html%3Frole%3Doperator%23ledger");
+});
+
+test("startup clears migrated token keys before the session profile is loaded", async () => {
+  const harness = createHarness({
+    responses: [jsonResponse(200, { authenticated: false, authType: "development-header", permissions: [], menuModules: [], visibleMenuModules: [], mustChangePassword: false })],
+    session: { smartBambooAdminToken: "legacy-human" },
+    local: { smartBambooAdminTokenPersistent: "legacy-service" },
+  });
+  harness.context.__AdminCommon.initShell();
+
+  assert.equal(harness.sessionStorage.has("smartBambooAdminToken"), false);
+  assert.equal(harness.localStorage.has("smartBambooAdminTokenPersistent"), false);
+});
+
+test("failed logout keeps the browser session and lets the user retry", async () => {
+  const harness = createHarness({ responses: [jsonResponse(500, { detail: "server unavailable" })] });
+  const completed = await harness.context.__AdminCommon.logout();
+
+  assert.equal(completed, false);
+  assert.equal(harness.sessionStorage.has("smartBambooCsrfToken"), true);
+  assert.equal(harness.sessionStorage.has("smartBambooAuthProfile"), true);
+  assert.equal(harness.location.replacedWith, undefined);
+  assert.match(harness.elements.get("#statusText").textContent, /退出登录失败/);
 });
 
 test("raw admin downloads and uploads use the same session-aware fetch gate", async () => {
@@ -186,4 +220,37 @@ test("raw admin downloads and uploads use the same session-aware fetch gate", as
   assert.equal(response.ok, true);
   assert.equal(harness.calls[0].options.credentials, "include");
   assert.equal(harness.calls[0].options.headers.get("X-CSRF-Token"), "csrf-secret");
+});
+
+test("dashboard health waits for a forced password change before its business fetch starts", async () => {
+  const harness = createHarness({
+    script: `${source}\n${dashboardSource}`,
+    responses: [
+      jsonResponse(200, { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: true }),
+      jsonResponse(200, { ok: true }),
+      jsonResponse(200, { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: false }),
+      jsonResponse(200, { ok: true }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+  common.initShell();
+  await settle();
+  const healthPromise = harness.context.__AdminDashboard.fetchDeploymentHealth();
+  await settle();
+  assert.equal(harness.calls.length, 1);
+
+  harness.elements.get("#currentPassword").value = "old-password";
+  harness.elements.get("#newPassword").value = "New-password-1";
+  harness.elements.get("#confirmPassword").value = "New-password-1";
+  await harness.elements.get("#forcedPasswordChangeForm").listeners.get("submit")({ preventDefault() {} });
+  const health = await healthPromise;
+
+  assert.deepEqual(harness.calls.map((call) => call.url), [
+    "https://zhushan.example/api/auth/me",
+    "https://zhushan.example/api/auth/change-password",
+    "https://zhushan.example/api/auth/me",
+    "https://zhushan.example/api/health",
+  ]);
+  assert.equal(health.ok, true);
+  assert.equal(health.httpStatus, 200);
 });

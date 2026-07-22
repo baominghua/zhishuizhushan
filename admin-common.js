@@ -7,6 +7,9 @@ const AdminCommon = (() => {
   let currentAllowedPermissions = null;
   let currentProfile = null;
   let sessionReadyPromise = null;
+  let resolveSessionGate = null;
+  let sessionGateBlocked = false;
+  const LEGACY_TOKEN_KEYS = ["smartBambooAdminToken", "smartBambooAdminTokenPersistent"];
 
   const LABELS = {
     baseType: {
@@ -222,7 +225,34 @@ const AdminCommon = (() => {
   function clearSessionState() {
     sessionStorage.removeItem(CSRF_TOKEN_KEY);
     sessionStorage.removeItem(AUTH_PROFILE_KEY);
+    LEGACY_TOKEN_KEYS.forEach((key) => {
+      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
+    });
     currentProfile = null;
+  }
+
+  function clearLegacyTokenState() {
+    LEGACY_TOKEN_KEYS.forEach((key) => {
+      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
+    });
+  }
+
+  function blockBusinessRequests() {
+    if (sessionGateBlocked) return;
+    sessionGateBlocked = true;
+    sessionReadyPromise = new Promise((resolve) => {
+      resolveSessionGate = resolve;
+    });
+  }
+
+  function releaseBusinessRequests() {
+    if (!sessionGateBlocked) return;
+    sessionGateBlocked = false;
+    const resolve = resolveSessionGate;
+    resolveSessionGate = null;
+    resolve?.();
   }
 
   function redirectToLogin() {
@@ -257,7 +287,7 @@ const AdminCommon = (() => {
     const requestOptions = { credentials: "include", ...options };
     const skipSessionReady = requestOptions.skipSessionReady;
     delete requestOptions.skipSessionReady;
-    if (!skipSessionReady && path !== "/api/auth/me" && sessionReadyPromise) await sessionReadyPromise;
+    if (!skipSessionReady && !["/api/auth/me", "/api/auth/logout"].includes(path) && sessionReadyPromise) await sessionReadyPromise;
     const method = String(requestOptions.method || "GET").toUpperCase();
     const headers = buildHeaders(requestOptions.headers, method);
     if (requestOptions.body && !(requestOptions.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -265,6 +295,10 @@ const AdminCommon = (() => {
     }
     requestOptions.headers = headers;
     return parseResponse(await fetch(`${apiBase()}${path}`, requestOptions));
+  }
+
+  function authApi(path, options = {}) {
+    return api(path, { ...options, skipSessionReady: true });
   }
 
   async function fetchWithSession(path, options = {}) {
@@ -592,13 +626,18 @@ const AdminCommon = (() => {
 
   async function refreshSession() {
     try {
-      const payload = await api("/api/auth/me", { skipSessionReady: true });
+      const payload = await authApi("/api/auth/me");
       cacheProfile(payload);
       applyMenuAndPermissions(payload);
       renderEffectivePermissionStatus(payload);
       ensureSessionControl();
-      if (payload.mustChangePassword) showForcedPasswordChange();
-      else hideForcedPasswordChange();
+      if (payload.mustChangePassword) {
+        blockBusinessRequests();
+        showForcedPasswordChange();
+      } else {
+        hideForcedPasswordChange();
+        releaseBusinessRequests();
+      }
       return payload;
     } catch (error) {
       throw error;
@@ -661,7 +700,7 @@ const AdminCommon = (() => {
       if (next.value !== confirm.value) throw new Error("两次输入的新密码不一致。");
       if (submit) submit.disabled = true;
       if (status) status.textContent = "正在更新密码...";
-      await api("/api/auth/change-password", {
+      await authApi("/api/auth/change-password", {
         method: "POST",
         body: JSON.stringify({ currentPassword: current.value, newPassword: next.value }),
       });
@@ -851,6 +890,7 @@ const AdminCommon = (() => {
   }
 
   function initShell() {
+    clearLegacyTokenState();
     groupConnectionContextFields();
     $("#apiBase")?.setAttribute("value", localStorage.getItem("smartBambooApiBase") || DEFAULT_API_BASE);
     $("#apiBase")?.addEventListener("change", (event) => {
@@ -861,8 +901,8 @@ const AdminCommon = (() => {
     groupStaticNavigation();
     setActiveNav();
     document.body.classList.add("admin-session-pending");
-    sessionReadyPromise = refreshSession();
-    sessionReadyPromise.catch(() => {});
+    blockBusinessRequests();
+    refreshSession().catch(() => {});
     return sessionReadyPromise;
   }
 
@@ -880,9 +920,17 @@ const AdminCommon = (() => {
   async function logout() {
     try {
       await api("/api/auth/logout", { method: "POST" });
-    } finally {
       clearSessionState();
       redirectToLogin();
+      return true;
+    } catch (error) {
+      if (/^401\b/.test(String(error.message || ""))) {
+        clearSessionState();
+        redirectToLogin();
+        return true;
+      }
+      setStatus("offline", `退出登录失败：${error.message || "请检查网络后重试。"}`);
+      return false;
     }
   }
 
