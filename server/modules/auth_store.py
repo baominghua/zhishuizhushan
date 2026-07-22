@@ -88,6 +88,33 @@ def token_hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+ACTIVE_ADMIN_CREDENTIAL_COUNT_SQL = (
+    "SELECT COUNT(*) FROM admin_user_credentials credential "
+    "INNER JOIN admin_users admin_user ON admin_user.id = credential.admin_user_id "
+    "INNER JOIN admin_user_roles admin_user_role "
+    "ON admin_user_role.admin_user_id = admin_user.id "
+    "INNER JOIN admin_roles admin_role "
+    "ON admin_role.id = admin_user_role.admin_role_id "
+    "WHERE admin_user.deleted_at IS NULL "
+    "AND admin_user.status = 'active' "
+    "AND admin_role.deleted_at IS NULL "
+    "AND admin_role.status = 'active' "
+    "AND admin_role.role_code = 'admin' "
+    "AND credential.password_hash IS NOT NULL "
+    "AND TRIM(credential.password_hash) <> '' "
+    "AND credential.password_changed_at IS NOT NULL "
+    "AND credential.credential_version > 0 "
+    "AND credential.created_at IS NOT NULL "
+    "AND credential.updated_at IS NOT NULL"
+)
+
+
+def active_admin_credential_count(cursor: Any) -> int:
+    cursor.execute(ACTIVE_ADMIN_CREDENTIAL_COUNT_SQL)
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
 def human_auth_storage_readiness() -> dict[str, bool | str]:
     status: dict[str, bool | str] = {
         "backend": "mysql" if use_mysql() else "json",
@@ -112,27 +139,7 @@ def human_auth_storage_readiness() -> dict[str, bool | str]:
                 status["credentialTable"] = "admin_user_credentials" in tables
                 status["sessionTable"] = "admin_sessions" in tables
                 if status["credentialTable"] and status["sessionTable"]:
-                    cur.execute(
-                        "SELECT COUNT(*) FROM admin_user_credentials credential "
-                        "INNER JOIN admin_users admin_user ON admin_user.id = credential.admin_user_id "
-                        "INNER JOIN admin_user_roles admin_user_role "
-                        "ON admin_user_role.admin_user_id = admin_user.id "
-                        "INNER JOIN admin_roles admin_role "
-                        "ON admin_role.id = admin_user_role.admin_role_id "
-                        "WHERE admin_user.deleted_at IS NULL "
-                        "AND admin_user.status = 'active' "
-                        "AND admin_role.deleted_at IS NULL "
-                        "AND admin_role.status = 'active' "
-                        "AND admin_role.role_code = 'admin' "
-                        "AND credential.password_hash IS NOT NULL "
-                        "AND TRIM(credential.password_hash) <> '' "
-                        "AND credential.password_changed_at IS NOT NULL "
-                        "AND credential.credential_version > 0 "
-                        "AND credential.created_at IS NOT NULL "
-                        "AND credential.updated_at IS NOT NULL"
-                    )
-                    row = cur.fetchone()
-                    status["activeAdminCredential"] = bool(row and int(row[0]) > 0)
+                    status["activeAdminCredential"] = active_admin_credential_count(cur) > 0
     except Exception:
         return status
     return status

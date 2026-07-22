@@ -62,14 +62,11 @@ def _request_is_https(request: Request) -> bool:
 
 def trusted_client_ip(request: Request) -> str:
     if get_settings().trust_proxy_headers:
-        for value in request.headers.get("X-Forwarded-For", "").split(","):
-            candidate = value.strip()
-            if not candidate:
-                continue
-            try:
-                return str(ipaddress.ip_address(candidate))
-            except ValueError:
-                continue
+        candidate = request.headers.get("X-Real-IP", "").strip()
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            pass
     return request.client.host if request.client else ""
 
 

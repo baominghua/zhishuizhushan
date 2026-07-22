@@ -104,6 +104,24 @@ def test_production_rejects_http_login_when_https_override_is_disabled(password_
     assert response.json()["detail"] == "HTTPS is required for password login"
 
 
+def test_root_direct_http_rejects_forged_forwarded_https_header(password_user_client, monkeypatch):
+    client, _user = password_user_client
+    monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "0")
+    human_auth.get_settings.cache_clear()
+    try:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "field_worker", "password": "Bamboo-2026!"},
+            headers={"X-Forwarded-Proto": "https"},
+        )
+    finally:
+        human_auth.get_settings.cache_clear()
+
+    assert response.status_code == 426
+    assert response.json()["detail"] == "HTTPS is required for password login"
+
+
 def test_production_trusted_proxy_https_sets_a_secure_cookie(password_user_client, monkeypatch):
     client, _user = password_user_client
     monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
@@ -123,9 +141,7 @@ def test_production_trusted_proxy_https_sets_a_secure_cookie(password_user_clien
     assert "Secure" in response.headers["set-cookie"]
 
 
-def test_login_uses_the_first_valid_forwarded_client_ip_for_session_and_audit(password_user_client, monkeypatch):
-    from server.modules import human_auth
-
+def test_login_uses_trusted_real_ip_and_ignores_hostile_forwarded_for(password_user_client, monkeypatch):
     client, user = password_user_client
     monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "1")
     human_auth.get_settings.cache_clear()
@@ -133,7 +149,10 @@ def test_login_uses_the_first_valid_forwarded_client_ip_for_session_and_audit(pa
         response = client.post(
             "/api/auth/login",
             json={"username": "field_worker", "password": "Bamboo-2026!"},
-            headers={"X-Forwarded-For": "not-an-ip, , 198.51.100.24, 203.0.113.9"},
+            headers={
+                "X-Real-IP": "198.51.100.24",
+                "X-Forwarded-For": "203.0.113.9, 192.0.2.99",
+            },
         )
     finally:
         human_auth.get_settings.cache_clear()
@@ -149,9 +168,43 @@ def test_login_uses_the_first_valid_forwarded_client_ip_for_session_and_audit(pa
     assert stored["properties"]["auditEvents"][-1]["clientIp"] == "198.51.100.24"
 
 
-def test_login_ignores_forwarded_client_ip_when_proxy_headers_are_untrusted(password_user_client, monkeypatch):
-    from server.modules import human_auth
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {
+            "X-Real-IP": "not-an-ip, 198.51.100.24",
+            "X-Forwarded-For": "198.51.100.24",
+        },
+        {"X-Forwarded-For": "198.51.100.24"},
+    ],
+)
+def test_login_falls_back_to_connection_ip_without_valid_real_ip(
+    password_user_client, monkeypatch, headers
+):
+    client, user = password_user_client
+    monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "1")
+    human_auth.get_settings.cache_clear()
+    try:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "field_worker", "password": "Bamboo-2026!"},
+            headers=headers,
+        )
+    finally:
+        human_auth.get_settings.cache_clear()
 
+    raw_token = client.cookies.get("smart_bamboo_session")
+    session = session_for_token(raw_token, utc_now())
+    stored = admin_users.find_user(user["id"])
+
+    assert response.status_code == 200
+    assert session is not None
+    assert session["ipAddress"] == "testclient"
+    assert stored is not None
+    assert stored["properties"]["auditEvents"][-1]["clientIp"] == "testclient"
+
+
+def test_login_ignores_forwarded_client_ip_when_proxy_headers_are_untrusted(password_user_client, monkeypatch):
     client, user = password_user_client
     monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "0")
     human_auth.get_settings.cache_clear()
@@ -159,7 +212,10 @@ def test_login_ignores_forwarded_client_ip_when_proxy_headers_are_untrusted(pass
         response = client.post(
             "/api/auth/login",
             json={"username": "field_worker", "password": "Bamboo-2026!"},
-            headers={"X-Forwarded-For": "198.51.100.24"},
+            headers={
+                "X-Real-IP": "198.51.100.24",
+                "X-Forwarded-For": "198.51.100.24",
+            },
         )
     finally:
         human_auth.get_settings.cache_clear()

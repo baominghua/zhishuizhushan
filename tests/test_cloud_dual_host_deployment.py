@@ -29,6 +29,10 @@ def compose_app_environment(path: str, environ: dict[str, str] | None = None) ->
     return expanded
 
 
+def compose_document(path: str) -> dict:
+    return yaml.safe_load(read_text(path))
+
+
 def test_public_deployment_branch_excludes_secrets_and_operational_data():
     gitignore = read_text(".gitignore")
     dockerignore = read_text(".dockerignore")
@@ -292,15 +296,29 @@ def test_primary_human_auth_configuration_keeps_http_acceptance_mode_but_locks_s
 
 
 @pytest.mark.parametrize(
-    "compose_path",
-    ["docker-compose.yml", "ops/compose.primary.yml", "ops/compose.standby.yml"],
+    ("compose_path", "trusted_proxy_headers"),
+    [
+        ("docker-compose.yml", "0"),
+        ("ops/compose.primary.yml", "1"),
+        ("ops/compose.standby.yml", "1"),
+    ],
 )
-def test_compose_human_auth_environment_expands_to_safe_defaults(compose_path):
+def test_compose_human_auth_defaults_follow_proxy_topology(compose_path, trusted_proxy_headers):
     environment = compose_app_environment(compose_path)
 
     assert {
         "SMART_BAMBOO_HUMAN_AUTH_ENABLED": "0",
         "SMART_BAMBOO_AUTH_REQUIRE_HTTPS": "1",
-        "SMART_BAMBOO_TRUST_PROXY_HEADERS": "1",
+        "SMART_BAMBOO_TRUST_PROXY_HEADERS": trusted_proxy_headers,
         "SMART_BAMBOO_SESSION_COOKIE_SECURE": "1",
     }.items() <= environment.items()
+
+    compose = compose_document(compose_path)
+    app_ports = compose["services"]["app"].get("ports", [])
+    if trusted_proxy_headers == "1":
+        assert "nginx" in compose["services"]
+        assert app_ports
+        assert all(str(port).startswith("127.0.0.1:") for port in app_ports)
+    else:
+        assert "nginx" not in compose["services"]
+        assert app_ports == ["${SMART_BAMBOO_APP_PORT:-8010}:8010"]

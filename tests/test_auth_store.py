@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import sqlite3
 import threading
 
 import pytest
@@ -90,77 +91,100 @@ def test_human_auth_storage_readiness_queries_mysql_tables_and_active_credential
     assert "admin_users" in connection.cursor_instance.statements[1]
 
 
+def _active_admin_credential_count(
+    *,
+    user_status: str = "active",
+    user_deleted_at: str | None = None,
+    role_code: str = "admin",
+    role_status: str = "active",
+    role_deleted_at: str | None = None,
+    has_role: bool = True,
+    has_credential: bool = True,
+    password_hash: str | None = "$argon2id$valid",
+    password_changed_at: str | None = "2026-07-22T00:00:00+00:00",
+    credential_version: int = 1,
+    credential_created_at: str | None = "2026-07-22T00:00:00+00:00",
+    credential_updated_at: str | None = "2026-07-22T00:00:00+00:00",
+) -> int:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE admin_users (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            deleted_at TEXT
+        );
+        CREATE TABLE admin_roles (
+            id TEXT PRIMARY KEY,
+            role_code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            deleted_at TEXT
+        );
+        CREATE TABLE admin_user_roles (
+            admin_user_id TEXT NOT NULL,
+            admin_role_id TEXT NOT NULL
+        );
+        CREATE TABLE admin_user_credentials (
+            admin_user_id TEXT NOT NULL,
+            password_hash TEXT,
+            password_changed_at TEXT,
+            credential_version INTEGER,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO admin_users VALUES (?, ?, ?)",
+        ("user-1", user_status, user_deleted_at),
+    )
+    connection.execute(
+        "INSERT INTO admin_roles VALUES (?, ?, ?, ?)",
+        ("role-1", role_code, role_status, role_deleted_at),
+    )
+    if has_role:
+        connection.execute(
+            "INSERT INTO admin_user_roles VALUES (?, ?)",
+            ("user-1", "role-1"),
+        )
+    if has_credential:
+        connection.execute(
+            "INSERT INTO admin_user_credentials VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "user-1",
+                password_hash,
+                password_changed_at,
+                credential_version,
+                credential_created_at,
+                credential_updated_at,
+            ),
+        )
+    try:
+        return auth_store.active_admin_credential_count(connection.cursor())
+    finally:
+        connection.close()
+
+
 @pytest.mark.parametrize(
-    ("case", "active_credential_count"),
+    ("case", "kwargs", "expected"),
     [
-        ("active_admin_credential", 1),
-        ("ordinary_user_credential", 0),
-        ("inactive_user", 0),
-        ("deleted_user", 0),
-        ("inactive_admin_role", 0),
-        ("deleted_admin_role", 0),
-        ("invalid_credential", 0),
+        ("ordinary_user_credential", {"role_code": "operator"}, 0),
+        ("inactive_user", {"user_status": "inactive"}, 0),
+        ("deleted_user", {"user_deleted_at": "2026-07-22T00:00:00+00:00"}, 0),
+        ("inactive_admin_role", {"role_status": "inactive"}, 0),
+        ("deleted_admin_role", {"role_deleted_at": "2026-07-22T00:00:00+00:00"}, 0),
+        ("no_role", {"has_role": False}, 0),
+        ("no_credential", {"has_credential": False}, 0),
+        ("blank_password_hash", {"password_hash": "  "}, 0),
+        ("missing_password_change", {"password_changed_at": None}, 0),
+        ("zero_credential_version", {"credential_version": 0}, 0),
+        ("missing_credential_created_at", {"credential_created_at": None}, 0),
+        ("missing_credential_updated_at", {"credential_updated_at": None}, 0),
+        ("active_admin_credential", {}, 1),
     ],
 )
-def test_human_auth_storage_readiness_requires_active_admin_role_and_valid_credential(
-    monkeypatch, case, active_credential_count
-):
-    class Cursor:
-        def __init__(self):
-            self.statements = []
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def execute(self, statement):
-            self.statements.append(statement)
-
-        def fetchall(self):
-            return [("admin_user_credentials",), ("admin_sessions",)]
-
-        def fetchone(self):
-            return (active_credential_count,)
-
-    class Connection:
-        def __init__(self):
-            self.cursor_instance = Cursor()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def cursor(self):
-            return self.cursor_instance
-
-    connection = Connection()
-    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
-    monkeypatch.setattr(auth_store, "mysql_connect", lambda: connection)
-
-    readiness = auth_store.human_auth_storage_readiness()
-    query = connection.cursor_instance.statements[1]
-
-    assert readiness["activeAdminCredential"] is (active_credential_count == 1), case
-    for predicate in (
-        "admin_user_roles",
-        "admin_roles",
-        "admin_user.status = 'active'",
-        "admin_user.deleted_at IS NULL",
-        "admin_role.role_code = 'admin'",
-        "admin_role.status = 'active'",
-        "admin_role.deleted_at IS NULL",
-        "credential.password_hash IS NOT NULL",
-        "TRIM(credential.password_hash) <> ''",
-        "credential.password_changed_at IS NOT NULL",
-        "credential.credential_version > 0",
-        "credential.created_at IS NOT NULL",
-        "credential.updated_at IS NOT NULL",
-    ):
-        assert predicate in query
+def test_active_admin_credential_query_enforces_real_relational_constraints(case, kwargs, expected):
+    assert _active_admin_credential_count(**kwargs) == expected, case
 
 
 def test_human_auth_storage_readiness_fails_closed_when_mysql_is_unreachable(monkeypatch):
