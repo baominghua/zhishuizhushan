@@ -286,6 +286,8 @@ test("uses a fallback bearer only for its diagnostic request without persisting 
 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].options.headers, undefined);
+  assert.equal(calls[1].url, "/api/auth/me");
+  assert.equal(calls.every((call) => !/deployment-token|[?&]token=/i.test(call.url)), true);
   assert.deepEqual(Object.keys(calls[1].options.headers), ["Authorization"]);
   assert.equal(calls[1].options.headers.Authorization, "Bearer deployment-token");
   assert.equal(token.value, "");
