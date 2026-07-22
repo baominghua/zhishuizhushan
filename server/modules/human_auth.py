@@ -61,10 +61,9 @@ def _request_is_https(request: Request) -> bool:
 
 def _https_is_required() -> bool:
     mode = os.environ.get("SMART_BAMBOO_DEPLOYMENT_MODE", "development").strip().lower()
-    configured = os.environ.get("SMART_BAMBOO_AUTH_REQUIRE_HTTPS")
-    if configured is not None:
-        return configured.strip().lower() in {"1", "true", "yes", "on"}
-    return mode in PRODUCTION_MODES
+    if mode in PRODUCTION_MODES:
+        return True
+    return get_settings().auth_require_https
 
 
 def _context_for_user(user: dict[str, Any]) -> AuthContext:
@@ -181,7 +180,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict[s
     if _https_is_required() and not _request_is_https(request):
         raise HTTPException(status_code=426, detail="HTTPS is required for password login")
 
-    username = payload.username.strip()
+    username = admin_users.canonical_username(payload.username)
     user = admin_users.user_by_username(username)
     if not _is_active_user(user):
         if user is not None:

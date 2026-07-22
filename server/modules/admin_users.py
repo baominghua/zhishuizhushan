@@ -179,6 +179,10 @@ def compact_list(values: list[str] | None) -> list[str]:
     return result
 
 
+def canonical_username(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
 class AdminUserBase(BaseModel):
     username: str = Field(min_length=1)
     displayName: str = Field(min_length=1)
@@ -186,6 +190,14 @@ class AdminUserBase(BaseModel):
     roles: list[str] = Field(default_factory=list)
     dataScopes: dict[str, Any] = Field(default_factory=dict)
     properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("username", mode="after")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = canonical_username(value)
+        if not normalized:
+            raise ValueError("username must not be blank")
+        return normalized
 
     @field_validator("roles", mode="after")
     @classmethod
@@ -400,6 +412,7 @@ def normalize_user(payload: dict[str, Any]) -> dict[str, Any]:
     user.setdefault("createdAt", timestamp)
     user["updatedAt"] = timestamp
     user.setdefault("deletedAt", None)
+    user["username"] = canonical_username(user.get("username"))
     user["roles"] = compact_list(user.get("roles"))
     user.setdefault("status", "active")
     user.setdefault("dataScopes", {})
@@ -422,8 +435,8 @@ def postgis_where(
         clauses.append("id = %s")
         params.append(user_id)
     if username:
-        clauses.append("username = %s")
-        params.append(username)
+        clauses.append("LOWER(username) = %s")
+        params.append(canonical_username(username))
     if filters:
         if filters.status:
             clauses.append("status = %s")
@@ -575,8 +588,8 @@ def mysql_where(
         clauses.append("au.id = %s")
         params.append(user_id)
     if username:
-        clauses.append("au.username = %s")
-        params.append(username)
+        clauses.append("LOWER(au.username) = %s")
+        params.append(canonical_username(username))
     if filters:
         if filters.status:
             clauses.append("au.status = %s")
@@ -763,14 +776,15 @@ def find_user(user_id: str) -> dict[str, Any] | None:
 
 
 def user_by_username(username: str) -> dict[str, Any] | None:
-    if not username:
+    normalized = canonical_username(username)
+    if not normalized:
         return None
     if use_mysql():
-        return first_user_mysql(username=username)
+        return first_user_mysql(username=normalized)
     if use_postgis():
-        return first_user_postgis(username=username)
+        return first_user_postgis(username=normalized)
     for user in load_users():
-        if str(user.get("username") or "") == username:
+        if canonical_username(user.get("username")) == normalized:
             return user
     return None
 

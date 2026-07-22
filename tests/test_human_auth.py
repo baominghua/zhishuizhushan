@@ -5,11 +5,13 @@ from datetime import timedelta
 import pytest
 
 from server.modules import admin_users
+from server.modules import human_auth
 from server.modules.auth_store import (
     create_session,
     credential_for_user,
     iso_utc,
     new_credential,
+    record_failed_login,
     save_credential,
     save_session,
     session_for_token,
@@ -62,6 +64,19 @@ def test_login_returns_profile_and_sets_http_only_cookie(password_user_client):
     assert "SameSite=lax" in cookie
 
 
+def test_login_normalizes_whitespace_and_casefolded_username(password_user_client):
+    client, _user = password_user_client
+
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "  FIELD_WORKER  ", "password": "Bamboo-2026!"},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"] == "field_worker"
+
+
 def test_login_rejects_http_in_production(password_user_client, monkeypatch):
     client, _user = password_user_client
     monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
@@ -73,6 +88,39 @@ def test_login_rejects_http_in_production(password_user_client, monkeypatch):
 
     assert response.status_code == 426
     assert response.json()["detail"] == "HTTPS is required for password login"
+
+
+def test_production_rejects_http_login_when_https_override_is_disabled(password_user_client, monkeypatch):
+    client, _user = password_user_client
+    monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", "0")
+
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "field_worker", "password": "Bamboo-2026!"},
+    )
+
+    assert response.status_code == 426
+    assert response.json()["detail"] == "HTTPS is required for password login"
+
+
+def test_production_trusted_proxy_https_sets_a_secure_cookie(password_user_client, monkeypatch):
+    client, _user = password_user_client
+    monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", "0")
+    monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "1")
+    human_auth.get_settings.cache_clear()
+    try:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "field_worker", "password": "Bamboo-2026!"},
+            headers={"X-Forwarded-Proto": "https"},
+        )
+    finally:
+        human_auth.get_settings.cache_clear()
+
+    assert response.status_code == 200
+    assert "Secure" in response.headers["set-cookie"]
 
 
 def test_five_bad_passwords_lock_account(password_user_client):
@@ -88,6 +136,19 @@ def test_five_bad_passwords_lock_account(password_user_client):
 
     assert response.status_code == 423
     assert response.json()["detail"] == "Account temporarily locked"
+
+
+def test_successful_login_resets_previous_failed_login_count(password_user_client):
+    client, user = password_user_client
+    record_failed_login(user["id"], utc_now())
+
+    response = login(client)
+    credential = credential_for_user(user["id"])
+
+    assert response.status_code == 200
+    assert credential is not None
+    assert credential["failedLoginCount"] == 0
+    assert credential["lockedUntil"] is None
 
 
 def test_session_returns_current_human_profile(password_user_client):
@@ -182,3 +243,28 @@ def test_authentication_audits_never_record_credentials_or_session_secrets(passw
     assert login_response.json()["csrfToken"] not in serialized_events
     assert raw_token not in serialized_events
     assert credential_for_user(user["id"])["passwordHash"] not in serialized_events
+
+
+def test_password_change_audit_never_records_credentials_or_session_secrets(password_user_client):
+    client, user = password_user_client
+    login_response = login(client)
+    raw_token = client.cookies.get("smart_bamboo_session")
+    previous_hash = credential_for_user(user["id"])["passwordHash"]
+    payload = {"currentPassword": "Bamboo-2026!", "newPassword": "New-Bamboo-2026!"}
+
+    response = client.post(
+        "/api/auth/change-password", json=payload, headers=csrf_headers(login_response)
+    )
+    stored = admin_users.find_user(user["id"])
+    current_hash = credential_for_user(user["id"])["passwordHash"]
+
+    assert response.status_code == 200
+    assert stored is not None
+    serialized_events = str(stored["properties"]["auditEvents"])
+    assert stored["properties"]["auditEvents"][-1]["action"] == "password_change"
+    assert payload["currentPassword"] not in serialized_events
+    assert payload["newPassword"] not in serialized_events
+    assert previous_hash not in serialized_events
+    assert current_hash not in serialized_events
+    assert raw_token not in serialized_events
+    assert login_response.json()["csrfToken"] not in serialized_events

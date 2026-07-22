@@ -2644,7 +2644,8 @@ def test_postgis_create_admin_user_uses_database_storage(
     assert created.username == "user_pg_create"
     assert connect_calls == ["postgresql://smart-bamboo", "postgresql://smart-bamboo"]
     assert "FROM admin_users" in duplicate_cursor.executed[0][0]
-    assert "username = %s" in duplicate_cursor.executed[0][0]
+    assert "LOWER(username) = %s" in duplicate_cursor.executed[0][0]
+    assert duplicate_cursor.executed[0][1][0] == "user_pg_create"
     assert "INSERT INTO admin_users" in insert_cursor.executed[0][0]
     assert insert_cursor.executed[0][1][1] == "user_pg_create"
 

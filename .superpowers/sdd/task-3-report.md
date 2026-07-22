@@ -83,3 +83,58 @@ Result:
 
 - The JSON persistence path and MySQL query behavior are covered by the existing focused persistence tests, but no live MySQL server is available for end-to-end API integration in this environment.
 - The full repository suite was not run; the focused authentication, password, session-store, legacy bearer-auth, and deployment-config regression set passed.
+
+## Review Repair Evidence
+
+### RED
+
+Command:
+
+```powershell
+D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python.exe -m pytest tests/test_human_auth.py -q -p no:cacheprovider --basetemp=D:\Users\MECHREUO\Documents\武夷福森报销助手\.tmp\task-3-review-red-final
+```
+
+Result before the repair:
+
+```text
+.F.F.........                                                            [100%]
+2 failed, 11 passed in 10.28s
+```
+
+The casefolded login returned `401` instead of `200`, and production HTTP login with `SMART_BAMBOO_AUTH_REQUIRE_HTTPS=0` returned `200` instead of `426`. The trusted-proxy Secure-cookie test plus the new successful-login reset and password-change audit secrecy tests already passed, confirming those existing paths while documenting their contracts.
+
+### GREEN
+
+Targeted command:
+
+```powershell
+D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python.exe -m pytest tests/test_human_auth.py -q -p no:cacheprovider --basetemp=D:\Users\MECHREUO\Documents\武夷福森报销助手\.tmp\task-3-review-green
+```
+
+Result:
+
+```text
+.............                                                            [100%]
+13 passed in 13.15s
+```
+
+Focused regression command:
+
+```powershell
+D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python.exe -m pytest tests/test_human_auth.py tests/test_passwords.py tests/test_auth_store.py tests/test_auth.py tests/test_deployment_config.py tests/test_admin_roles.py -q -p no:cacheprovider --basetemp=D:\Users\MECHREUO\Documents\武夷福森报销助手\.tmp\task-3-review-regression-rerun
+```
+
+Result:
+
+```text
+........................................................................ [ 54%]
+.............................................................            [100%]
+133 passed in 76.45s (0:01:16)
+```
+
+### Repair Details
+
+- Usernames use one `trim + lower` canonical form. New or normalized users persist it; JSON lookup compares canonical values; MySQL and PostGIS lookups use matching `LOWER(username) = %s` predicates so the login path resolves the same authoritative user across backends before loading credentials by user id.
+- Production mode always requires HTTPS for password login. `SMART_BAMBOO_AUTH_REQUIRE_HTTPS` remains available in development/test, but cannot weaken production. With explicit trusted proxy headers, a production HTTPS login emits a `Secure` session cookie.
+- Added explicit coverage for successful-login failure-count reset and for password-change audit secrecy, including both passwords, old/new password hashes, raw session token, and raw CSRF token.
+- Updated the existing PostGIS duplicate-user query assertion to the canonical lookup predicate.
