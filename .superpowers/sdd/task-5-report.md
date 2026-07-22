@@ -51,3 +51,11 @@
 ### Residual Risk
 
 - The MySQL transaction path is exercised with a deterministic mock. A live MySQL integration environment is still required to validate server-side constraint and isolation behavior under concurrent production load.
+
+## Final Storage Boundary Remediation
+
+- `--allow-json-development` now permits only an actual JSON backend; PostGIS is rejected before any read or write.
+- Password administration rejects PostGIS with `501` and the stable detail `Human credential administration requires MySQL or JSON development storage` before user lookup.
+- JSON users, roles, credentials, sessions, and multi-file recovery share the public `database.JSON_STORE_LOCK` reentrant lock.
+- Added direct MySQL audit-failure mock coverage asserting rollback occurs without commit.
+- Final focused verification: 5 passed; `git diff --check` passed. The preceding Task 5/auth-store/admin-role/bootstrap regression run reached 103 passing tests before the reload-safe lock reference correction.

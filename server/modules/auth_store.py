@@ -4,14 +4,15 @@ import hashlib
 import json
 import os
 import secrets
-import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
+from . import database
 from .database import (
     admin_credentials_json_path,
     admin_sessions_json_path,
+    JSON_STORE_LOCK,
     load_json_records,
     mysql_connect,
     use_mysql,
@@ -21,7 +22,6 @@ from .database import (
 SESSION_LIFETIME = timedelta(hours=24)
 FAILED_LOGIN_LIMIT = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
-JSON_STORE_LOCK = threading.RLock()
 
 
 class CredentialRecord(TypedDict):
@@ -207,7 +207,7 @@ def save_credential(record: CredentialRecord) -> None:
                 write_mysql_credential(cur, normalized)
             conn.commit()
         return
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         records = load_json_records(admin_credentials_json_path())
         for index, existing in enumerate(records):
             if str(existing.get("userId")) == normalized["userId"]:
@@ -235,7 +235,7 @@ def record_failed_login(user_id: str, now: datetime) -> CredentialRecord:
                 write_mysql_credential(cur, credential)
             conn.commit()
         return credential
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         credential = credential_for_user(user_id)
         if credential is None:
             raise KeyError(f"Credential not found for user {user_id}")
@@ -260,7 +260,7 @@ def reset_failed_login(user_id: str) -> CredentialRecord:
                 write_mysql_credential(cur, credential)
             conn.commit()
         return credential
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         credential = credential_for_user(user_id)
         if credential is None:
             raise KeyError(f"Credential not found for user {user_id}")
@@ -328,7 +328,7 @@ def save_session(record: SessionRecord) -> None:
                 )
             conn.commit()
         return
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         records = load_json_records(admin_sessions_json_path())
         records = [item for item in records if str(item.get("id")) != normalized["id"]]
         records.append(normalized)
@@ -404,7 +404,7 @@ def revoke_session(raw_token: str) -> None:
                 )
             conn.commit()
         return
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         records = load_json_records(admin_sessions_json_path())
         for record in records:
             if record.get("tokenHash") == hashed_token and record.get("revokedAt") is None:

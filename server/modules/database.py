@@ -13,14 +13,14 @@ from .mysql_schema import PLATFORM_CORE_MYSQL_TABLES, apply_mysql_schema_upgrade
 from .settings import get_settings
 
 
-JSON_TRANSACTION_LOCK = threading.RLock()
+JSON_STORE_LOCK = threading.RLock()
 
 
 @contextmanager
 def json_transaction(paths: list[Path]):
     """Restore every participating JSON file if a multi-file update fails."""
     unique_paths = list(dict.fromkeys(paths))
-    with JSON_TRANSACTION_LOCK:
+    with JSON_STORE_LOCK:
         snapshots = {path: path.read_bytes() if path.exists() else None for path in unique_paths}
         try:
             yield
@@ -248,8 +248,9 @@ def load_json_records(path: Path) -> list[dict[str, Any]]:
 
 
 def save_json_records(path: Path, records: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    with JSON_STORE_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def init_platform_schema() -> None:

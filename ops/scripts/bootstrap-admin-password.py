@@ -63,8 +63,8 @@ def credential_for_password(user_id: str, password: str, existing: dict | None) 
 
 def main() -> int:
     args = parse_args()
-    if not args.allow_json_development and not use_mysql():
-        print("Refusing startup without a usable MySQL configuration; pass --allow-json-development only for local development.", file=sys.stderr)
+    if not use_mysql() and (get_settings().storage_backend != "json" or not args.allow_json_development):
+        print("Refusing non-JSON development storage; human credential bootstrap requires MySQL or --allow-json-development with JSON storage.", file=sys.stderr)
         return 2
 
     generated = not args.password_stdin

@@ -77,6 +77,20 @@ def test_bootstrap_rejects_mysql_backend_without_a_database_url_and_never_writes
     assert not (tmp_path / "remote-sensing" / "admin").exists()
 
 
+def test_bootstrap_rejects_postgis_even_with_json_development_flag(tmp_path):
+    environment = bootstrap_env(tmp_path)
+    environment.update({"SMART_BAMBOO_STORAGE_BACKEND": "postgis", "SMART_BAMBOO_DATABASE_URL": "postgresql://db/example"})
+
+    result = subprocess.run(
+        [*bootstrap_command(), "--allow-json-development"], cwd=PROJECT_ROOT, env=environment,
+        text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode != 0
+    assert "JSON" in result.stderr
+    assert not (tmp_path / "remote-sensing" / "admin").exists()
+
+
 def test_bootstrap_generates_one_temporary_password_without_persisting_it(tmp_path, monkeypatch):
     result = subprocess.run(
         [*bootstrap_command(), "--allow-json-development"],

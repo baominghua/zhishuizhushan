@@ -33,6 +33,7 @@ from .database import (
     admin_credentials_json_path,
     admin_sessions_json_path,
     admin_users_json_path,
+    JSON_STORE_LOCK,
     json_transaction,
     load_json_records,
     mysql_connect,
@@ -759,7 +760,8 @@ def save_users(users: list[dict[str, Any]]) -> None:
     if use_postgis():
         upsert_users_postgis(users)
         return
-    save_json_records(admin_users_json_path(), users)
+    with JSON_STORE_LOCK:
+        save_json_records(admin_users_json_path(), users)
 
 
 def save_user(user: dict[str, Any]) -> None:
@@ -1406,6 +1408,8 @@ def set_user_password(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_permission(context, "system.users.setPassword")
+    if use_postgis():
+        raise HTTPException(status_code=501, detail="Human credential administration requires MySQL or JSON development storage")
     user = find_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1416,6 +1420,8 @@ def set_user_password(
 @router.post("/users/{user_id}/revoke-sessions")
 def revoke_sessions(user_id: str, context: AuthContext = Depends(request_context)) -> dict[str, Any]:
     require_permission(context, "system.users.revokeSessions")
+    if use_postgis():
+        raise HTTPException(status_code=501, detail="Human credential administration requires MySQL or JSON development storage")
     user = find_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

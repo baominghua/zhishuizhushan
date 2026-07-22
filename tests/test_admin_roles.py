@@ -868,6 +868,64 @@ def test_account_security_actions_roll_back_when_audit_write_fails(app_client, m
     assert session_for_token(token, utc_now()) is not None
 
 
+@pytest.mark.parametrize("action", ["set_user_password", "revoke_sessions"])
+def test_account_security_actions_reject_postgis_before_any_write(monkeypatch, action):
+    from fastapi import HTTPException
+    from server.modules import admin_users
+
+    user = admin_users.normalize_user({"username": "postgis_security", "displayName": "PostGIS Security"})
+    monkeypatch.setattr(admin_users, "use_postgis", lambda: True)
+    monkeypatch.setattr(admin_users, "use_mysql", lambda: False)
+    monkeypatch.setattr(admin_users, "find_user", lambda _user_id: (_ for _ in ()).throw(AssertionError("must not read or write")))
+
+    with pytest.raises(HTTPException) as raised:
+        if action == "set_user_password":
+            admin_users.set_user_password(user["id"], admin_users.TemporaryPasswordIn(temporaryPassword="Temporary-Bamboo-2026!"), AuthContext(user="admin", roles={"admin"}, projects=set(), areas=set()))
+        else:
+            admin_users.revoke_sessions(user["id"], AuthContext(user="admin", roles={"admin"}, projects=set(), areas=set()))
+
+    assert raised.value.status_code == 501
+    assert raised.value.detail == "Human credential administration requires MySQL or JSON development storage"
+
+
+def test_json_security_transaction_uses_the_shared_database_lock():
+    from server.modules import auth_store, database
+
+    assert auth_store.database.JSON_STORE_LOCK is database.JSON_STORE_LOCK
+
+
+def test_mysql_password_reset_rolls_back_when_audit_fails(monkeypatch):
+    from server.modules import admin_users
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+
+    class Connection:
+        def __init__(self): self.committed = False; self.rolled_back = False
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def cursor(self): return Cursor()
+        def commit(self): self.committed = True
+        def rollback(self): self.rolled_back = True
+
+    connection = Connection()
+    user = admin_users.normalize_user({"username": "mysql_rollback", "displayName": "MySQL Rollback"})
+    original = new_credential(user["id"], hash_password("Original-Bamboo-2026!"))
+    monkeypatch.setattr(admin_users, "use_mysql", lambda: True)
+    monkeypatch.setattr(admin_users, "mysql_connect", lambda: connection)
+    monkeypatch.setattr(admin_users, "mysql_credential_for_user", lambda *_args, **_kwargs: original)
+    monkeypatch.setattr(admin_users, "write_mysql_credential", lambda *_args: None)
+    monkeypatch.setattr(admin_users, "revoke_user_sessions_mysql", lambda *_args: 1)
+    monkeypatch.setattr(admin_users, "append_user_audit_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit failed")))
+
+    with pytest.raises(RuntimeError, match="audit failed"):
+        admin_users.apply_account_security_action(user, AuthContext(user="admin", roles={"admin"}, projects=set(), areas=set()), temporary_password="Temporary-Bamboo-2026!")
+
+    assert connection.rolled_back is True
+    assert connection.committed is False
+
+
 def test_user_permission_catalog_exposes_granular_crud_actions(app_client):
     response = app_client.get(
         "/api/admin/permission-catalog",
