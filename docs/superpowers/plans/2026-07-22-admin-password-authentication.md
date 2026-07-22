@@ -385,6 +385,31 @@ def test_service_bearer_token_remains_supported(app_client, configured_service_t
     response = app_client.get("/api/auth/me", headers={"Authorization": "Bearer secure-test-token"})
     assert response.status_code == 200
     assert response.json()["authType"] == "service-token"
+
+
+def test_forced_password_change_blocks_non_auth_api(password_user_client):
+    client, _user = password_user_client
+    client.post(
+        "/api/auth/login",
+        json={"username": "field_worker", "password": "Bamboo-2026!"},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    response = client.get("/api/admin/effective-permissions")
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Password change required"
+
+
+def test_cookie_session_requires_csrf_for_mutating_api(password_user_client):
+    client, _user = password_user_client
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "field_worker", "password": "Bamboo-2026!"},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    response = client.post("/api/auth/logout")
+    assert login.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF validation failed"
 ```
 
 - [ ] **Step 2: Run the tests and verify RED**
@@ -394,7 +419,7 @@ Expected: session request receives `401` or lacks `authType`.
 
 - [ ] **Step 3: Resolve session first, then service token**
 
-Change `request_context()` to return a valid human context when the cookie resolves. If no human session exists, preserve the current bearer-token path exactly. Header-based development identity remains available only when authentication is not required.
+Change `request_context()` to return a valid human context when the cookie resolves. Cookie-authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests must match the session's `X-CSRF-Token`; bearer service-token requests do not use browser CSRF validation. A session with `mustChangePassword=true` may access only `/api/auth/me`, `/api/auth/session`, `/api/auth/change-password`, and `/api/auth/logout`; all other API routes return `403 Password change required`. If no human session exists, preserve the current bearer-token path exactly. Header-based development identity remains available only when authentication is not required.
 
 Return this configuration shape:
 
