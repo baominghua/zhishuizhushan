@@ -30,6 +30,13 @@ def test_login_page_keeps_sensitive_deployment_controls_out_of_human_form():
     assert 'aria-live="polite"' in html
 
 
+def test_password_label_is_explicit_and_toggle_is_outside_the_label():
+    html = (project_root() / "admin-login.html").read_text(encoding="utf-8")
+
+    assert '<label for="password">' in html
+    assert html.index('<label for="password">') < html.index('<span class="admin-login-password-control">')
+
+
 def test_login_script_uses_relative_session_auth_endpoints_and_clears_password():
     script = (project_root() / "admin-login.js").read_text(encoding="utf-8")
 

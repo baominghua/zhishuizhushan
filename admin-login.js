@@ -3,6 +3,7 @@
   const PROFILE_KEY = "smartBambooAuthProfile";
   let authConfig = null;
   let passwordLoginBlocked = false;
+  let blockedStatusMessage = "正在检查登录配置，请稍候。";
 
   const $ = (selector) => document.querySelector(selector);
 
@@ -45,8 +46,10 @@
     return response.json().catch(() => ({}));
   }
 
-  function setPasswordLoginBlocked(blocked) {
+  function setPasswordLoginBlocked(blocked, message = "") {
     passwordLoginBlocked = blocked;
+    if (blocked && message) blockedStatusMessage = message;
+    if (!blocked) blockedStatusMessage = "";
     $("#username").disabled = blocked;
     $("#password").disabled = blocked;
     $("#togglePassword").disabled = blocked;
@@ -54,7 +57,11 @@
   }
 
   function passwordChangeMessage() {
-    return "该账户需要先修改初始密码，请联系管理员完成密码更新。";
+    return "检测到首次改密状态，请先完成密码修改后再继续使用后台。";
+  }
+
+  function isPasswordChangeRequired(error) {
+    return error && error.status === 403 && error.message === "Password change required";
   }
 
   function completeLogin(profile) {
@@ -126,6 +133,7 @@
 
   function applyAuthConfig(config) {
     authConfig = config || {};
+    setPasswordLoginBlocked(true);
     if (authConfig.humanLoginEnabled === false) {
       showServiceTokenFallback();
       return;
@@ -134,25 +142,34 @@
     $("#serviceTokenFallback").hidden = true;
     const requiresHttps = authConfig.httpsRequired && window.location.protocol !== "https:";
     if (requiresHttps) {
-      setPasswordLoginBlocked(true);
-      setStatus("当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。", "error");
+      const message = "当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。";
+      setPasswordLoginBlocked(true, message);
+      setStatus(message, "error");
+      return;
     }
+    if (authConfig.humanLoginEnabled !== true) {
+      const message = "当前部署未明确启用账号密码登录，请联系管理员检查认证配置。";
+      setPasswordLoginBlocked(true, message);
+      setStatus(message, "error");
+      return;
+    }
+    setPasswordLoginBlocked(false);
   }
 
   async function submitLogin(event) {
     event.preventDefault();
     const button = $("#loginButton");
-    const username = $("#username").value.trim();
-    const password = $("#password").value;
-    if (passwordLoginBlocked) {
-      setStatus("当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。", "error");
-      return;
-    }
-    if (!username || !password) return;
-
-    button.disabled = true;
-    setStatus("正在登录...", "busy");
     try {
+      const username = $("#username").value.trim();
+      const password = $("#password").value;
+      if (passwordLoginBlocked) {
+        setStatus(blockedStatusMessage, "error");
+        return;
+      }
+      if (!username || !password) return;
+
+      button.disabled = true;
+      setStatus("正在登录...", "busy");
       const response = await fetch("/api/auth/login", {
         method: "POST",
         credentials: "include",
@@ -164,8 +181,9 @@
         if (response.status === 401) throw new Error("用户名或密码不正确，请重试。");
         if (response.status === 423) throw new Error("账户已临时锁定，请稍后再试或联系管理员。");
         if (response.status === 426) {
-          setPasswordLoginBlocked(true);
-          throw new Error("当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。");
+          const message = "当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。";
+          setPasswordLoginBlocked(true, message);
+          throw new Error(message);
         }
         throw new Error(payload.detail || `登录失败（${response.status}）`);
       }
@@ -181,6 +199,7 @@
   }
 
   async function initialize() {
+    setPasswordLoginBlocked(true);
     $("#togglePassword").addEventListener("click", () => {
       const password = $("#password");
       const visible = password.type === "password";
@@ -193,9 +212,19 @@
     try {
       const response = await fetch("/api/auth/config", { credentials: "include" });
       const config = await readPayload(response);
-      if (!response.ok) throw new Error(config.detail || "无法获取登录配置。");
+      if (response.status === 426) {
+        const message = "当前部署要求使用 HTTPS，请先通过 HTTPS 安全地址访问后台。";
+        setPasswordLoginBlocked(true, message);
+        setStatus(message, "error");
+        return;
+      }
+      if (!response.ok) {
+        const error = new Error(config.detail || "无法获取登录配置。");
+        error.status = response.status;
+        throw error;
+      }
       applyAuthConfig(config);
-      if (authConfig.humanLoginEnabled !== false) {
+      if (!passwordLoginBlocked) {
         try {
           const profile = await fetchCurrentProfile();
           completeLogin(profile);
@@ -204,7 +233,11 @@
         }
       }
     } catch (error) {
-      setStatus(error.message || "登录服务暂不可用，请稍后重试。", "error");
+      if (isPasswordChangeRequired(error)) {
+        setStatus(passwordChangeMessage(), "warning");
+        return;
+      }
+      setStatus("无法确认登录配置，请检查网络或联系管理员。", "error");
     }
   }
 
