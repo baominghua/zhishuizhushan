@@ -121,3 +121,60 @@ def test_health_reports_unified_auth_configuration(app_client):
         "required": False,
         "tokensConfigured": 0,
     }
+
+
+def test_json_string_service_profile_preserves_unprivileged_legacy_scope(app_client, monkeypatch):
+    import server.modules.settings as settings
+
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("REMOTE_SENSING_API_TOKENS", json.dumps({"legacy-token": "legacy-user"}))
+    settings.get_settings.cache_clear()
+    try:
+        headers = {"Authorization": "Bearer legacy-token"}
+        profile = app_client.get("/api/auth/me", headers=headers)
+        denied_delete = app_client.delete("/api/scenes/missing-scene", headers=headers)
+    finally:
+        settings.get_settings.cache_clear()
+
+    assert profile.status_code == 200
+    assert profile.json()["user"] == "legacy-user"
+    assert profile.json()["roles"] == []
+    assert profile.json()["permissions"] == []
+    assert profile.json()["dataScopes"] == {}
+    assert denied_delete.status_code == 403
+    assert "imagery.scenes.delete" in denied_delete.json()["detail"]
+
+
+def test_compact_service_profiles_preserve_legacy_identity_roles_and_scopes(app_client, monkeypatch):
+    import server.modules.settings as settings
+
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv(
+        "REMOTE_SENSING_API_TOKENS",
+        "legacy-token=legacy-user|legacy-reader,legacy-writer|project-a project-b|350703,350704;"
+        "empty-token=empty-user|||",
+    )
+    settings.get_settings.cache_clear()
+    try:
+        profile = app_client.get(
+            "/api/auth/me",
+            headers={"Authorization": "Bearer legacy-token"},
+        )
+        empty_profile = app_client.get(
+            "/api/auth/me",
+            headers={"Authorization": "Bearer empty-token"},
+        )
+    finally:
+        settings.get_settings.cache_clear()
+
+    assert profile.status_code == 200
+    assert profile.json()["user"] == "legacy-user"
+    assert profile.json()["roles"] == ["legacy-reader", "legacy-writer"]
+    assert profile.json()["dataScopes"] == {
+        "areas": ["350703", "350704"],
+        "projects": ["project-a", "project-b"],
+    }
+    assert empty_profile.status_code == 200
+    assert empty_profile.json()["user"] == "empty-user"
+    assert empty_profile.json()["roles"] == []
+    assert empty_profile.json()["dataScopes"] == {}

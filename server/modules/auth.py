@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import hmac
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,17 +50,17 @@ def bearer_token(request: Request) -> str:
     )
 
 
-def parse_token_profile(raw_profile: Any, token: str) -> AuthContext:
+def parse_token_profile(raw_profile: Any, token: str) -> AuthContext | None:
     if isinstance(raw_profile, str):
-        return AuthContext(user=raw_profile or token, roles={"admin"}, projects={"*"}, areas={"*"})
+        raw_profile = {"user": raw_profile}
     if not isinstance(raw_profile, dict):
-        return AuthContext(user=token, roles={"admin"}, projects={"*"}, areas={"*"})
+        return None
 
     return AuthContext(
         user=str(raw_profile.get("user") or raw_profile.get("username") or token).strip(),
-        roles=split_header_list(raw_profile.get("roles")) or {"viewer"},
-        projects=split_header_list(raw_profile.get("projects")),
-        areas=split_header_list(raw_profile.get("areas") or raw_profile.get("areaCodes")),
+        roles=split_token_profile_values(raw_profile.get("roles")),
+        projects=split_token_profile_values(raw_profile.get("projects")),
+        areas=split_token_profile_values(raw_profile.get("areas") or raw_profile.get("areaCodes")),
     )
 
 
@@ -68,6 +69,16 @@ def split_header_list(value: Any) -> set[str]:
         return set()
     if isinstance(value, str):
         return split_header(value)
+    if isinstance(value, (list, tuple, set)):
+        return {str(item).strip() for item in value if str(item).strip()}
+    return {str(value).strip()} if str(value).strip() else set()
+
+
+def split_token_profile_values(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {item.strip() for item in re.split(r"[,;\s]+", value) if item.strip()}
     if isinstance(value, (list, tuple, set)):
         return {str(item).strip() for item in value if str(item).strip()}
     return {str(value).strip()} if str(value).strip() else set()
@@ -88,11 +99,25 @@ def token_profiles() -> dict[str, AuthContext]:
         for token, profile in parsed.items():
             token_value = str(token).strip()
             if token_value:
-                profiles[token_value] = parse_token_profile(profile, token_value)
+                parsed_profile = parse_token_profile(profile, token_value)
+                if parsed_profile is not None:
+                    profiles[token_value] = parsed_profile
         return profiles
 
-    for token in split_header(raw_tokens):
-        profiles[token] = AuthContext(user=token, roles={"admin"}, projects={"*"}, areas={"*"})
+    for record in re.split(r"[;\n]+", raw_tokens):
+        record = record.strip()
+        if not record:
+            continue
+        token, raw_profile = (record.split("=", 1) + [""])[:2] if "=" in record else (record, "")
+        parts = [item.strip() for item in raw_profile.split("|")]
+        token_value = token.strip()
+        if token_value:
+            profiles[token_value] = AuthContext(
+                user=parts[0] if parts and parts[0] else token_value,
+                roles=split_token_profile_values(parts[1] if len(parts) > 1 else ""),
+                projects=split_token_profile_values(parts[2] if len(parts) > 2 else ""),
+                areas=split_token_profile_values(parts[3] if len(parts) > 3 else ""),
+            )
     return profiles
 
 

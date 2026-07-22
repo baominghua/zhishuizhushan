@@ -40,3 +40,20 @@ All test runs used `D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python
 - `/api/auth/me` gets `authType` and `authenticated` from the context actually resolved by `request_context`, not from an arbitrary authorization header.
 - Health auth status reads the unified settings and service-token profile source.
 - `tests/test_auth.py tests/test_human_auth.py tests/test_admin_roles.py -q -p no:cacheprovider`: 106 passed.
+
+## Legacy Bearer Compatibility Remediation
+
+### RED
+
+1. A JSON string profile, `{"legacy-token": "legacy-user"}`, was resolved as `admin` with global scopes. The new regression showed that it could not preserve the legacy no-role/no-scope context.
+2. A compact profile, `token=user|roles|projects|areas`, returned `401` because the unified parser treated the full record as a token rather than parsing its fields.
+
+### GREEN
+
+- JSON string profiles now retain only the legacy username. Omitted roles and scopes remain empty, and the regression proves the token cannot pass the imagery scene-delete permission check.
+- Compact profiles now retain the legacy record separator and field separator semantics, including multiple roles, projects, areas, and empty fields.
+- `tests/test_auth.py tests/test_human_auth.py tests/test_admin_roles.py tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py -q -p no:cacheprovider`: 147 passed.
+
+### Deferred Minor
+
+- The application middleware and route dependency can both read a valid human session during one request. The shared request state prevents policy disagreement, but the duplicate refresh remains noted for a later low-risk consolidation rather than changing this security boundary during the compatibility fix.
