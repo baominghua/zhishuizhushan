@@ -70,6 +70,11 @@ function jsonResponse(status, payload = {}) {
   };
 }
 
+function deferred() {
+  let resolve;
+  return { promise: new Promise((done) => { resolve = done; }), resolve };
+}
+
 function storage(initial = {}) {
   const values = new Map(Object.entries(initial));
   return {
@@ -290,4 +295,42 @@ test("a runtime password-change 403 atomically reopens the gate for later busine
     "https://zhushan.example/api/auth/me",
     "https://zhushan.example/api/business/second",
   ]);
+});
+
+test("a stale forced 403 arriving after password change cannot reopen the released gate", async () => {
+  const normalProfile = { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: false };
+  const lateBusinessResponse = deferred();
+  const harness = createHarness({
+    responses: [
+      jsonResponse(200, normalProfile),
+      jsonResponse(403, { detail: "Password change required" }),
+      lateBusinessResponse.promise,
+      jsonResponse(200, { ok: true }),
+      jsonResponse(200, normalProfile),
+      jsonResponse(200, { ok: true, record: "C" }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+  common.initShell();
+  await settle();
+
+  const requestA = common.api("/api/business/A");
+  const requestB = common.fetchWithSession("/api/business/B");
+  await assert.rejects(requestA, /403 Password change required/);
+
+  harness.elements.get("#currentPassword").value = "old-password";
+  harness.elements.get("#newPassword").value = "New-password-1";
+  harness.elements.get("#confirmPassword").value = "New-password-1";
+  await harness.elements.get("#forcedPasswordChangeForm").listeners.get("submit")({ preventDefault() {} });
+  assert.equal(harness.documentRef.body.classList.contains("password-change-required"), false);
+
+  lateBusinessResponse.resolve(jsonResponse(403, { detail: "Password change required" }));
+  const staleResponse = await requestB;
+  assert.equal(staleResponse.status, 403);
+  assert.equal(harness.documentRef.body.classList.contains("password-change-required"), false);
+
+  const requestC = common.api("/api/business/C");
+  await settle();
+  assert.equal(harness.calls.length, 6);
+  assert.deepEqual(await requestC, { ok: true, record: "C" });
 });

@@ -9,6 +9,7 @@ const AdminCommon = (() => {
   let sessionReadyPromise = null;
   let resolveSessionGate = null;
   let sessionGateBlocked = false;
+  let sessionGeneration = 0;
   const LEGACY_TOKEN_KEYS = ["smartBambooAdminToken", "smartBambooAdminTokenPersistent"];
 
   const LABELS = {
@@ -268,12 +269,16 @@ const AdminCommon = (() => {
     return status === 403 && payload && typeof payload === "object" && payload.detail === "Password change required";
   }
 
-  async function parseResponse(response) {
+  function isAuthBypassPath(path) {
+    return ["/api/auth/me", "/api/auth/change-password", "/api/auth/logout"].includes(path);
+  }
+
+  async function parseResponse(response, requestGeneration = null) {
     const contentType = response.headers.get("content-type") || "";
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     if (!response.ok) {
       if (response.status === 401) redirectToLogin();
-      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange();
+      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange(requestGeneration);
       const detail =
         payload && typeof payload === "object"
           ? payload.detail || JSON.stringify(payload)
@@ -287,14 +292,16 @@ const AdminCommon = (() => {
     const requestOptions = { credentials: "include", ...options };
     const skipSessionReady = requestOptions.skipSessionReady;
     delete requestOptions.skipSessionReady;
-    if (!skipSessionReady && !["/api/auth/me", "/api/auth/logout"].includes(path) && sessionReadyPromise) await sessionReadyPromise;
+    const authBypass = skipSessionReady || isAuthBypassPath(path);
+    if (!authBypass && sessionReadyPromise) await sessionReadyPromise;
     const method = String(requestOptions.method || "GET").toUpperCase();
     const headers = buildHeaders(requestOptions.headers, method);
     if (requestOptions.body && !(requestOptions.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
     requestOptions.headers = headers;
-    return parseResponse(await fetch(`${apiBase()}${path}`, requestOptions));
+    const requestGeneration = authBypass ? null : sessionGeneration;
+    return parseResponse(await fetch(`${apiBase()}${path}`, requestOptions), requestGeneration);
   }
 
   function authApi(path, options = {}) {
@@ -305,14 +312,16 @@ const AdminCommon = (() => {
     const requestOptions = { credentials: "include", ...options };
     const skipSessionReady = requestOptions.skipSessionReady;
     delete requestOptions.skipSessionReady;
-    if (!skipSessionReady && sessionReadyPromise) await sessionReadyPromise;
+    const authBypass = skipSessionReady || isAuthBypassPath(path);
+    if (!authBypass && sessionReadyPromise) await sessionReadyPromise;
     const method = String(requestOptions.method || "GET").toUpperCase();
     requestOptions.headers = buildHeaders(requestOptions.headers, method);
+    const requestGeneration = authBypass ? null : sessionGeneration;
     const response = await fetch(`${apiBase()}${path}`, requestOptions);
     if (response.status === 401) redirectToLogin();
     if (response.status === 403 && response.clone) {
       const payload = await response.clone().json().catch(() => null);
-      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange();
+      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange(requestGeneration);
     }
     return response;
   }
@@ -624,7 +633,7 @@ const AdminCommon = (() => {
     if (currentProfile) sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(currentProfile));
   }
 
-  async function refreshSession() {
+  async function refreshSession({ afterPasswordChange = false } = {}) {
     try {
       const payload = await authApi("/api/auth/me");
       cacheProfile(payload);
@@ -635,6 +644,7 @@ const AdminCommon = (() => {
         handleForcedPasswordChange();
       } else {
         hideForcedPasswordChange();
+        if (afterPasswordChange) sessionGeneration += 1;
         releaseBusinessRequests();
       }
       return payload;
@@ -679,9 +689,11 @@ const AdminCommon = (() => {
     window.setTimeout(() => $("#currentPassword")?.focus(), 0);
   }
 
-  function handleForcedPasswordChange() {
+  function handleForcedPasswordChange(requestGeneration = null) {
+    if (requestGeneration !== null && requestGeneration < sessionGeneration) return false;
     blockBusinessRequests();
     showForcedPasswordChange();
+    return true;
   }
 
   function hideForcedPasswordChange() {
@@ -708,7 +720,7 @@ const AdminCommon = (() => {
         method: "POST",
         body: JSON.stringify({ currentPassword: current.value, newPassword: next.value }),
       });
-      await refreshSession();
+      await refreshSession({ afterPasswordChange: true });
     } catch (error) {
       if (status) status.textContent = error.message || "密码更新失败。";
     } finally {

@@ -37,3 +37,9 @@
 
 - Added `handleForcedPasswordChange()` as the single runtime forced-password-change path for parsed API failures, raw session fetches, and `/api/auth/me` profiles. It blocks business requests before rendering the dialog and is idempotent while a gate is already pending.
 - Added a concurrent VM regression for a normal session that later receives a business `403 Password change required`: the failing request remains a 403, the later raw business request is not sent until password change and profile refresh complete, and the original gate resolver is retained.
+
+## Final Stale-403 Follow-up
+
+- Added a session generation captured immediately before each business `api()` or `fetchWithSession()` request. The password-change-confirming `/api/auth/me` increments the generation before releasing the gate.
+- Late forced-403 responses from an earlier generation now finish their original request without changing the released session state. Same-generation responses continue to reuse the existing pending gate.
+- Added reviewer-timeline coverage for concurrent API/raw requests A and B, password change release, B's late forced response, and immediate C dispatch.
