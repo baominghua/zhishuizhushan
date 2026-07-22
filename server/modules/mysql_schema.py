@@ -22,6 +22,8 @@ PLATFORM_MYSQL_TABLES = [
     "admin_role_menu_modules",
     "admin_users",
     "admin_user_roles",
+    "admin_user_credentials",
+    "admin_sessions",
     "import_batches",
     "import_batch_block_links",
     "import_batch_right_links",
@@ -417,6 +419,41 @@ def mysql_schema_statements() -> list[str]:
             KEY idx_admin_user_role_role (admin_role_id),
             CONSTRAINT fk_admin_user_role_user FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
             CONSTRAINT fk_admin_user_role_role FOREIGN KEY (admin_role_id) REFERENCES admin_roles(id) ON DELETE CASCADE
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS admin_user_credentials (
+            id CHAR(36) PRIMARY KEY,
+            admin_user_id CHAR(36) NOT NULL,
+            password_hash VARCHAR(512) NOT NULL,
+            password_changed_at DATETIME(6),
+            must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+            failed_login_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            locked_until DATETIME(6),
+            credential_version INT UNSIGNED NOT NULL DEFAULT 1,
+            created_at DATETIME(6) NOT NULL,
+            updated_at DATETIME(6) NOT NULL,
+            UNIQUE KEY uq_admin_user_credentials_user (admin_user_id),
+            CONSTRAINT fk_admin_user_credentials_user FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS admin_sessions (
+            id CHAR(36) PRIMARY KEY,
+            admin_user_id CHAR(36) NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            csrf_token_hash CHAR(64) NOT NULL,
+            credential_version INT UNSIGNED NOT NULL,
+            ip_address VARCHAR(64),
+            user_agent VARCHAR(512),
+            issued_at DATETIME(6) NOT NULL,
+            last_seen_at DATETIME(6) NOT NULL,
+            expires_at DATETIME(6) NOT NULL,
+            revoked_at DATETIME(6),
+            UNIQUE KEY uq_admin_sessions_token_hash (token_hash),
+            KEY idx_admin_sessions_user (admin_user_id),
+            KEY idx_admin_sessions_expiry (expires_at, revoked_at),
+            CONSTRAINT fk_admin_sessions_user FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
         ) {table_options}
         """,
         f"""

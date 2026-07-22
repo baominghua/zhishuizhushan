@@ -197,6 +197,14 @@ def admin_users_json_path() -> Path:
     return get_data_dir() / "admin" / "users.json"
 
 
+def admin_credentials_json_path() -> Path:
+    return get_data_dir() / "admin" / "credentials.json"
+
+
+def admin_sessions_json_path() -> Path:
+    return get_data_dir() / "admin" / "sessions.json"
+
+
 def import_batches_json_path() -> Path:
     return get_data_dir() / "imports" / "import_batches.json"
 
