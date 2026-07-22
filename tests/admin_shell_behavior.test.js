@@ -66,6 +66,7 @@ function jsonResponse(status, payload = {}) {
     headers: { get: () => "application/json" },
     json: async () => payload,
     text: async () => JSON.stringify(payload),
+    clone() { return jsonResponse(status, payload); },
   };
 }
 
@@ -253,4 +254,40 @@ test("dashboard health waits for a forced password change before its business fe
   ]);
   assert.equal(health.ok, true);
   assert.equal(health.httpStatus, 200);
+});
+
+test("a runtime password-change 403 atomically reopens the gate for later business requests", async () => {
+  const normalProfile = { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: false };
+  const harness = createHarness({
+    responses: [
+      jsonResponse(200, normalProfile),
+      jsonResponse(403, { detail: "Password change required" }),
+      jsonResponse(200, { ok: true }),
+      jsonResponse(200, normalProfile),
+      jsonResponse(200, { ok: true }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+  common.initShell();
+  await settle();
+
+  await assert.rejects(common.api("/api/business/first"), /403 Password change required/);
+  const laterRequest = common.fetchWithSession("/api/business/second");
+  await settle();
+  assert.equal(harness.calls.length, 2);
+
+  harness.elements.get("#currentPassword").value = "old-password";
+  harness.elements.get("#newPassword").value = "New-password-1";
+  harness.elements.get("#confirmPassword").value = "New-password-1";
+  await harness.elements.get("#forcedPasswordChangeForm").listeners.get("submit")({ preventDefault() {} });
+
+  const laterResponse = await laterRequest;
+  assert.equal(laterResponse.ok, true);
+  assert.deepEqual(harness.calls.map((call) => call.url), [
+    "https://zhushan.example/api/auth/me",
+    "https://zhushan.example/api/business/first",
+    "https://zhushan.example/api/auth/change-password",
+    "https://zhushan.example/api/auth/me",
+    "https://zhushan.example/api/business/second",
+  ]);
 });

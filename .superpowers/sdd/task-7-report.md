@@ -32,3 +32,8 @@
 - `node --test tests/admin_shell_behavior.test.js tests/admin_users_security_behavior.test.js` - 8 passed
 - `D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python.exe -m pytest tests/test_admin_login_ui.py tests/test_admin_separation.py tests/test_auth.py tests/test_auth_store.py tests/test_human_auth.py -q -p no:cacheprovider --basetemp .tmp\\task7-review-final2` - 211 passed
 - All `admin-*.js` syntax checks and `git diff --check` passed.
+
+## Final Forced-403 Follow-up
+
+- Added `handleForcedPasswordChange()` as the single runtime forced-password-change path for parsed API failures, raw session fetches, and `/api/auth/me` profiles. It blocks business requests before rendering the dialog and is idempotent while a gate is already pending.
+- Added a concurrent VM regression for a normal session that later receives a business `403 Password change required`: the failing request remains a 403, the later raw business request is not sent until password change and profile refresh complete, and the original gate resolver is retained.

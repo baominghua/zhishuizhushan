@@ -273,7 +273,7 @@ const AdminCommon = (() => {
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     if (!response.ok) {
       if (response.status === 401) redirectToLogin();
-      if (isPasswordChangeRequired(response.status, payload)) showForcedPasswordChange();
+      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange();
       const detail =
         payload && typeof payload === "object"
           ? payload.detail || JSON.stringify(payload)
@@ -312,7 +312,7 @@ const AdminCommon = (() => {
     if (response.status === 401) redirectToLogin();
     if (response.status === 403 && response.clone) {
       const payload = await response.clone().json().catch(() => null);
-      if (isPasswordChangeRequired(response.status, payload)) showForcedPasswordChange();
+      if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange();
     }
     return response;
   }
@@ -632,8 +632,7 @@ const AdminCommon = (() => {
       renderEffectivePermissionStatus(payload);
       ensureSessionControl();
       if (payload.mustChangePassword) {
-        blockBusinessRequests();
-        showForcedPasswordChange();
+        handleForcedPasswordChange();
       } else {
         hideForcedPasswordChange();
         releaseBusinessRequests();
@@ -678,6 +677,11 @@ const AdminCommon = (() => {
     dialog.hidden = false;
     dialog.setAttribute("aria-hidden", "false");
     window.setTimeout(() => $("#currentPassword")?.focus(), 0);
+  }
+
+  function handleForcedPasswordChange() {
+    blockBusinessRequests();
+    showForcedPasswordChange();
   }
 
   function hideForcedPasswordChange() {
