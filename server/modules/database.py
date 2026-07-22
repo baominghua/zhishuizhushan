@@ -1,12 +1,44 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .mysql_schema import PLATFORM_CORE_MYSQL_TABLES, apply_mysql_schema_upgrades, mysql_platform_schema_statements
 from .settings import get_settings
+
+
+JSON_TRANSACTION_LOCK = threading.RLock()
+
+
+@contextmanager
+def json_transaction(paths: list[Path]):
+    """Restore every participating JSON file if a multi-file update fails."""
+    unique_paths = list(dict.fromkeys(paths))
+    with JSON_TRANSACTION_LOCK:
+        snapshots = {path: path.read_bytes() if path.exists() else None for path in unique_paths}
+        try:
+            yield
+        except Exception:
+            for path, contents in snapshots.items():
+                if contents is None:
+                    if path.exists():
+                        path.unlink()
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.restore")
+                try:
+                    temporary.write_bytes(contents)
+                    os.replace(temporary, path)
+                finally:
+                    if temporary.exists():
+                        temporary.unlink()
+            raise
 
 
 def get_data_dir() -> Path:

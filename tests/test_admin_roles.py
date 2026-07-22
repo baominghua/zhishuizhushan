@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from server.modules.auth import AuthContext
 from server.modules.auth_store import (
     create_session,
@@ -828,6 +830,42 @@ def test_session_revocation_requires_independent_permission(app_client):
     assert allowed.json() == {"ok": True, "revoked": 2}
     assert session_for_token(first_token, utc_now()) is None
     assert session_for_token(second_token, utc_now()) is None
+
+
+@pytest.mark.parametrize("path,payload", [
+    ("set-password", {"temporaryPassword": "Temporary-Bamboo-2026!"}),
+    ("revoke-sessions", None),
+])
+def test_account_security_actions_roll_back_when_audit_write_fails(app_client, monkeypatch, path, payload):
+    from server.modules import admin_users
+
+    created = app_client.post(
+        "/api/admin/users",
+        json=sample_user(f"rollback_{path}"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    user = created.json()
+    original = new_credential(user["id"], hash_password("Original-Bamboo-2026!"))
+    save_credential(original)
+    token, _csrf, _session = create_session(user["id"], 1, utc_now(), "127.0.0.1", "pytest")
+    monkeypatch.setattr(
+        admin_users,
+        "append_user_audit_event",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit write failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="audit write failed"):
+        app_client.post(
+            f"/api/admin/users/{user['id']}/{path}",
+            json=payload,
+            headers={"X-RS-Roles": "system.users.manage"},
+        )
+
+    credential = credential_for_user(user["id"])
+    assert credential is not None
+    assert credential["passwordHash"] == original["passwordHash"]
+    assert credential["credentialVersion"] == original["credentialVersion"]
+    assert session_for_token(token, utc_now()) is not None
 
 
 def test_user_permission_catalog_exposes_granular_crud_actions(app_client):

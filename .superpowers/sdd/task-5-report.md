@@ -26,3 +26,28 @@
 - Verified that the new audit event contains only changed field names and normal user metadata; tests assert that password text, password hashes, and session tokens are absent.
 - Verified that existing permission implications remain unchanged except for the two new actions added to `system.users.manage`.
 - Residual risk: MySQL behavior uses the existing storage helpers and was covered by the established authentication-store tests, but this task did not run against a live MySQL instance.
+
+## Review Remediation
+
+### RED
+
+- Reproduced that `SMART_BAMBOO_STORAGE_BACKEND=mysql` without a database URL completed bootstrap by silently writing JSON.
+- Reproduced that bootstrap did not create an `admin` role record and left user/credential writes non-atomic when credential persistence failed.
+- Reproduced that password reset and session revocation persisted credential or session changes before an audit failure.
+
+### GREEN
+
+- Bootstrap now uses `use_mysql()` for its fail-closed production gate. A missing MySQL URL exits non-zero before any JSON path is created.
+- Bootstrap writes the canonical administrator role, user-role association, credential, session revocation, and audit entry in one MySQL connection/transaction. It rolls back on any exception and checks the persisted role association before commit.
+- JSON development operations use a process lock plus byte-for-byte multi-file snapshots. Any failure restores users, roles, credentials, and sessions to their prior state.
+- Account-security endpoints use the same MySQL transaction pattern and the JSON snapshot transaction, so audit failures cannot leave a reset password or revoked session behind.
+
+### Verification
+
+- Review RED suite: 5 expected failures covering fail-closed MySQL configuration, missing admin role, bootstrap credential failure rollback, and both endpoint rollback paths.
+- Review GREEN focused suite: 5 passed; MySQL bootstrap mock transaction: 1 passed.
+- Regression suite: 131 passed in 81.66 seconds.
+
+### Residual Risk
+
+- The MySQL transaction path is exercised with a deterministic mock. A live MySQL integration environment is still required to validate server-side constraint and isolation behavior under concurrent production load.

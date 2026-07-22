@@ -21,13 +21,19 @@ from .auth import AuthContext, request_context, split_header_list
 from .auth_store import (
     credential_for_user,
     iso_utc,
+    mysql_credential_for_user,
     new_credential,
     revoke_user_sessions,
+    revoke_user_sessions_mysql,
     save_credential,
     utc_now,
+    write_mysql_credential,
 )
 from .database import (
+    admin_credentials_json_path,
+    admin_sessions_json_path,
     admin_users_json_path,
+    json_transaction,
     load_json_records,
     mysql_connect,
     save_json_records,
@@ -1319,11 +1325,17 @@ def patch_user(user_id: str, payload: AdminUserPatch, context: AuthContext = Dep
 
 
 def set_temporary_password(user: dict[str, Any], temporary_password: str) -> None:
+    credential = temporary_password_credential(user, temporary_password, credential_for_user(str(user["id"])))
+    save_credential(credential)
+
+
+def temporary_password_credential(
+    user: dict[str, Any], temporary_password: str, credential: dict[str, Any] | None
+) -> dict[str, Any]:
     errors = password_errors(temporary_password)
     if errors:
         raise HTTPException(status_code=422, detail={"errors": errors})
     now = utc_now()
-    credential = credential_for_user(str(user["id"]))
     if credential is None:
         credential = new_credential(str(user["id"]), hash_password(temporary_password))
     else:
@@ -1334,7 +1346,57 @@ def set_temporary_password(user: dict[str, Any], temporary_password: str) -> Non
     credential["failedLoginCount"] = 0
     credential["lockedUntil"] = None
     credential["updatedAt"] = iso_utc(now)
-    save_credential(credential)
+    return credential
+
+
+def security_audit_fields(include_password: bool) -> list[str]:
+    fields = ["sessions"]
+    if include_password:
+        fields = [
+            "passwordHash", "passwordChangedAt", "mustChangePassword", "failedLoginCount",
+            "lockedUntil", "credentialVersion", *fields,
+        ]
+    return fields
+
+
+def apply_account_security_action(
+    user: dict[str, Any], context: AuthContext, *, temporary_password: str | None = None
+) -> int:
+    include_password = temporary_password is not None
+    action = "set_password" if include_password else "revoke_sessions"
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    if include_password:
+                        credential = mysql_credential_for_user(cur, str(user["id"]), lock=True)
+                        write_mysql_credential(cur, temporary_password_credential(user, temporary_password, credential))
+                    revoked = revoke_user_sessions_mysql(cur, str(user["id"]))
+                    audited = append_user_audit_event(
+                        user, action, context, changed_fields=security_audit_fields(include_password)
+                    )
+                    execute_upsert_user_mysql(cur, audited)
+                conn.commit()
+                return revoked
+            except Exception:
+                conn.rollback()
+                raise
+    if not use_postgis():
+        with json_transaction([admin_users_json_path(), admin_credentials_json_path(), admin_sessions_json_path()]):
+            if include_password:
+                set_temporary_password(user, temporary_password)
+            revoked = revoke_user_sessions(str(user["id"]))
+            audited = append_user_audit_event(
+                user, action, context, changed_fields=security_audit_fields(include_password)
+            )
+            save_user(audited)
+            return revoked
+    if include_password:
+        set_temporary_password(user, temporary_password)
+    revoked = revoke_user_sessions(str(user["id"]))
+    audited = append_user_audit_event(user, action, context, changed_fields=security_audit_fields(include_password))
+    save_user(audited)
+    return revoked
 
 
 @router.post("/users/{user_id}/set-password")
@@ -1347,23 +1409,7 @@ def set_user_password(
     user = find_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    set_temporary_password(user, payload.temporaryPassword)
-    revoke_user_sessions(str(user["id"]))
-    audited = append_user_audit_event(
-        user,
-        "set_password",
-        context,
-        changed_fields=[
-            "passwordHash",
-            "passwordChangedAt",
-            "mustChangePassword",
-            "failedLoginCount",
-            "lockedUntil",
-            "credentialVersion",
-            "sessions",
-        ],
-    )
-    save_user(audited)
+    apply_account_security_action(user, context, temporary_password=payload.temporaryPassword)
     return {"ok": True, "mustChangePassword": True}
 
 
@@ -1373,9 +1419,7 @@ def revoke_sessions(user_id: str, context: AuthContext = Depends(request_context
     user = find_user(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    revoked = revoke_user_sessions(str(user["id"]))
-    audited = append_user_audit_event(user, "revoke_sessions", context, changed_fields=["sessions"])
-    save_user(audited)
+    revoked = apply_account_security_action(user, context)
     return {"ok": True, "revoked": revoked}
 
 

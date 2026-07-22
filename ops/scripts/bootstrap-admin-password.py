@@ -12,8 +12,10 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from server.modules import admin_users
-from server.modules.auth_store import credential_for_user, iso_utc, new_credential, save_credential, utc_now
+from server.modules import admin_roles, admin_users
+from server.modules.auth import AuthContext
+from server.modules.auth_store import credential_for_user, iso_utc, mysql_credential_for_user, new_credential, save_credential, utc_now, write_mysql_credential
+from server.modules.database import admin_credentials_json_path, admin_roles_json_path, admin_sessions_json_path, admin_users_json_path, json_transaction, mysql_connect, use_mysql
 from server.modules.passwords import hash_password, password_errors
 from server.modules.settings import get_settings
 
@@ -35,11 +37,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def administrator_role() -> dict:
+    return admin_roles.normalize_role({
+        "roleCode": "admin",
+        "name": "System Administrator",
+        "status": "active",
+        "permissions": [item["code"] for item in admin_roles.permission_catalog()],
+        "menuModules": [item["key"] for item in admin_roles.ADMIN_MENU_MODULES],
+    })
+
+
+def credential_for_password(user_id: str, password: str, existing: dict | None) -> dict:
+    now = utc_now()
+    credential = existing or new_credential(user_id, hash_password(password))
+    if existing is not None:
+        credential["passwordHash"] = hash_password(password)
+        credential["credentialVersion"] += 1
+    credential["passwordChangedAt"] = iso_utc(now)
+    credential["mustChangePassword"] = True
+    credential["failedLoginCount"] = 0
+    credential["lockedUntil"] = None
+    credential["updatedAt"] = iso_utc(now)
+    return credential
+
+
 def main() -> int:
     args = parse_args()
-    settings = get_settings()
-    if settings.storage_backend != "mysql" and not args.allow_json_development:
-        print("Refusing non-MySQL storage; pass --allow-json-development only for local development.", file=sys.stderr)
+    if not args.allow_json_development and not use_mysql():
+        print("Refusing startup without a usable MySQL configuration; pass --allow-json-development only for local development.", file=sys.stderr)
         return 2
 
     generated = not args.password_stdin
@@ -80,21 +105,48 @@ def main() -> int:
                 "deletedAt": None,
             }
         )
-    admin_users.save_user(user)
+    existing_role = admin_roles.role_by_code("admin", include_deleted=True)
+    role = administrator_role()
+    if existing_role is not None:
+        role.update({
+            "id": existing_role["id"],
+            "createdAt": existing_role["createdAt"],
+            "properties": existing_role.get("properties") or {},
+        })
+    user["roles"] = admin_users.compact_list([*(user.get("roles") or []), "admin"])
+    context = AuthContext(user="bootstrap", roles={"admin"}, projects={"*"}, areas={"*"})
+    user = admin_users.append_user_audit_event(user, "bootstrap_password", context, changed_fields=["roles", "passwordHash", "credentialVersion", "sessions"])
 
-    now = utc_now()
-    credential = credential_for_user(user["id"])
-    if credential is None:
-        credential = new_credential(user["id"], hash_password(password))
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    admin_roles.execute_upsert_role_mysql(cur, role)
+                    admin_users.execute_upsert_user_mysql(cur, user)
+                    write_mysql_credential(cur, credential_for_password(user["id"], password, mysql_credential_for_user(cur, user["id"], lock=True)))
+                    cur.execute("UPDATE admin_sessions SET revoked_at = %s WHERE admin_user_id = %s AND revoked_at IS NULL", (iso_utc(utc_now()), user["id"]))
+                    cur.execute("SELECT 1 FROM admin_user_roles aur JOIN admin_roles ar ON ar.id = aur.admin_role_id WHERE aur.admin_user_id = %s AND ar.role_code = %s", (user["id"], "admin"))
+                    if cur.fetchone() is None:
+                        raise RuntimeError("admin role association was not created")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     else:
-        credential["passwordHash"] = hash_password(password)
-        credential["credentialVersion"] += 1
-    credential["passwordChangedAt"] = iso_utc(now)
-    credential["mustChangePassword"] = True
-    credential["failedLoginCount"] = 0
-    credential["lockedUntil"] = None
-    credential["updatedAt"] = iso_utc(now)
-    save_credential(credential)
+        with json_transaction([admin_users_json_path(), admin_roles_json_path(), admin_credentials_json_path(), admin_sessions_json_path()]):
+            roles = admin_roles.load_all_roles()
+            for index, existing_role in enumerate(roles):
+                if existing_role.get("roleCode") == "admin":
+                    roles[index] = role
+                    break
+            else:
+                roles.append(role)
+            admin_roles.save_roles(roles)
+            admin_users.save_user(user)
+            credential = credential_for_password(user["id"], password, credential_for_user(user["id"]))
+            save_credential(credential)
+            from server.modules.auth_store import revoke_user_sessions
+            revoke_user_sessions(user["id"])
 
     print(f"Bootstrap administrator initialized: {user['username']}")
     if generated:

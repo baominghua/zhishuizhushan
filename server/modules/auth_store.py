@@ -442,3 +442,14 @@ def revoke_user_sessions(user_id: str, except_session_id: str | None = None) -> 
         if revoked:
             save_json_records(admin_sessions_json_path(), records)
         return revoked
+
+
+def revoke_user_sessions_mysql(cur: Any, user_id: str, except_session_id: str | None = None) -> int:
+    revoked_at = iso_utc(utc_now())
+    where = "admin_user_id = %s AND revoked_at IS NULL"
+    params: list[Any] = [mysql_datetime(revoked_at), user_id]
+    if except_session_id is not None:
+        where += " AND id <> %s"
+        params.append(except_session_id)
+    cur.execute(f"UPDATE admin_sessions SET revoked_at = %s WHERE {where}", tuple(params))
+    return int(cur.rowcount)
