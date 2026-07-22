@@ -1868,7 +1868,7 @@
   async function downloadFile(path, filename, messages) {
     setStatus("busy", messages.busy);
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}${path}`, {
+      const response = await AdminCommon.fetchWithSession(path, {
         headers: AdminCommon.buildHeaders(),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

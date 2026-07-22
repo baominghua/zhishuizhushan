@@ -1,11 +1,9 @@
 (() => {
-  const { $, apiBase, buildHeaders, escapeHtml, initShell, setStatus } = AdminCommon;
+  const { $, escapeHtml, fetchWithSession, initShell, setStatus } = AdminCommon;
   const PAGE_PERMISSION = "system.deployment.view";
 
   async function fetchDeploymentHealth() {
-    const response = await fetch(`${apiBase()}/api/health`, {
-      headers: buildHeaders(),
-    });
+    const response = await fetchWithSession("/api/health");
     const contentType = response.headers.get("content-type") || "";
     const payload = contentType.includes("application/json")
       ? await response.json()
@@ -17,9 +15,7 @@
   async function exportDeploymentReport() {
     setStatus("busy", "正在导出部署诊断报告...");
     try {
-      const response = await fetch(`${apiBase()}/api/deployment/report.json`, {
-        headers: buildHeaders(),
-      });
+      const response = await fetchWithSession("/api/deployment/report.json");
       if (!response.ok) {
         const payload = await response.text();
         throw new Error(`${response.status} ${payload || response.statusText}`);

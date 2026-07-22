@@ -1,0 +1,189 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+
+const source = `${fs.readFileSync(path.join(process.cwd(), "admin-common.js"), "utf8")}\nglobalThis.__AdminCommon = AdminCommon;`;
+
+class ClassList {
+  constructor() { this.values = new Set(); }
+  add(...values) { values.forEach((value) => this.values.add(value)); }
+  remove(...values) { values.forEach((value) => this.values.delete(value)); }
+  toggle(value, force) {
+    const enabled = force === undefined ? !this.values.has(value) : Boolean(force);
+    if (enabled) this.add(value); else this.remove(value);
+    return enabled;
+  }
+  contains(value) { return this.values.has(value); }
+}
+
+class Element {
+  constructor(id = "", documentRef = null) {
+    this.id = id;
+    this.documentRef = documentRef;
+    this.attributes = {};
+    this.classList = new ClassList();
+    this.dataset = {};
+    this.hidden = false;
+    this.listeners = new Map();
+    this.textContent = "";
+    this.value = "";
+    this.children = [];
+    this.open = false;
+  }
+  addEventListener(event, listener) { this.listeners.set(event, listener); }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  getAttribute(name) { return this.attributes[name] || null; }
+  removeAttribute(name) { delete this.attributes[name]; }
+  append(...children) { this.children.push(...children); }
+  appendChild(child) { this.append(child); return child; }
+  prepend(child) { this.children.unshift(child); }
+  insertBefore(child) { this.append(child); }
+  focus() { this.focused = true; }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+  set innerHTML(value) {
+    this._innerHTML = value;
+    for (const match of String(value).matchAll(/id="([^"]+)"/g)) {
+      const child = new Element(match[1], this.documentRef);
+      this.documentRef.elements.set(`#${child.id}`, child);
+      this.children.push(child);
+    }
+  }
+  get innerHTML() { return this._innerHTML || ""; }
+}
+
+function jsonResponse(status, payload = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: "status",
+    headers: { get: () => "application/json" },
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  };
+}
+
+function storage(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, String(value)); },
+    removeItem(key) { values.delete(key); },
+    has(key) { return values.has(key); },
+  };
+}
+
+function createHarness({ responses, href = "https://zhushan.example/admin-users.html?role=operator#ledger" }) {
+  const elements = new Map();
+  const documentRef = {
+    elements,
+    body: new Element("body"),
+    createElement() { return new Element("", documentRef); },
+    querySelector(selector) { return elements.get(selector) || null; },
+    querySelectorAll() { return []; },
+  };
+  documentRef.body.dataset = { adminModule: "users", permission: "system.users.view" };
+  for (const id of ["apiBase", "statusBadge", "statusText"]) {
+    const element = new Element(id, documentRef);
+    elements.set(`#${id}`, element);
+  }
+  const calls = [];
+  const queue = [...responses];
+  const sessionStorage = storage({ smartBambooCsrfToken: "csrf-secret", smartBambooAuthProfile: "old profile" });
+  const location = {
+    href,
+    origin: new URL(href).origin,
+    protocol: new URL(href).protocol,
+    pathname: new URL(href).pathname,
+    search: new URL(href).search,
+    hash: new URL(href).hash,
+    replace(value) { this.replacedWith = value; },
+  };
+  const context = {
+    Headers,
+    FormData,
+    URL,
+    URLSearchParams,
+    document: documentRef,
+    sessionStorage,
+    localStorage: storage(),
+    window: { location, setTimeout(callback) { callback(); } },
+    fetch(url, options = {}) {
+      calls.push({ url, options });
+      const response = queue.shift();
+      if (!response) throw new Error(`Unexpected fetch: ${url}`);
+      return response;
+    },
+  };
+  vm.runInNewContext(source, context, { filename: "admin-common.js" });
+  return { calls, context, documentRef, elements, location, sessionStorage };
+}
+
+async function settle() {
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+}
+
+test("shared API uses cookies, limits CSRF to human writes, and redirects 401s locally", async () => {
+  const harness = createHarness({ responses: [jsonResponse(200, { ok: true }), jsonResponse(401, { detail: "expired" })] });
+  const common = harness.context.__AdminCommon;
+  await common.api("/api/records", { method: "POST", body: "{}" });
+
+  assert.equal(harness.calls[0].options.credentials, "include");
+  assert.equal(harness.calls[0].options.headers.get("X-CSRF-Token"), "csrf-secret");
+  assert.equal(common.buildHeaders({}, "POST").get("X-CSRF-Token"), "csrf-secret");
+  await assert.rejects(common.api("/api/records"), /401 expired/);
+  assert.equal(harness.calls[1].options.credentials, "include");
+  assert.equal(harness.calls[1].options.headers.has("X-CSRF-Token"), false);
+  assert.equal(harness.location.replacedWith, "admin-login.html?returnTo=admin-users.html%3Frole%3Doperator%23ledger");
+});
+
+test("session refresh renders effective permissions and blocks then releases forced password change", async () => {
+  const harness = createHarness({
+    responses: [
+      jsonResponse(200, { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: true }),
+      jsonResponse(200, { ok: true }),
+      jsonResponse(200, { authenticated: true, authType: "session", user: "operator", roles: ["operator"], permissions: ["system.users.view"], menuModules: [], visibleMenuModules: [], mustChangePassword: false }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+  await common.refreshSession();
+  assert.equal(harness.calls[0].url, "https://zhushan.example/api/auth/me");
+  assert.equal(harness.documentRef.body.classList.contains("password-change-required"), true);
+
+  const form = harness.elements.get("#forcedPasswordChangeForm");
+  harness.elements.get("#currentPassword").value = "old-password";
+  harness.elements.get("#newPassword").value = "New-password-1";
+  harness.elements.get("#confirmPassword").value = "New-password-1";
+  await form.listeners.get("submit")({ preventDefault() {} });
+  await settle();
+
+  assert.equal(harness.calls[1].url, "https://zhushan.example/api/auth/change-password");
+  assert.equal(harness.calls[1].options.headers.get("X-CSRF-Token"), "csrf-secret");
+  assert.equal(harness.documentRef.body.classList.contains("password-change-required"), false);
+  assert.equal(harness.elements.get("#currentPassword").value, "");
+  assert.equal(harness.elements.get("#newPassword").value, "");
+  assert.equal(harness.elements.get("#confirmPassword").value, "");
+});
+
+test("logout posts before clearing session state and returning to login", async () => {
+  const harness = createHarness({ responses: [jsonResponse(200, { ok: true })] });
+  await harness.context.__AdminCommon.logout();
+
+  assert.equal(harness.calls[0].url, "https://zhushan.example/api/auth/logout");
+  assert.equal(harness.calls[0].options.method, "POST");
+  assert.equal(harness.calls[0].options.headers.get("X-CSRF-Token"), "csrf-secret");
+  assert.equal(harness.sessionStorage.has("smartBambooCsrfToken"), false);
+  assert.equal(harness.sessionStorage.has("smartBambooAuthProfile"), false);
+  assert.equal(harness.location.replacedWith, "admin-login.html?returnTo=admin-users.html%3Frole%3Doperator%23ledger");
+});
+
+test("raw admin downloads and uploads use the same session-aware fetch gate", async () => {
+  const harness = createHarness({ responses: [jsonResponse(200, { ok: true })] });
+  const response = await harness.context.__AdminCommon.fetchWithSession("/api/report.json", { method: "POST" });
+
+  assert.equal(response.ok, true);
+  assert.equal(harness.calls[0].options.credentials, "include");
+  assert.equal(harness.calls[0].options.headers.get("X-CSRF-Token"), "csrf-secret");
+});

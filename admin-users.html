@@ -103,7 +103,7 @@
           </form>
           <section id="userDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
             <div class="panel detail-panel detail-drawer-panel">
-              <div class="panel-header"><div><p class="eyebrow">账号详情</p><h2 id="userDetailTitle">选择账号查看详情</h2></div><div class="panel-actions"><button id="exportUserAccessReceipt" type="button" class="button-ghost" data-permission="system.users.export">导出回执</button><button id="closeUserDetail" type="button" class="button-ghost">关闭</button></div></div>
+              <div class="panel-header"><div><p class="eyebrow">账号详情</p><h2 id="userDetailTitle">选择账号查看详情</h2></div><div class="panel-actions"><button id="setTemporaryPassword" type="button" class="button-ghost" data-permission="system.users.setPassword">设置临时密码</button><button id="revokeUserSessions" type="button" class="button-ghost" data-permission="system.users.revokeSessions">撤销会话</button><button id="exportUserAccessReceipt" type="button" class="button-ghost" data-permission="system.users.export">导出回执</button><button id="closeUserDetail" type="button" class="button-ghost">关闭</button></div></div>
               <p id="userDetailEmpty" class="detail-empty">从台账选择一条账号记录查看详情。</p>
               <dl id="userDetailGrid" class="detail-grid"></dl>
               <div id="userAccessReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
@@ -115,6 +115,14 @@
               </div>
               <div class="task-events"><h3>变更审计</h3><div id="userAuditEventList" class="trace-list"></div></div>
             </div>
+          </section>
+          <section id="temporaryPasswordDialog" class="crud-modal hidden" role="dialog" aria-modal="true" aria-labelledby="temporaryPasswordTitle" aria-hidden="true">
+            <form id="temporaryPasswordForm" class="panel form-panel detail-drawer-panel">
+              <div class="panel-header"><div><p class="eyebrow">账号安全</p><h2 id="temporaryPasswordTitle">设置临时密码</h2></div><button id="cancelTemporaryPassword" type="button" class="button-ghost">关闭</button></div>
+              <label for="temporaryPassword"><span>临时密码</span><input id="temporaryPassword" type="password" autocomplete="new-password" required /></label>
+              <p id="temporaryPasswordStatus" class="form-status" aria-live="polite"></p>
+              <div class="panel-actions"><button id="submitTemporaryPassword" type="submit" data-permission="system.users.setPassword">确认设置</button></div>
+            </form>
           </section>
         </section>
         <section class="panel table-panel">

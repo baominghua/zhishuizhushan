@@ -562,11 +562,12 @@ def test_admin_pages_use_page_specific_scripts_with_shared_shell():
         assert f'src="{script}' in html
 
 
-def test_shared_admin_shell_loads_role_based_menu_permissions():
+def test_shared_admin_shell_loads_effective_menu_permissions_from_session_profile():
     js = _read("admin-common.js")
 
-    assert "/api/admin/roles/menu" in js
-    assert "/api/admin/effective-permissions" in js
+    assert 'api("/api/auth/me"' in js
+    assert "function refreshSession" in js
+    assert "applyMenuAndPermissions(payload)" in js
     assert "function visibleMenuKeys" in js
     assert "payload.visibleMenuModules" in js
     assert "allowedModules.includes(link.dataset.module)" in js
@@ -1196,7 +1197,7 @@ def test_user_account_admin_refreshes_effective_menu_after_user_mutations():
     common_js = _read("admin-common.js")
     users_js = _read("admin-users.js")
 
-    assert "refreshRoleMenu: applyRoleMenu" in common_js
+    assert "refreshRoleMenu: refreshSession" in common_js
     assert "refreshRoleMenu" in users_js
     assert users_js.count("await refreshRoleMenu();") >= 3
 
@@ -1219,7 +1220,7 @@ def test_role_admin_refreshes_effective_menu_after_role_mutations():
     common_js = _read("admin-common.js")
     roles_js = _read("admin-roles.js")
 
-    assert "refreshRoleMenu: applyRoleMenu" in common_js
+    assert "refreshRoleMenu: refreshSession" in common_js
     assert "refreshRoleMenu" in roles_js
     assert roles_js.count("await refreshRoleMenu();") >= 3
 
@@ -1832,21 +1833,23 @@ def test_admin_light_theme_defines_all_used_design_tokens():
     assert used_tokens <= defined_tokens
 
 
-def test_admin_login_uses_bearer_session_and_preserves_safe_return_path():
+def test_admin_login_uses_cookie_session_and_preserves_safe_return_path():
     html = _read("admin-login.html")
     js = _read("admin-login.js")
     common = _read("admin-common.js")
 
-    assert 'id="accessToken"' in html
+    assert 'id="accessToken"' not in html
     assert 'id="loginForm"' in html
     assert 'type="password"' in html
     assert "/api/auth/me" in js
     assert "sessionStorage.setItem" in js
-    assert "localStorage.setItem" in js
+    assert 'credentials: "include"' in js
     assert "safeReturnPath" in js
-    assert 'headers.set("Authorization", `Bearer ${token}`)' in common
+    assert 'credentials: "include"' in common
+    assert 'headers.set("X-CSRF-Token", csrfToken())' in common
+    assert "smartBambooAdminTokenPersistent" not in common
     assert "redirectToLogin" in common
-    assert "clearAuthToken" in common
+    assert "clearSessionState" in common
 
 
 def test_smart_bamboo_ui_design_baseline_documents_product_admin_direction():
@@ -2902,13 +2905,13 @@ def test_business_module_admin_edits_domain_core_fields_without_forcing_json_ent
     assert ".business-core-field-input" in css
 
 
-def test_admin_shell_clears_permissions_when_role_header_is_empty():
+def test_admin_shell_defers_permissions_to_the_session_profile():
     js = _read("admin-common.js")
 
-    assert "const emptyPayload" in js
-    assert "visibleMenuModules: []" in js
-    assert "permissions: []" in js
-    assert "renderEffectivePermissionStatus(emptyPayload)" in js
+    assert "currentProfile" in js
+    assert "sessionReadyPromise" in js
+    assert "document.body.classList.add(\"admin-session-pending\")" in js
+    assert "path !== \"/api/auth/me\" && sessionReadyPromise" in js
 
 
 def test_admin_shell_rebuilds_sidebar_navigation_from_effective_menu_modules():

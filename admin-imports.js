@@ -1898,7 +1898,7 @@
   async function downloadFile(path, filename, messages) {
     setStatus("busy", messages.busy);
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}${path}`, {
+      const response = await AdminCommon.fetchWithSession(path, {
         headers: AdminCommon.buildHeaders(),
       });
       if (!response.ok) {
@@ -2279,9 +2279,8 @@
     formData.append("strategy", $("#importStrategy").value);
     setStatus("busy", "正在上传并入库...");
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}/api/imports/forest-blocks`, {
+      const response = await AdminCommon.fetchWithSession("/api/imports/forest-blocks", {
         method: "POST",
-        headers: buildHeaders(),
         body: formData,
       });
       const report = await response.json();

@@ -259,6 +259,44 @@ a {
   user-select: none;
 }
 
+.admin-session-pending .admin-main,
+.password-change-required .admin-shell {
+  visibility: hidden;
+}
+
+.forced-password-change {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(243, 246, 245, 0.94);
+}
+
+.forced-password-change-panel {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.forced-password-change-panel h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.forced-password-change-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .topbar-copy p {
   margin-top: 0;
 }

@@ -22,6 +22,8 @@
   const USER_DELETE_PERMISSION = "system.users.delete";
   const USER_RESTORE_PERMISSION = "system.users.restore";
   const USER_EVENT_EXPORT_PERMISSION = "system.users.export";
+  const USER_SET_PASSWORD_PERMISSION = "system.users.setPassword";
+  const USER_REVOKE_SESSIONS_PERMISSION = "system.users.revokeSessions";
   const state = {
     users: [],
     userEvents: [],
@@ -42,6 +44,11 @@
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>';
   const RESTORE_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.4-6.4"></path><path d="M18 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.4 6.4"></path><path d="M6 21v-5h5"></path></svg>';
+  const PASSWORD_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="1"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path><path d="M12 14v2"></path></svg>';
+  const REVOKE_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"></path><path d="M5 12a9 9 0 0 1 15.5-6.2"></path><path d="M19 12a9 9 0 0 1-15.5 6.2"></path></svg>';
+  let temporaryPasswordUser = null;
 
   function activeUser() {
     return state.users.find((user) => String(user.id) === String(state.activeId)) || null;
@@ -274,7 +281,10 @@
         </div>
       `;
     }
-    return rowActionButtons({ edit: USER_UPDATE_PERMISSION, delete: USER_DELETE_PERMISSION });
+    return rowActionButtons({ edit: USER_UPDATE_PERMISSION, delete: USER_DELETE_PERMISSION }).replace(
+      "</div>",
+      `<button type="button" class="icon-button" data-user-security-action="set-password" data-permission="${USER_SET_PASSWORD_PERMISSION}" aria-label="设置临时密码" title="设置临时密码">${PASSWORD_ICON}</button><button type="button" class="icon-button danger" data-user-security-action="revoke-sessions" data-permission="${USER_REVOKE_SESSIONS_PERMISSION}" aria-label="撤销会话" title="撤销会话">${REVOKE_ICON}</button></div>`,
+    );
   }
 
   function renderRows() {
@@ -909,7 +919,7 @@
   async function downloadFile(path, filename, messages) {
     setStatus("busy", messages.busy);
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}${path}`, {
+      const response = await AdminCommon.fetchWithSession(path, {
         headers: AdminCommon.buildHeaders(),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -992,6 +1002,67 @@
     }
   }
 
+  function closeTemporaryPasswordDialog() {
+    $("#temporaryPasswordDialog").classList.add("hidden");
+    $("#temporaryPasswordDialog").setAttribute("aria-hidden", "true");
+    $("#temporaryPassword").value = "";
+    $("#temporaryPasswordStatus").textContent = "";
+    temporaryPasswordUser = null;
+  }
+
+  function openTemporaryPasswordDialog(user = activeUser()) {
+    if (!user?.id) {
+      setStatus("offline", "请先从账号台账选择一个账号。");
+      return;
+    }
+    temporaryPasswordUser = user;
+    $("#temporaryPasswordTitle").textContent = `设置 ${user.username || "账号"} 的临时密码`;
+    $("#temporaryPassword").value = "";
+    $("#temporaryPasswordStatus").textContent = "";
+    $("#temporaryPasswordDialog").classList.remove("hidden");
+    $("#temporaryPasswordDialog").setAttribute("aria-hidden", "false");
+    $("#temporaryPassword").focus();
+  }
+
+  async function submitTemporaryPassword(event) {
+    event.preventDefault();
+    const password = $("#temporaryPassword");
+    const status = $("#temporaryPasswordStatus");
+    const user = temporaryPasswordUser;
+    try {
+      if (!user?.id) throw new Error("请先选择账号。");
+      if (!password.value) throw new Error("请输入临时密码。");
+      status.textContent = "正在设置临时密码...";
+      await api(`/api/admin/users/${encodeURIComponent(user.id)}/set-password`, {
+        method: "POST",
+        body: JSON.stringify({ temporaryPassword: password.value }),
+      });
+      status.textContent = "临时密码已设置，账号下次登录时必须修改密码。";
+      setStatus("online", "临时密码已设置，并已撤销该账号现有会话。");
+    } catch (error) {
+      status.textContent = error.message || "临时密码设置失败。";
+      setStatus("offline", `临时密码设置失败：${error.message}`);
+    } finally {
+      password.value = "";
+    }
+  }
+
+  async function revokeUserSessions(user = activeUser()) {
+    if (!user?.id) {
+      setStatus("offline", "请先从账号台账选择一个账号。");
+      return;
+    }
+    setStatus("busy", "正在撤销账号会话...");
+    try {
+      const payload = await api(`/api/admin/users/${encodeURIComponent(user.id)}/revoke-sessions`, { method: "POST" });
+      setStatus("online", `已撤销 ${payload.revoked ?? 0} 个会话。`);
+      return payload;
+    } catch (error) {
+      setStatus("offline", `撤销会话失败：${error.message}`);
+      throw error;
+    }
+  }
+
   async function deleteUser(user = activeUser()) {
     if (!user) return;
     setStatus("busy", "正在删除用户账号...");
@@ -1028,6 +1099,18 @@
   }
 
   function handleRowAction(event) {
+    const securityButton = event.target.closest("[data-user-security-action]");
+    if (securityButton) {
+      event.stopPropagation();
+      if (securityButton.disabled) return true;
+      const row = securityButton.closest("tr[data-id]");
+      const user = state.users.find((item) => String(item.id) === String(row?.dataset.id)) || null;
+      if (!user) return true;
+      state.activeId = user.id;
+      if (securityButton.dataset.userSecurityAction === "set-password") openTemporaryPasswordDialog(user);
+      if (securityButton.dataset.userSecurityAction === "revoke-sessions") revokeUserSessions(user);
+      return true;
+    }
     const userButton = event.target.closest("[data-user-action]");
     if (userButton) {
       event.stopPropagation();
@@ -1088,6 +1171,10 @@
     $("#cancelUserEdit").addEventListener("click", closeUserEditor);
     $("#closeUserDetail").addEventListener("click", closeUserDetail);
     $("#deleteUser").addEventListener("click", () => deleteUser(activeUser()));
+    $("#setTemporaryPassword").addEventListener("click", () => openTemporaryPasswordDialog(activeUser()));
+    $("#revokeUserSessions").addEventListener("click", () => revokeUserSessions(activeUser()));
+    $("#temporaryPasswordForm").addEventListener("submit", submitTemporaryPassword);
+    $("#cancelTemporaryPassword").addEventListener("click", closeTemporaryPasswordDialog);
     $("#exportUserAccessReceipt")?.addEventListener("click", () => exportUserAccessReceipt(activeUser()));
     $("#userAccessReceiptSummary")?.addEventListener("click", handleUserAccessReceiptSummaryAction);
     $("#exportUserEvents")?.setAttribute("data-permission", USER_EVENT_EXPORT_PERMISSION);

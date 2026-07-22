@@ -1327,7 +1327,7 @@
   async function downloadFile(path, filename, messages) {
     setStatus("busy", messages.busy);
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}${path}`, {
+      const response = await AdminCommon.fetchWithSession(path, {
         headers: AdminCommon.buildHeaders(),
       });
       if (!response.ok) {
@@ -2071,9 +2071,8 @@
     form.append("file", file);
     setStatus("busy", "正在创建影像入库任务...");
     try {
-      const response = await fetch(`${AdminCommon.apiBase()}/api/scenes/upload`, {
+      const response = await AdminCommon.fetchWithSession("/api/scenes/upload", {
         method: "POST",
-        headers: AdminCommon.buildHeaders(),
         body: form,
       });
       const contentType = response.headers.get("content-type") || "";

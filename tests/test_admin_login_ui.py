@@ -52,3 +52,29 @@ def test_https_requirement_keeps_the_password_submit_control_disabled():
     script = (project_root() / "admin-login.js").read_text(encoding="utf-8")
 
     assert 'button.disabled = passwordLoginBlocked;' in script
+
+
+def test_admin_common_uses_cookie_sessions_and_csrf_for_human_mutations():
+    script = (project_root() / "admin-common.js").read_text(encoding="utf-8")
+
+    assert 'credentials: "include"' in script
+    assert 'headers.set("X-CSRF-Token", csrfToken())' in script
+    assert 'api("/api/auth/logout", { method: "POST" })' in script
+    assert "smartBambooAdminTokenPersistent" not in script
+
+
+def test_user_page_has_separate_password_security_actions():
+    html = (project_root() / "admin-users.html").read_text(encoding="utf-8")
+
+    assert 'id="setTemporaryPassword"' in html
+    assert 'data-permission="system.users.setPassword"' in html
+    assert 'id="revokeUserSessions"' in html
+    assert 'data-permission="system.users.revokeSessions"' in html
+
+
+def test_every_admin_fetch_explicitly_includes_cookie_credentials():
+    root = project_root()
+
+    for script_path in root.glob("admin-*.js"):
+        script = script_path.read_text(encoding="utf-8")
+        assert script.count('credentials: "include"') >= script.count("fetch("), script_path.name

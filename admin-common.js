@@ -2,10 +2,11 @@ const AdminCommon = (() => {
   const DEFAULT_API_BASE = /^https?:$/.test(window.location.protocol)
     ? window.location.origin
     : "http://127.0.0.1:8010";
-  const SESSION_TOKEN_KEY = "smartBambooAdminToken";
-  const PERSISTENT_TOKEN_KEY = "smartBambooAdminTokenPersistent";
+  const CSRF_TOKEN_KEY = "smartBambooCsrfToken";
   const AUTH_PROFILE_KEY = "smartBambooAuthProfile";
   let currentAllowedPermissions = null;
+  let currentProfile = null;
+  let sessionReadyPromise = null;
 
   const LABELS = {
     baseType: {
@@ -198,33 +199,43 @@ const AdminCommon = (() => {
     }
   }
 
-  function buildHeaders(extraHeaders) {
+  function buildHeaders(extraHeaders, method = "GET") {
     const headers = new Headers(extraHeaders || {});
-    const token = authToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    const roles = splitValues($("#authRoles")?.value || "admin").join(",") || "admin";
-    const areas = splitValues($("#authAreas")?.value || "").join(",");
-    const user = String($("#authUser")?.value || "").trim();
-    headers.set("X-RS-Roles", roles);
-    if (areas) headers.set("X-RS-Areas", areas);
-    if (user) headers.set("X-RS-User", user);
+    if (currentProfile?.authType !== "session") {
+      const roles = splitValues($("#authRoles")?.value || "").join(",");
+      const areas = splitValues($("#authAreas")?.value || "").join(",");
+      const user = String($("#authUser")?.value || "").trim();
+      if (roles) headers.set("X-RS-Roles", roles);
+      if (areas) headers.set("X-RS-Areas", areas);
+      if (user) headers.set("X-RS-User", user);
+    }
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(String(method).toUpperCase()) && csrfToken() && currentProfile?.authType !== "service-token") {
+      headers.set("X-CSRF-Token", csrfToken());
+    }
     return headers;
   }
 
-  function authToken() {
-    return sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(PERSISTENT_TOKEN_KEY) || "";
+  function csrfToken() {
+    return sessionStorage.getItem(CSRF_TOKEN_KEY) || "";
   }
 
-  function clearAuthToken() {
-    sessionStorage.removeItem(SESSION_TOKEN_KEY);
-    localStorage.removeItem(PERSISTENT_TOKEN_KEY);
+  function clearSessionState() {
+    sessionStorage.removeItem(CSRF_TOKEN_KEY);
     sessionStorage.removeItem(AUTH_PROFILE_KEY);
+    currentProfile = null;
   }
 
   function redirectToLogin() {
     if (window.location.pathname.endsWith("/admin-login.html")) return;
-    const returnTo = `${window.location.pathname.split("/").pop() || "admin.html"}${window.location.search}${window.location.hash}`;
+    const current = new URL(window.location.href, window.location.origin);
+    if (current.origin !== window.location.origin) return;
+    const fileName = current.pathname.split("/").pop() || "admin.html";
+    const returnTo = /^admin(?:-[a-z0-9-]+)?\.html$/i.test(fileName) ? `${fileName}${current.search}${current.hash}` : "admin.html";
     window.location.replace(`admin-login.html?returnTo=${encodeURIComponent(returnTo)}`);
+  }
+
+  function isPasswordChangeRequired(status, payload) {
+    return status === 403 && payload && typeof payload === "object" && payload.detail === "Password change required";
   }
 
   async function parseResponse(response) {
@@ -232,6 +243,7 @@ const AdminCommon = (() => {
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     if (!response.ok) {
       if (response.status === 401) redirectToLogin();
+      if (isPasswordChangeRequired(response.status, payload)) showForcedPasswordChange();
       const detail =
         payload && typeof payload === "object"
           ? payload.detail || JSON.stringify(payload)
@@ -242,13 +254,33 @@ const AdminCommon = (() => {
   }
 
   async function api(path, options = {}) {
-    const requestOptions = { ...options };
-    const headers = buildHeaders(requestOptions.headers);
+    const requestOptions = { credentials: "include", ...options };
+    const skipSessionReady = requestOptions.skipSessionReady;
+    delete requestOptions.skipSessionReady;
+    if (!skipSessionReady && path !== "/api/auth/me" && sessionReadyPromise) await sessionReadyPromise;
+    const method = String(requestOptions.method || "GET").toUpperCase();
+    const headers = buildHeaders(requestOptions.headers, method);
     if (requestOptions.body && !(requestOptions.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
     requestOptions.headers = headers;
     return parseResponse(await fetch(`${apiBase()}${path}`, requestOptions));
+  }
+
+  async function fetchWithSession(path, options = {}) {
+    const requestOptions = { credentials: "include", ...options };
+    const skipSessionReady = requestOptions.skipSessionReady;
+    delete requestOptions.skipSessionReady;
+    if (!skipSessionReady && sessionReadyPromise) await sessionReadyPromise;
+    const method = String(requestOptions.method || "GET").toUpperCase();
+    requestOptions.headers = buildHeaders(requestOptions.headers, method);
+    const response = await fetch(`${apiBase()}${path}`, requestOptions);
+    if (response.status === 401) redirectToLogin();
+    if (response.status === 403 && response.clone) {
+      const payload = await response.clone().json().catch(() => null);
+      if (isPasswordChangeRequired(response.status, payload)) showForcedPasswordChange();
+    }
+    return response;
   }
 
   function setStatus(kind, message) {
@@ -553,31 +585,94 @@ const AdminCommon = (() => {
     renderPageAccessGuard(payload, allowedModules, allowedPermissions, hasConfiguredMenu);
   }
 
-  async function applyRoleMenu() {
-    const roleCodes = splitValues($("#authRoles")?.value || "").join(",");
-    if (!roleCodes) {
-      const emptyPayload = {
-        roles: [],
-        permissions: [],
-        menuModules: [],
-        visibleMenuModules: [],
-        dataScopes: {},
-      };
-      applyMenuAndPermissions(emptyPayload);
-      renderEffectivePermissionStatus(emptyPayload);
-      return;
-    }
+  function cacheProfile(profile) {
+    currentProfile = profile && typeof profile === "object" ? profile : null;
+    if (currentProfile) sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(currentProfile));
+  }
+
+  async function refreshSession() {
     try {
-      const payload = await api("/api/admin/effective-permissions");
+      const payload = await api("/api/auth/me", { skipSessionReady: true });
+      cacheProfile(payload);
       applyMenuAndPermissions(payload);
       renderEffectivePermissionStatus(payload);
+      ensureSessionControl();
+      if (payload.mustChangePassword) showForcedPasswordChange();
+      else hideForcedPasswordChange();
+      return payload;
     } catch (error) {
-      try {
-        const payload = await api(`/api/admin/roles/menu?roles=${encodeURIComponent(roleCodes)}`);
-        applyMenuAndPermissions(payload);
-      } catch (fallbackError) {
-        // Menu permission lookup is advisory in v1; keep navigation visible if the role service is unavailable.
-      }
+      throw error;
+    } finally {
+      document.body.classList.remove("admin-session-pending");
+    }
+  }
+
+  function ensureForcedPasswordChangeDialog() {
+    let dialog = $("#forcedPasswordChangeDialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("section");
+    dialog.id = "forcedPasswordChangeDialog";
+    dialog.className = "forced-password-change";
+    dialog.hidden = true;
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "forcedPasswordChangeTitle");
+    dialog.innerHTML = `
+      <form id="forcedPasswordChangeForm" class="forced-password-change-panel">
+        <p class="eyebrow">账户安全</p>
+        <h2 id="forcedPasswordChangeTitle">请先修改密码</h2>
+        <label for="currentPassword"><span>旧密码</span><input id="currentPassword" type="password" autocomplete="current-password" required /></label>
+        <label for="newPassword"><span>新密码</span><input id="newPassword" type="password" autocomplete="new-password" required /></label>
+        <label for="confirmPassword"><span>确认新密码</span><input id="confirmPassword" type="password" autocomplete="new-password" required /></label>
+        <p id="forcedPasswordChangeStatus" class="form-status" aria-live="polite"></p>
+        <div class="panel-actions"><button id="submitForcedPasswordChange" type="submit">更新密码</button></div>
+      </form>
+    `;
+    document.body.appendChild(dialog);
+    $("#forcedPasswordChangeForm").addEventListener("submit", submitForcedPasswordChange);
+    return dialog;
+  }
+
+  function showForcedPasswordChange() {
+    const dialog = ensureForcedPasswordChangeDialog();
+    document.body.classList.add("password-change-required");
+    dialog.hidden = false;
+    dialog.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => $("#currentPassword")?.focus(), 0);
+  }
+
+  function hideForcedPasswordChange() {
+    document.body.classList.remove("password-change-required");
+    const dialog = $("#forcedPasswordChangeDialog");
+    if (!dialog) return;
+    dialog.hidden = true;
+    dialog.setAttribute("aria-hidden", "true");
+  }
+
+  async function submitForcedPasswordChange(event) {
+    event.preventDefault();
+    const current = $("#currentPassword");
+    const next = $("#newPassword");
+    const confirm = $("#confirmPassword");
+    const status = $("#forcedPasswordChangeStatus");
+    const submit = $("#submitForcedPasswordChange");
+    try {
+      if (!current.value || !next.value || !confirm.value) throw new Error("请填写旧密码、新密码和确认密码。");
+      if (next.value !== confirm.value) throw new Error("两次输入的新密码不一致。");
+      if (submit) submit.disabled = true;
+      if (status) status.textContent = "正在更新密码...";
+      await api("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword: current.value, newPassword: next.value }),
+      });
+      await refreshSession();
+    } catch (error) {
+      if (status) status.textContent = error.message || "密码更新失败。";
+    } finally {
+      current.value = "";
+      next.value = "";
+      confirm.value = "";
+      if (submit) submit.disabled = false;
     }
   }
 
@@ -761,33 +856,34 @@ const AdminCommon = (() => {
     $("#apiBase")?.addEventListener("change", (event) => {
       localStorage.setItem("smartBambooApiBase", normalizeApiBase(event.target.value));
     });
-    $("#authRoles")?.addEventListener("change", applyRoleMenu);
+    $("#authRoles")?.addEventListener("change", refreshSession);
     promotePrimaryLedger();
     groupStaticNavigation();
     setActiveNav();
-    ensureSessionControl();
-    applyRoleMenu();
+    document.body.classList.add("admin-session-pending");
+    sessionReadyPromise = refreshSession();
+    sessionReadyPromise.catch(() => {});
+    return sessionReadyPromise;
   }
 
   function ensureSessionControl() {
-    if (!authToken()) return;
+    if (!currentProfile?.authenticated || currentProfile.authType !== "session") return;
     const statusPanel = $(".sidebar-status");
     if (!statusPanel || $("#adminLogout", statusPanel)) return;
-    const profile = (() => {
-      try {
-        return JSON.parse(sessionStorage.getItem(AUTH_PROFILE_KEY) || "{}");
-      } catch (error) {
-        return {};
-      }
-    })();
     const control = document.createElement("div");
     control.className = "sidebar-session-control";
-    control.innerHTML = `<span>${escapeHtml(profile.user || "已认证用户")}</span><button id="adminLogout" type="button" class="button-ghost">退出登录</button>`;
+    control.innerHTML = `<span>${escapeHtml(currentProfile.user || "已认证用户")}</span><button id="adminLogout" type="button" class="button-ghost">退出登录</button>`;
     statusPanel.appendChild(control);
-    $("#adminLogout", control).addEventListener("click", () => {
-      clearAuthToken();
+    $("#adminLogout", control).addEventListener("click", logout);
+  }
+
+  async function logout() {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } finally {
+      clearSessionState();
       redirectToLogin();
-    });
+    }
   }
 
   return {
@@ -796,16 +892,19 @@ const AdminCommon = (() => {
     apiBase,
     applyActionPermissions,
     buildHeaders,
-    clearAuthToken,
+    clearSessionState,
     createLedgerPager,
     escapeHtml,
+    fetchWithSession,
     formatArea,
     formatDateTime,
     initShell,
     labelFor,
     parseJson,
     query,
-    refreshRoleMenu: applyRoleMenu,
+    logout,
+    refreshRoleMenu: refreshSession,
+    refreshSession,
     rowActionButtons,
     setStatus,
     splitValues,

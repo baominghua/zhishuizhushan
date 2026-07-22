@@ -1,5 +1,5 @@
 (() => {
-  const { $, api, apiBase, buildHeaders, escapeHtml, formatDateTime, initShell, setStatus } = AdminCommon;
+  const { $, api, fetchWithSession, escapeHtml, formatDateTime, initShell, setStatus } = AdminCommon;
   const state = {
     workflowSummary: {
       imports: null,
@@ -13,9 +13,7 @@
   };
 
   async function fetchDeploymentHealth() {
-    const response = await fetch(`${apiBase()}/api/health`, {
-      headers: buildHeaders(),
-    });
+    const response = await fetchWithSession("/api/health");
     const contentType = response.headers.get("content-type") || "";
     const payload = contentType.includes("application/json")
       ? await response.json()
