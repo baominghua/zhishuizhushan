@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import hmac
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from . import settings as platform_settings
+from .auth_store import token_hash
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,14 @@ class AuthContext:
     roles: set[str]
     projects: set[str]
     areas: set[str]
+
+
+@dataclass(frozen=True)
+class HumanSessionAuth:
+    context: AuthContext
+    csrf_token_hash: str
+    must_change_password: bool
+    expires_at: str | None
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -86,7 +96,62 @@ def token_profiles() -> dict[str, AuthContext]:
     return profiles
 
 
+def human_session_auth(request: Request) -> HumanSessionAuth | None:
+    cached = getattr(request.state, "human_session_auth", ...)
+    if cached is not ...:
+        return cached
+
+    from .auth_store import credential_for_user, session_for_token, utc_now
+    from .human_auth import human_session_context
+
+    context = human_session_context(request)
+    if context is None:
+        request.state.human_session_auth = None
+        return None
+
+    settings = platform_settings.get_settings()
+    raw_token = request.cookies.get(settings.session_cookie_name)
+    session = session_for_token(raw_token, utc_now()) if raw_token else None
+    credential = credential_for_user(session["userId"]) if session is not None else None
+    if session is None or credential is None:
+        request.state.human_session_auth = None
+        return None
+
+    authenticated = HumanSessionAuth(
+        context=context,
+        csrf_token_hash=str(session["csrfTokenHash"]),
+        must_change_password=bool(credential["mustChangePassword"]),
+        expires_at=session.get("expiresAt"),
+    )
+    request.state.human_session_auth = authenticated
+    return authenticated
+
+
+def require_human_session_policy(request: Request, session: HumanSessionAuth) -> None:
+    if session.must_change_password and request.url.path.startswith("/api/"):
+        allowed_paths = {
+            "/api/auth/me",
+            "/api/auth/session",
+            "/api/auth/change-password",
+            "/api/auth/logout",
+        }
+        if request.url.path not in allowed_paths:
+            raise HTTPException(status_code=403, detail="Password change required")
+
+    if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+        csrf_token = request.headers.get("X-CSRF-Token", "")
+        if not csrf_token or not hmac.compare_digest(
+            token_hash(csrf_token), session.csrf_token_hash
+        ):
+            raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+
 def request_context(request: Request) -> AuthContext:
+    human_session = human_session_auth(request)
+    if human_session is not None:
+        require_human_session_policy(request, human_session)
+        return human_session.context
+
     if platform_settings.get_settings().auth_required:
         token = bearer_token(request)
         profile = token_profiles().get(token)
@@ -191,9 +256,13 @@ def area_allowed(context: AuthContext, area_code: str | None) -> bool:
 
 @router.get("/config")
 def auth_config() -> dict[str, Any]:
+    settings = platform_settings.get_settings()
     return {
-        "required": platform_settings.get_settings().auth_required,
-        "scheme": "bearer",
+        "required": settings.auth_required,
+        "scheme": "session-or-bearer",
+        "humanLoginEnabled": settings.human_auth_enabled,
+        "httpsRequired": settings.auth_require_https,
+        "serviceTokenEnabled": bool(token_profiles()),
     }
 
 
@@ -217,8 +286,13 @@ def auth_me(
     permissions = effective_permissions_for_context(context)
     menu_modules = effective_menu_modules_for_context(context)
     modules_by_key = module_catalog_by_key()
+    human_session = human_session_auth(request)
+    authenticated = human_session is not None or bool(bearer_token(request))
     return {
-        "authenticated": bool(bearer_token(request)),
+        "authenticated": authenticated,
+        "authType": "session" if human_session is not None else "service-token" if authenticated else "development-header",
+        "mustChangePassword": human_session.must_change_password if human_session is not None else False,
+        "sessionExpiresAt": human_session.expires_at if human_session is not None else None,
         "user": context.user,
         "roles": roles,
         "permissions": permissions,

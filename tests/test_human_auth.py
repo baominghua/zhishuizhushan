@@ -167,6 +167,54 @@ def test_session_returns_current_human_profile(password_user_client):
     }
 
 
+def test_request_context_accepts_human_session(password_user_client):
+    client, _user = password_user_client
+
+    login_response = login(client)
+    response = client.get("/api/auth/me")
+
+    assert login_response.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert response.json()["authType"] == "session"
+    assert response.json()["mustChangePassword"] is True
+    assert response.json()["sessionExpiresAt"]
+    assert response.json()["roles"] == ["operator"]
+    assert response.json()["permissions"]
+    assert response.json()["menuModules"]
+    assert response.json()["dataScopes"]["areas"] == ["350782001"]
+
+
+def test_forced_password_change_blocks_non_auth_api(password_user_client):
+    client, _user = password_user_client
+
+    login_response = login(client)
+    response = client.get("/api/admin/effective-permissions")
+
+    assert login_response.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Password change required"
+
+
+def test_cookie_session_requires_csrf_for_mutating_api(password_user_client):
+    client, user = password_user_client
+
+    login_response = login(client)
+    credential = credential_for_user(user["id"])
+    assert credential is not None
+    credential["mustChangePassword"] = False
+    save_credential(credential)
+    response = client.post(
+        "/api/admin/roles/preview",
+        json={},
+        headers={"X-CSRF-Token": "not-the-session-token"},
+    )
+
+    assert login_response.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF validation failed"
+
+
 def test_logout_requires_csrf_and_revokes_the_current_session(password_user_client):
     client, _user = password_user_client
     login_response = login(client)

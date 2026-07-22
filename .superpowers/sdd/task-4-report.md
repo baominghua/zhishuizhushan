@@ -1,0 +1,24 @@
+# Task 4 Report: Unified Session and Service Authentication
+
+## RED
+
+1. Added compatibility tests for mixed auth configuration, human-session `/api/auth/me`, forced password change blocking, browser CSRF validation, and service-token response metadata.
+2. Ran `tests/test_auth.py tests/test_human_auth.py` with the required virtual environment, `-p no:cacheprovider`, and a Task 4 base temp directory.
+3. Observed the expected feature failures: bearer-only config, missing `authType`, session treated as a development request, no forced-change restriction, and no global CSRF restriction.
+4. Tightened the CSRF test to send an incorrect token and observed the missing `token_hash` dependency as a `NameError` before the final fix.
+
+## GREEN
+
+- `tests/test_auth.py tests/test_human_auth.py -q -p no:cacheprovider`: 19 passed.
+- `tests/test_auth.py tests/test_admin_roles.py -q -p no:cacheprovider`: 83 passed.
+
+All test runs used `D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python.exe` and isolated `REMOTE_SENSING_DATA_DIR` and `--basetemp` paths under `D:\Users\MECHREUO\Documents\武夷福森报销助手\.tmp`.
+
+## Self Review
+
+- `request_context()` resolves a valid human session before evaluating the existing bearer-token flow; when no session is valid, the bearer and development-header behavior is unchanged.
+- Browser sessions require a matching `X-CSRF-Token` on POST, PUT, PATCH, and DELETE. Service bearer tokens never enter that browser-only check.
+- Sessions marked `mustChangePassword` are limited to the four required auth endpoints before authorization handlers execute.
+- `/api/auth/config` exposes the required session-or-bearer capability fields.
+- `/api/auth/me` adds session metadata without changing the existing effective roles, permissions, menus, or data-scope payload.
+- `git diff --check` is run as the final whitespace gate before commit.

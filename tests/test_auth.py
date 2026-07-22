@@ -7,7 +7,13 @@ def test_auth_config_reports_whether_authentication_is_required(app_client):
     response = app_client.get("/api/auth/config")
 
     assert response.status_code == 200
-    assert response.json() == {"required": False, "scheme": "bearer"}
+    assert response.json() == {
+        "required": False,
+        "scheme": "session-or-bearer",
+        "humanLoginEnabled": True,
+        "httpsRequired": False,
+        "serviceTokenEnabled": False,
+    }
 
 
 def test_auth_me_returns_effective_role_menu_and_scope(app_client):
@@ -60,3 +66,6 @@ def test_auth_me_requires_and_accepts_bearer_token(app_client, monkeypatch):
     assert authorized.status_code == 200
     assert authorized.json()["user"] == "token-admin"
     assert authorized.json()["authenticated"] is True
+    assert authorized.json()["authType"] == "service-token"
+    assert authorized.json()["mustChangePassword"] is False
+    assert authorized.json()["sessionExpiresAt"] is None
