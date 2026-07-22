@@ -18,6 +18,7 @@ from .admin_roles import (
     safe_download_stem,
 )
 from .auth import AuthContext, request_context, split_header_list
+from . import database
 from .auth_store import (
     credential_for_user,
     iso_utc,
@@ -33,7 +34,6 @@ from .database import (
     admin_credentials_json_path,
     admin_sessions_json_path,
     admin_users_json_path,
-    JSON_STORE_LOCK,
     json_transaction,
     load_json_records,
     mysql_connect,
@@ -760,7 +760,7 @@ def save_users(users: list[dict[str, Any]]) -> None:
     if use_postgis():
         upsert_users_postgis(users)
         return
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         save_json_records(admin_users_json_path(), users)
 
 

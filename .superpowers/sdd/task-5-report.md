@@ -59,3 +59,10 @@
 - JSON users, roles, credentials, sessions, and multi-file recovery share the public `database.JSON_STORE_LOCK` reentrant lock.
 - Added direct MySQL audit-failure mock coverage asserting rollback occurs without commit.
 - Final focused verification: 5 passed; `git diff --check` passed. The preceding Task 5/auth-store/admin-role/bootstrap regression run reached 103 passing tests before the reload-safe lock reference correction.
+
+## Reload-Safe Lock Remediation
+
+- `database.JSON_STORE_LOCK` now survives `importlib.reload(database)` through a globals guard.
+- `auth_store`, `admin_users`, and `admin_roles` dynamically resolve the lock through the `database` module rather than caching an imported alias.
+- RED reproduced a changed RLock after reload. Green reload and write-path tests passed; a broader regression initially exposed one remaining session-revocation alias, which was removed.
+- Final focused verification: 10 passed and `git diff --check` passed. The broad related suite reached 128 passed before that last stale alias was identified.

@@ -894,6 +894,17 @@ def test_json_security_transaction_uses_the_shared_database_lock():
     assert auth_store.database.JSON_STORE_LOCK is database.JSON_STORE_LOCK
 
 
+def test_json_store_lock_survives_database_reload_and_business_modules_resolve_it_dynamically():
+    from server.modules import admin_roles, admin_users, auth_store, database
+
+    lock = database.JSON_STORE_LOCK
+    reloaded_database = importlib.reload(database)
+
+    assert reloaded_database.JSON_STORE_LOCK is lock
+    for module in (auth_store, admin_users, admin_roles):
+        assert module.database.JSON_STORE_LOCK is lock
+
+
 def test_mysql_password_reset_rolls_back_when_audit_fails(monkeypatch):
     from server.modules import admin_users
 

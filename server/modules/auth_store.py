@@ -12,7 +12,6 @@ from . import database
 from .database import (
     admin_credentials_json_path,
     admin_sessions_json_path,
-    JSON_STORE_LOCK,
     load_json_records,
     mysql_connect,
     use_mysql,
@@ -428,7 +427,7 @@ def revoke_user_sessions(user_id: str, except_session_id: str | None = None) -> 
             conn.commit()
         return revoked
 
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         records = load_json_records(admin_sessions_json_path())
         revoked = 0
         for record in records:

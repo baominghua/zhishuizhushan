@@ -13,7 +13,7 @@ from .mysql_schema import PLATFORM_CORE_MYSQL_TABLES, apply_mysql_schema_upgrade
 from .settings import get_settings
 
 
-JSON_STORE_LOCK = threading.RLock()
+JSON_STORE_LOCK = globals().get("JSON_STORE_LOCK") or threading.RLock()
 
 
 @contextmanager

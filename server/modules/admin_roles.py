@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 
 from .auth import AuthContext, effective_areas, has_admin_role, request_context, split_header_list
+from . import database
 from .database import (
     admin_roles_json_path,
-    JSON_STORE_LOCK,
     load_json_records,
     mysql_connect,
     save_json_records,
@@ -1622,7 +1622,7 @@ def save_roles(roles: list[dict[str, Any]]) -> None:
     if use_postgis():
         upsert_roles_postgis(roles)
         return
-    with JSON_STORE_LOCK:
+    with database.JSON_STORE_LOCK:
         save_json_records(admin_roles_json_path(), roles)
 
 
