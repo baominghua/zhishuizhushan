@@ -160,19 +160,36 @@ def _active_admin_credential_count(
             ),
         )
     try:
-        return auth_store.active_admin_credential_count(connection.cursor())
+        cursor = connection.cursor()
+        cursor.execute(auth_store.ACTIVE_ADMIN_CREDENTIAL_COUNT_SQL.replace("BINARY ", ""))
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
     finally:
         connection.close()
+
+
+def test_active_admin_credential_production_sql_uses_binary_status_and_role_checks():
+    sql = auth_store.ACTIVE_ADMIN_CREDENTIAL_COUNT_SQL
+
+    assert "BINARY admin_user.status = 'active'" in sql
+    assert "BINARY admin_role.status = 'active'" in sql
+    assert "BINARY admin_role.role_code = 'admin'" in sql
 
 
 @pytest.mark.parametrize(
     ("case", "kwargs", "expected"),
     [
         ("ordinary_user_credential", {"role_code": "operator"}, 0),
+        ("uppercase_user_status", {"user_status": "ACTIVE"}, 0),
+        ("mixed_case_user_status", {"user_status": "Active"}, 0),
         ("inactive_user", {"user_status": "inactive"}, 0),
         ("deleted_user", {"user_deleted_at": "2026-07-22T00:00:00+00:00"}, 0),
         ("inactive_admin_role", {"role_status": "inactive"}, 0),
+        ("uppercase_role_status", {"role_status": "ACTIVE"}, 0),
+        ("mixed_case_role_status", {"role_status": "Active"}, 0),
         ("deleted_admin_role", {"role_deleted_at": "2026-07-22T00:00:00+00:00"}, 0),
+        ("uppercase_role_code", {"role_code": "ADMIN"}, 0),
+        ("mixed_case_role_code", {"role_code": "Admin"}, 0),
         ("no_role", {"has_role": False}, 0),
         ("no_credential", {"has_credential": False}, 0),
         ("blank_password_hash", {"password_hash": "  "}, 0),
