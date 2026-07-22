@@ -27,6 +27,86 @@ def clear_settings_cache(isolated_env):
     get_settings.cache_clear()
 
 
+def test_human_auth_storage_readiness_fails_closed_for_json_storage(monkeypatch):
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: False)
+
+    assert auth_store.human_auth_storage_readiness() == {
+        "backend": "json",
+        "reachable": False,
+        "credentialTable": False,
+        "sessionTable": False,
+        "activeAdminCredential": False,
+    }
+
+
+def test_human_auth_storage_readiness_queries_mysql_tables_and_active_credential(monkeypatch):
+    class Cursor:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, statement):
+            self.statements.append(statement)
+
+        def fetchall(self):
+            return [("admin_user_credentials",), ("admin_sessions",)]
+
+        def fetchone(self):
+            return (1,)
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return self.cursor_instance
+
+    connection = Connection()
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
+    monkeypatch.setattr(auth_store, "mysql_connect", lambda: connection)
+
+    readiness = auth_store.human_auth_storage_readiness()
+
+    assert readiness == {
+        "backend": "mysql",
+        "reachable": True,
+        "credentialTable": True,
+        "sessionTable": True,
+        "activeAdminCredential": True,
+    }
+    assert "information_schema.tables" in connection.cursor_instance.statements[0]
+    assert "admin_user_credentials" in connection.cursor_instance.statements[1]
+    assert "admin_users" in connection.cursor_instance.statements[1]
+
+
+def test_human_auth_storage_readiness_fails_closed_when_mysql_is_unreachable(monkeypatch):
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
+
+    def unavailable_mysql():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(auth_store, "mysql_connect", unavailable_mysql)
+
+    assert auth_store.human_auth_storage_readiness() == {
+        "backend": "mysql",
+        "reachable": False,
+        "credentialTable": False,
+        "sessionTable": False,
+        "activeAdminCredential": False,
+    }
+
+
 def test_fifth_failure_locks_for_fifteen_minutes(isolated_env):
     now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
     save_credential(new_credential("user-1", "$argon2id$test"))

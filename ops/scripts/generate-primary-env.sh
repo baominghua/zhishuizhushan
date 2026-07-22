@@ -14,7 +14,6 @@ mysql_password="$(openssl rand -hex 24)"
 mysql_root_password="$(openssl rand -hex 24)"
 replication_password="$(openssl rand -hex 24)"
 geoserver_password="$(openssl rand -hex 24)"
-admin_token="$(openssl rand -hex 32)"
 dashboard_token="$(openssl rand -hex 32)"
 release_tag="20260717-$(git -C "${repo_root}" rev-parse --short=12 HEAD)"
 
@@ -27,9 +26,13 @@ REPLICATION_USER=smart_bamboo_repl
 REPLICATION_PASSWORD=${replication_password}
 SMART_BAMBOO_RELEASE_TAG=${release_tag}
 SMART_BAMBOO_DASHBOARD_TOKEN=${dashboard_token}
+SMART_BAMBOO_HUMAN_AUTH_ENABLED=0
+SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1
+SMART_BAMBOO_TRUST_PROXY_HEADERS=1
+SMART_BAMBOO_SESSION_COOKIE_SECURE=1
 SMART_BAMBOO_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306/smart_bamboo?charset=utf8mb4
 REMOTE_SENSING_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306/smart_bamboo?charset=utf8mb4
-REMOTE_SENSING_API_TOKENS='{"${admin_token}":{"user":"admin","roles":["admin"],"projects":["*"],"areas":["*"]},"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]}}'
+REMOTE_SENSING_API_TOKENS='{"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]}}'
 REMOTE_SENSING_CORS_ORIGINS=http://36.140.138.117
 REMOTE_SENSING_TASK_WORKERS=4
 REMOTE_SENSING_TIANDITU_TK=
@@ -43,8 +46,6 @@ GEOSERVER_ADMIN_USER=admin
 GEOSERVER_ADMIN_PASSWORD=${geoserver_password}
 EOF
 chmod 0600 "${target}"
-printf '%s\n' "${admin_token}" > "$(dirname "${target}")/admin-token.txt"
-chmod 0600 "$(dirname "${target}")/admin-token.txt"
 cat > "$(dirname "${target}")/satellite-config.local.js" <<EOF
 window.SATELLITE_CONFIG = {
   remoteApiBase: "",
@@ -54,4 +55,4 @@ window.SATELLITE_CONFIG = {
 };
 EOF
 chmod 0640 "$(dirname "${target}")/satellite-config.local.js"
-echo "Created ${target}; admin token is private and the browser received a separate read-only token."
+echo "Created ${target}; the browser received a separate read-only dashboard token."

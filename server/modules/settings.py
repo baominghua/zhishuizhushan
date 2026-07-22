@@ -85,6 +85,15 @@ def production_configuration_issues(environ: Mapping[str, str] | None = None) ->
         issues.append("cors_origins_missing")
     elif "*" in cors_origins:
         issues.append("cors_wildcard")
+
+    human_auth_enabled = str(values.get("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "0")).strip().lower()
+    if human_auth_enabled in {"1", "true", "yes", "on"}:
+        if str(values.get("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+            issues.append("human_auth_https_not_required")
+        if str(values.get("SMART_BAMBOO_TRUST_PROXY_HEADERS", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+            issues.append("human_auth_proxy_headers_untrusted")
+        if str(values.get("SMART_BAMBOO_SESSION_COOKIE_SECURE", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+            issues.append("human_auth_session_cookie_not_secure")
     return issues
 
 
@@ -121,6 +130,7 @@ class PlatformSettings:
     human_auth_enabled: bool
     auth_require_https: bool
     trust_proxy_headers: bool
+    session_cookie_secure: bool
     session_idle_seconds: int
     session_absolute_seconds: int
     session_cookie_name: str
@@ -148,6 +158,7 @@ def get_settings() -> PlatformSettings:
         human_auth_enabled=env_bool("SMART_BAMBOO_HUMAN_AUTH_ENABLED", True),
         auth_require_https=env_bool("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", deployment_mode in PRODUCTION_MODES),
         trust_proxy_headers=env_bool("SMART_BAMBOO_TRUST_PROXY_HEADERS", False),
+        session_cookie_secure=env_bool("SMART_BAMBOO_SESSION_COOKIE_SECURE", deployment_mode in PRODUCTION_MODES),
         session_idle_seconds=env_positive_int("SMART_BAMBOO_SESSION_IDLE_SECONDS", 8 * 60 * 60),
         session_absolute_seconds=env_positive_int("SMART_BAMBOO_SESSION_ABSOLUTE_SECONDS", 24 * 60 * 60),
         session_cookie_name=os.environ.get("SMART_BAMBOO_SESSION_COOKIE_NAME", "smart_bamboo_session").strip()

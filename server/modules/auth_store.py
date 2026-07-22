@@ -88,6 +88,43 @@ def token_hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def human_auth_storage_readiness() -> dict[str, bool | str]:
+    status: dict[str, bool | str] = {
+        "backend": "mysql" if use_mysql() else "json",
+        "reachable": False,
+        "credentialTable": False,
+        "sessionTable": False,
+        "activeAdminCredential": False,
+    }
+    if not use_mysql():
+        return status
+
+    try:
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() "
+                    "AND table_name IN ('admin_user_credentials', 'admin_sessions')"
+                )
+                tables = {str(row[0]) for row in cur.fetchall()}
+                status["reachable"] = True
+                status["credentialTable"] = "admin_user_credentials" in tables
+                status["sessionTable"] = "admin_sessions" in tables
+                if status["credentialTable"] and status["sessionTable"]:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM admin_user_credentials credential "
+                        "INNER JOIN admin_users admin_user ON admin_user.id = credential.admin_user_id "
+                        "WHERE admin_user.deleted_at IS NULL "
+                        "AND (admin_user.status IS NULL OR admin_user.status = '' OR admin_user.status = 'active')"
+                    )
+                    row = cur.fetchone()
+                    status["activeAdminCredential"] = bool(row and int(row[0]) > 0)
+    except Exception:
+        return status
+    return status
+
+
 def save_json_records(path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")

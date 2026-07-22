@@ -168,6 +168,109 @@ def test_production_configuration_accepts_mysql_auth_and_restricted_cors():
     assert issues == []
 
 
+def test_production_configuration_rejects_enabled_human_auth_without_https_cookie_and_proxy_controls():
+    from server.modules.settings import production_configuration_issues
+
+    issues = production_configuration_issues(
+        {
+            "SMART_BAMBOO_DEPLOYMENT_MODE": "production",
+            "SMART_BAMBOO_STORAGE_BACKEND": "mysql",
+            "SMART_BAMBOO_DATABASE_URL": "mysql://smart_bamboo:Strong%21Pass-2026@db:3306/smart_bamboo",
+            "REMOTE_SENSING_CATALOG_BACKEND": "mysql",
+            "REMOTE_SENSING_DATABASE_URL": "mysql://smart_bamboo:Strong%21Pass-2026@db:3306/smart_bamboo",
+            "REMOTE_SENSING_AUTH_REQUIRED": "1",
+            "REMOTE_SENSING_API_TOKENS": '{"dashboard-token":{"user":"dashboard","roles":["viewer"]}}',
+            "REMOTE_SENSING_CORS_ORIGINS": "https://bamboo.example.gov.cn",
+            "SMART_BAMBOO_HUMAN_AUTH_ENABLED": "1",
+            "SMART_BAMBOO_AUTH_REQUIRE_HTTPS": "0",
+            "SMART_BAMBOO_TRUST_PROXY_HEADERS": "0",
+            "SMART_BAMBOO_SESSION_COOKIE_SECURE": "0",
+        }
+    )
+
+    assert {
+        "human_auth_https_not_required",
+        "human_auth_proxy_headers_untrusted",
+        "human_auth_session_cookie_not_secure",
+    }.issubset(set(issues))
+
+
+def test_deployment_readiness_blocks_enabled_human_auth_until_transport_and_mysql_migration_are_ready(monkeypatch):
+    import server.app as app_module
+    import server.modules.settings as settings
+
+    writable_dir = {"path": "data", "exists": True, "writable": True}
+    deployment = {
+        "database": {
+            "platform": {"reachable": True, "schemaReady": True, "backend": "mysql"},
+            "remoteSensingCatalog": {"reachable": True, "schemaReady": True, "backend": "mysql", "mysqlEnabled": True},
+        },
+        "smartBamboo": {"storageBackend": "mysql", "mysqlEnabled": True, "jsonData": {"dataDir": writable_dir}},
+        "imagery": {"uploadDir": writable_dir, "cogDir": writable_dir, "importDirs": [writable_dir]},
+        "auth": {"required": True, "tokensConfigured": 1},
+        "apiChecks": [],
+    }
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "1")
+    monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", "0")
+    monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "0")
+    monkeypatch.setenv("SMART_BAMBOO_SESSION_COOKIE_SECURE", "0")
+    settings.get_settings.cache_clear()
+    monkeypatch.setattr(
+        app_module,
+        "human_auth_storage_readiness",
+        lambda: {"backend": "mysql", "reachable": True, "credentialTable": False, "sessionTable": False, "activeAdminCredential": False},
+    )
+
+    readiness = app_module.deployment_readiness_summary(deployment)
+
+    assert readiness["status"] == "blocked"
+    assert {
+        "human_auth_https_not_required",
+        "human_auth_proxy_headers_untrusted",
+        "human_auth_session_cookie_not_secure",
+        "human_auth_credentials_table_missing",
+        "human_auth_sessions_table_missing",
+        "human_auth_active_admin_credential_missing",
+    }.issubset({item["key"] for item in readiness["blockingIssues"]})
+    settings.get_settings.cache_clear()
+
+
+def test_deployment_readiness_allows_disabled_human_auth_with_https_pending_warning(monkeypatch):
+    import server.app as app_module
+    import server.modules.settings as settings
+
+    writable_dir = {"path": "data", "exists": True, "writable": True}
+    deployment = {
+        "database": {
+            "platform": {"reachable": True, "schemaReady": True, "backend": "mysql"},
+            "remoteSensingCatalog": {"reachable": True, "schemaReady": True, "backend": "mysql", "mysqlEnabled": True},
+        },
+        "smartBamboo": {"storageBackend": "mysql", "mysqlEnabled": True, "jsonData": {"dataDir": writable_dir}},
+        "imagery": {"uploadDir": writable_dir, "cogDir": writable_dir, "importDirs": [writable_dir]},
+        "auth": {"required": True, "tokensConfigured": 1},
+        "apiChecks": [],
+    }
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "0")
+    monkeypatch.setenv("SMART_BAMBOO_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("SMART_BAMBOO_AUTH_REQUIRE_HTTPS", "1")
+    monkeypatch.setenv("SMART_BAMBOO_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("SMART_BAMBOO_SESSION_COOKIE_SECURE", "1")
+    settings.get_settings.cache_clear()
+    monkeypatch.setattr(app_module.app.state, "startup_errors", [], raising=False)
+    monkeypatch.setattr(
+        app_module,
+        "human_auth_storage_readiness",
+        lambda: {"backend": "json", "reachable": False, "credentialTable": False, "sessionTable": False, "activeAdminCredential": False},
+    )
+
+    readiness = app_module.deployment_readiness_summary(deployment)
+
+    assert readiness["blockingIssueCount"] == 0
+    assert any(item["key"] == "human_auth_pending_https" for item in readiness["warnings"])
+    settings.get_settings.cache_clear()
+
+
 def test_application_bootstrap_enforces_production_configuration():
     app_source = read_text("server/app.py")
 

@@ -47,6 +47,7 @@ from server.modules.auth import (
     role_data_scope_values as platform_role_data_scope_values,
     token_profiles,
 )
+from server.modules.auth_store import human_auth_storage_readiness
 from server.modules.auth import router as auth_router
 from server.modules.human_auth import router as human_auth_router
 from server.modules.business import (
@@ -3872,6 +3873,40 @@ def deployment_readiness_summary(deployment: dict[str, Any]) -> dict[str, Any]:
     checks: list[dict[str, str]] = []
     blocking_issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
+
+    settings = get_settings()
+    if settings.human_auth_enabled and os.environ.get("SMART_BAMBOO_DEPLOYMENT_MODE", "development").strip().lower() in {"prod", "production"}:
+        storage = human_auth_storage_readiness()
+        human_auth_checks = [
+            ("human_auth_https_not_required", "HTTPS enforcement", settings.auth_require_https),
+            ("human_auth_proxy_headers_untrusted", "Trusted proxy headers", settings.trust_proxy_headers),
+            ("human_auth_session_cookie_not_secure", "Secure session cookie", settings.session_cookie_secure),
+            ("human_auth_mysql_unreachable", "Human authentication MySQL", storage["reachable"]),
+            ("human_auth_credentials_table_missing", "Credential table", storage["credentialTable"]),
+            ("human_auth_sessions_table_missing", "Session table", storage["sessionTable"]),
+            ("human_auth_active_admin_credential_missing", "Active administrator credential", storage["activeAdminCredential"]),
+        ]
+        for key, label, passed in human_auth_checks:
+            issue = readiness_item(
+                key,
+                label,
+                "pass" if passed else "blocked",
+                f"{label} is configured." if passed else f"{label} must be ready before human authentication is enabled.",
+                section="security",
+            )
+            checks.append(issue)
+            if not passed:
+                blocking_issues.append(issue)
+    elif not settings.human_auth_enabled:
+        warning = readiness_item(
+            "human_auth_pending_https",
+            "Human authentication rollout",
+            "warning",
+            "Human authentication remains disabled until HTTPS verification is complete.",
+            section="security",
+        )
+        checks.append(warning)
+        warnings.append(warning)
 
     platform_database = database.get("platform") or {}
     platform_issue = database_readiness_issue("platform_database", "平台数据库", platform_database)

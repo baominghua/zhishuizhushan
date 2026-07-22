@@ -249,3 +249,22 @@ def test_production_frontends_use_same_origin_and_a_read_only_dashboard_token():
     assert 'src="satellite-config.local.js' in mobile_html
     assert "function mobileApiFetch" in mobile
     assert "Authorization" in mobile
+
+
+def test_primary_human_auth_configuration_keeps_http_acceptance_mode_but_locks_security_controls():
+    compose = read_text("ops/compose.primary.yml")
+    env_generator = read_text("ops/scripts/generate-primary-env.sh")
+    nginx = read_text("ops/nginx/smart-bamboo.conf")
+
+    assert 'SMART_BAMBOO_HUMAN_AUTH_ENABLED: "${SMART_BAMBOO_HUMAN_AUTH_ENABLED:-0}"' in compose
+    assert 'SMART_BAMBOO_AUTH_REQUIRE_HTTPS: "1"' in compose
+    assert 'SMART_BAMBOO_TRUST_PROXY_HEADERS: "1"' in compose
+    assert 'SMART_BAMBOO_SESSION_COOKIE_SECURE: "1"' in compose
+    assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED=0" in env_generator
+    assert "SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1" in env_generator
+    assert "SMART_BAMBOO_TRUST_PROXY_HEADERS=1" in env_generator
+    assert "SMART_BAMBOO_SESSION_COOKIE_SECURE=1" in env_generator
+    assert "admin-token.txt" not in env_generator
+    assert '"roles":["viewer"]' in env_generator
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in nginx
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in nginx
