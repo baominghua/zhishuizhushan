@@ -2,6 +2,7 @@
   const CSRF_TOKEN_KEY = "smartBambooCsrfToken";
   const PROFILE_KEY = "smartBambooAuthProfile";
   let authConfig = null;
+  let loginRequestInFlight = false;
   let passwordLoginBlocked = false;
   let blockedStatusMessage = "正在检查登录配置，请稍候。";
 
@@ -64,15 +65,25 @@
     return error && error.status === 403 && error.message === "Password change required";
   }
 
+  function shellReturnPath() {
+    return safeReturnPath(new URLSearchParams(window.location.search).get("returnTo"));
+  }
+
+  function routeToPasswordChange() {
+    const message = passwordChangeMessage();
+    setPasswordLoginBlocked(true, message);
+    setStatus(message, "warning");
+    window.location.replace(shellReturnPath());
+  }
+
   function completeLogin(profile) {
     storeProfile(profile);
     if (profile.mustChangePassword) {
-      setStatus(passwordChangeMessage(), "warning");
+      routeToPasswordChange();
       return;
     }
     setStatus(`登录成功：${profile.user || "后台用户"}`, "success");
-    const returnTo = safeReturnPath(new URLSearchParams(window.location.search).get("returnTo"));
-    window.location.replace(returnTo);
+    window.location.replace(shellReturnPath());
   }
 
   async function fetchCurrentProfile() {
@@ -159,6 +170,7 @@
   async function submitLogin(event) {
     event.preventDefault();
     const button = $("#loginButton");
+    let startedLoginRequest = false;
     try {
       const username = $("#username").value.trim();
       const password = $("#password").value;
@@ -167,7 +179,10 @@
         return;
       }
       if (!username || !password) return;
+      if (loginRequestInFlight) return;
 
+      loginRequestInFlight = true;
+      startedLoginRequest = true;
       button.disabled = true;
       setStatus("正在登录...", "busy");
       const response = await fetch("/api/auth/login", {
@@ -185,15 +200,25 @@
           setPasswordLoginBlocked(true, message);
           throw new Error(message);
         }
+        if (response.status === 403 && payload.detail === "Password change required") {
+          const error = new Error("Password change required");
+          error.status = 403;
+          throw error;
+        }
         throw new Error(payload.detail || `登录失败（${response.status}）`);
       }
       storeCsrfToken(payload);
       const profile = await fetchCurrentProfile();
       completeLogin({ ...profile, mustChangePassword: Boolean(payload.mustChangePassword || profile.mustChangePassword) });
     } catch (error) {
+      if (isPasswordChangeRequired(error)) {
+        routeToPasswordChange();
+        return;
+      }
       setStatus(error.message || "身份验证失败。", "error");
     } finally {
       $("#password").value = "";
+      if (startedLoginRequest) loginRequestInFlight = false;
       button.disabled = passwordLoginBlocked;
     }
   }
@@ -234,7 +259,7 @@
       }
     } catch (error) {
       if (isPasswordChangeRequired(error)) {
-        setStatus(passwordChangeMessage(), "warning");
+        routeToPasswordChange();
         return;
       }
       setStatus("无法确认登录配置，请检查网络或联系管理员。", "error");
