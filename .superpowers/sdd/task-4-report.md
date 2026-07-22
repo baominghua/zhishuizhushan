@@ -22,3 +22,21 @@ All test runs used `D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python
 - `/api/auth/config` exposes the required session-or-bearer capability fields.
 - `/api/auth/me` adds session metadata without changing the existing effective roles, permissions, menus, or data-scope payload.
 - `git diff --check` is run as the final whitespace gate before commit.
+
+## Review Remediation
+
+### RED
+
+1. Added a legacy `server/app.py` cache-route regression. A forced-change session received `200` from `GET /api/cache/tiles`; after clearing forced change, an unsafe cache delete also bypassed CSRF.
+2. Added forced-session tests for `/api/auth/config` and `/api/auth/login`. Both returned `200` before the remediation, while anonymous requests remained expected to work.
+3. Added a development-mode request with an unconfigured bearer string. `/api/auth/me` incorrectly reported `authenticated: true`.
+4. Added a forced-session public API test. It exposed a stale health payload reference to removed legacy auth globals, and demonstrated that public API routes needed a common session policy gate.
+
+### GREEN
+
+- The legacy `server/app.py` context is now an adapter over the unified `server.modules.auth.request_context`; legacy routes receive the same human-session, CSRF, forced-change, bearer, and development-header decisions.
+- An application-level `/api/*` session-policy gate protects routes that do not declare an auth dependency. It leaves anonymous and bearer requests unblocked by browser CSRF logic.
+- `/api/auth/config` and `/api/auth/login` enforce the optional existing-session policy, so anonymous access remains available while a forced-change session receives `403 Password change required`.
+- `/api/auth/me` gets `authType` and `authenticated` from the context actually resolved by `request_context`, not from an arbitrary authorization header.
+- Health auth status reads the unified settings and service-token profile source.
+- `tests/test_auth.py tests/test_human_auth.py tests/test_admin_roles.py -q -p no:cacheprovider`: 106 passed.

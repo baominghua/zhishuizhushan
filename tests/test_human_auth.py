@@ -196,6 +196,64 @@ def test_forced_password_change_blocks_non_auth_api(password_user_client):
     assert response.json()["detail"] == "Password change required"
 
 
+def test_forced_password_change_blocks_legacy_cache_routes_and_requires_csrf(password_user_client):
+    client, user = password_user_client
+
+    login_response = login(client)
+    forced_read = client.get("/api/cache/tiles")
+    forced_delete = client.delete("/api/cache/tiles")
+    credential = credential_for_user(user["id"])
+    assert credential is not None
+    credential["mustChangePassword"] = False
+    save_credential(credential)
+    missing_csrf = client.delete("/api/cache/tiles")
+    accepted = client.delete("/api/cache/tiles", headers=csrf_headers(login_response))
+
+    assert login_response.status_code == 200
+    assert forced_read.status_code == 403
+    assert forced_read.json()["detail"] == "Password change required"
+    assert forced_delete.status_code == 403
+    assert forced_delete.json()["detail"] == "Password change required"
+    assert missing_csrf.status_code == 403
+    assert missing_csrf.json()["detail"] == "CSRF validation failed"
+    assert accepted.status_code == 200
+
+
+def test_forced_password_change_blocks_config_and_login(password_user_client):
+    client, _user = password_user_client
+
+    login_response = login(client)
+    config = client.get("/api/auth/config")
+    retry_login = login(client)
+
+    assert login_response.status_code == 200
+    assert config.status_code == 403
+    assert config.json()["detail"] == "Password change required"
+    assert retry_login.status_code == 403
+    assert retry_login.json()["detail"] == "Password change required"
+
+
+def test_forced_password_change_blocks_public_api_routes(password_user_client):
+    client, _user = password_user_client
+
+    login_response = login(client)
+    response = client.get("/api/health")
+
+    assert login_response.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Password change required"
+
+
+def test_anonymous_auth_config_and_login_remain_available(password_user_client):
+    client, _user = password_user_client
+
+    config = client.get("/api/auth/config")
+    login_response = login(client)
+
+    assert config.status_code == 200
+    assert login_response.status_code == 200
+
+
 def test_cookie_session_requires_csrf_for_mutating_api(password_user_client):
     client, user = password_user_client
 

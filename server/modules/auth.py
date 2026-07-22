@@ -146,10 +146,17 @@ def require_human_session_policy(request: Request, session: HumanSessionAuth) ->
             raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
+def enforce_human_session_policy(request: Request) -> HumanSessionAuth | None:
+    session = human_session_auth(request)
+    if session is not None:
+        require_human_session_policy(request, session)
+    return session
+
+
 def request_context(request: Request) -> AuthContext:
-    human_session = human_session_auth(request)
+    human_session = enforce_human_session_policy(request)
     if human_session is not None:
-        require_human_session_policy(request, human_session)
+        request.state.auth_type = "session"
         return human_session.context
 
     if platform_settings.get_settings().auth_required:
@@ -157,8 +164,10 @@ def request_context(request: Request) -> AuthContext:
         profile = token_profiles().get(token)
         if not token or profile is None:
             raise HTTPException(status_code=401, detail="Authentication required")
+        request.state.auth_type = "service-token"
         return profile
 
+    request.state.auth_type = "development-header"
     return AuthContext(
         user=request.headers.get("X-RS-User", "").strip(),
         roles=split_header(request.headers.get("X-RS-Roles")),
@@ -255,7 +264,8 @@ def area_allowed(context: AuthContext, area_code: str | None) -> bool:
 
 
 @router.get("/config")
-def auth_config() -> dict[str, Any]:
+def auth_config(request: Request) -> dict[str, Any]:
+    enforce_human_session_policy(request)
     settings = platform_settings.get_settings()
     return {
         "required": settings.auth_required,
@@ -287,10 +297,11 @@ def auth_me(
     menu_modules = effective_menu_modules_for_context(context)
     modules_by_key = module_catalog_by_key()
     human_session = human_session_auth(request)
-    authenticated = human_session is not None or bool(bearer_token(request))
+    auth_type = getattr(request.state, "auth_type", "development-header")
+    authenticated = auth_type in {"session", "service-token"}
     return {
         "authenticated": authenticated,
-        "authType": "session" if human_session is not None else "service-token" if authenticated else "development-header",
+        "authType": auth_type,
         "mustChangePassword": human_session.must_change_password if human_session is not None else False,
         "sessionExpiresAt": human_session.expires_at if human_session is not None else None,
         "user": context.user,

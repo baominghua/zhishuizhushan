@@ -38,10 +38,14 @@ from server.modules.admin_roles import router as admin_roles_router
 from server.modules.admin_users import router as admin_users_router
 from server.modules.auth import (
     AuthContext,
+    bearer_token as unified_bearer_token,
+    enforce_human_session_policy,
     effective_areas as platform_effective_areas,
     has_admin_role as platform_has_admin_role,
     has_effective_area_scope as platform_has_effective_area_scope,
+    request_context as unified_request_context,
     role_data_scope_values as platform_role_data_scope_values,
+    token_profiles,
 )
 from server.modules.auth import router as auth_router
 from server.modules.human_auth import router as human_auth_router
@@ -155,8 +159,6 @@ TIANDITU_REFERER = os.environ.get("REMOTE_SENSING_TIANDITU_REFERER", "").strip()
 TIANDITU_TIMEOUT = max(2, env_int("REMOTE_SENSING_TIANDITU_TIMEOUT", 8))
 BASEMAP_CACHE_MAX_BYTES = max(0, env_int("REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES", 0))
 BASEMAP_CACHE_MAX_AGE_DAYS = max(0.0, env_float("REMOTE_SENSING_BASEMAP_CACHE_MAX_AGE_DAYS", 0))
-API_TOKENS_RAW = os.environ.get("REMOTE_SENSING_API_TOKENS", "").strip()
-AUTH_REQUIRED = env_bool("REMOTE_SENSING_AUTH_REQUIRED", bool(API_TOKENS_RAW))
 TIANDITU_LAYERS = {"img_w", "cia_w", "vec_w", "cva_w", "ter_w", "cta_w"}
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff", ".geotiff"}
 IMAGERY_SCENE_VIEW_PERMISSION = "imagery.scenes.view"
@@ -245,6 +247,16 @@ app.add_middleware(
 
 
 enforce_production_configuration()
+
+
+@app.middleware("http")
+async def enforce_human_session_policy_for_api(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        try:
+            enforce_human_session_policy(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -386,74 +398,14 @@ def parse_boolean_filter(value: str) -> bool | None:
     return None
 
 
-def token_from_request(request: Request) -> str:
-    authorization = request.headers.get("Authorization", "").strip()
-    if authorization.lower().startswith("bearer "):
-        return authorization[7:].strip()
-    return request.headers.get("X-RS-Token", "").strip() or request.query_params.get("token", "").strip()
-
-
-def parse_api_token_profiles() -> dict[str, dict[str, Any]]:
-    if not API_TOKENS_RAW:
-        return {}
-    try:
-        data = json.loads(API_TOKENS_RAW)
-    except json.JSONDecodeError:
-        data = None
-
-    profiles: dict[str, dict[str, Any]] = {}
-    if isinstance(data, dict):
-        for token, profile in data.items():
-            if isinstance(profile, str):
-                profile = {"user": profile}
-            if isinstance(profile, dict):
-                profiles[str(token)] = {
-                    "user": str(profile.get("user") or token),
-                    "roles": set(split_tokens(profile.get("roles"))),
-                    "projects": set(split_tokens(profile.get("projects"))),
-                    "areas": set(split_tokens(profile.get("areas"))),
-                }
-        return profiles
-
-    # Compact fallback format:
-    # token=user|role1 role2|project1 project2|area1 area2;other-token=viewer|viewer||
-    for record in re.split(r"[;\n]+", API_TOKENS_RAW):
-        record = record.strip()
-        if not record:
-            continue
-        token, raw_profile = (record.split("=", 1) + [""])[:2] if "=" in record else (record, "")
-        parts = [item.strip() for item in raw_profile.split("|")]
-        profiles[token.strip()] = {
-            "user": parts[0] if len(parts) > 0 and parts[0] else token.strip(),
-            "roles": set(split_tokens(parts[1] if len(parts) > 1 else "")),
-            "projects": set(split_tokens(parts[2] if len(parts) > 2 else "")),
-            "areas": set(split_tokens(parts[3] if len(parts) > 3 else "")),
-        }
-    return profiles
-
-
-API_TOKEN_PROFILES = parse_api_token_profiles()
-
-
 def request_context(request: Request) -> dict[str, Any]:
-    token = token_from_request(request)
-    if AUTH_REQUIRED:
-        profile = API_TOKEN_PROFILES.get(token)
-        if not profile:
-            raise HTTPException(status_code=401, detail="Valid Remote Sensing API token is required")
-        return apply_effective_data_scopes({
-            "user": profile["user"],
-            "roles": set(profile["roles"]),
-            "projects": set(profile["projects"]),
-            "areas": set(profile["areas"]),
-            "token": token,
-        })
+    context = unified_request_context(request)
     return apply_effective_data_scopes({
-        "user": request.headers.get("X-RS-User", "").strip(),
-        "roles": set(split_tokens(request.headers.get("X-RS-Roles", ""))),
-        "projects": set(split_tokens(request.headers.get("X-RS-Projects", ""))),
-        "areas": set(split_tokens(request.headers.get("X-RS-Areas", ""))),
-        "token": token,
+        "user": context.user,
+        "roles": set(context.roles),
+        "projects": set(context.projects),
+        "areas": set(context.areas),
+        "token": unified_bearer_token(request),
     })
 
 
@@ -1786,7 +1738,7 @@ def apply_scene_update(
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     base_url = str(request.base_url).rstrip("/")
     scene_id = scene["id"]
-    token = token_from_request(request)
+    token = unified_bearer_token(request)
     token_query = f"?token={urllib.parse.quote(token)}" if token else ""
     tile_url = f"{base_url}/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
     return {
@@ -2955,7 +2907,7 @@ def task_public(task: dict[str, Any], request: Request | None = None) -> dict[st
     if not request or not task.get("sceneId"):
         return task
     base_url = str(request.base_url).rstrip("/")
-    token = token_from_request(request)
+    token = unified_bearer_token(request)
     token_query = f"?token={urllib.parse.quote(token)}" if token else ""
     payload = {
         **task,
@@ -4176,7 +4128,10 @@ def deployment_health_payload() -> dict[str, Any]:
         "importDirs": [str(path) for path in IMPORT_DIRS],
         "taskWorkers": TASK_WORKERS,
         "catalogBackend": "mysql" if use_mysql_catalog() else "postgis" if use_postgis_catalog() else "json",
-        "auth": {"required": AUTH_REQUIRED, "tokensConfigured": len(API_TOKEN_PROFILES)},
+        "auth": {
+            "required": get_settings().auth_required,
+            "tokensConfigured": len(token_profiles()),
+        },
         "tileCache": cache_stats(),
         "tiandituProxy": tianditu_proxy_config(),
         "geoserver": geoserver_config(),

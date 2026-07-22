@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from . import admin_users
-from .auth import AuthContext
+from .auth import AuthContext, enforce_human_session_policy
 from .auth_store import (
     credential_for_user,
     create_session,
@@ -174,6 +174,7 @@ def _set_session_cookie(response: Response, raw_token: str, request: Request) ->
 
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
+    enforce_human_session_policy(request)
     settings = get_settings()
     if not settings.human_auth_enabled:
         raise HTTPException(status_code=404, detail="Human authentication is disabled")
