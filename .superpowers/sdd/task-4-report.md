@@ -57,3 +57,17 @@ All test runs used `D:\Users\MECHREUO\Documents\New project\.venv\Scripts\python
 ### Deferred Minor
 
 - The application middleware and route dependency can both read a valid human session during one request. The shared request state prevents policy disagreement, but the duplicate refresh remains noted for a later low-risk consolidation rather than changing this security boundary during the compatibility fix.
+
+## Pure Token List Compatibility Remediation
+
+### RED
+
+1. `REMOTE_SENSING_API_TOKENS=alpha,beta` no longer authenticated either token after compact-profile support was added.
+2. `REMOTE_SENSING_API_TOKENS=alpha;beta` recognized both tokens but removed the former default `admin` role and global project/area scopes.
+
+### GREEN
+
+- The unified parser now distinguishes JSON profiles, explicit compact profiles, and top-level pure token lists.
+- Pure comma- and semicolon-delimited token lists restore the legacy default context for each token: its own username, `admin`, and global projects and areas.
+- JSON string profiles remain intentionally unprivileged; the pure-list branch only runs for non-JSON input without compact-profile delimiters.
+- `tests/test_auth.py tests/test_human_auth.py tests/test_admin_roles.py tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py -q -p no:cacheprovider`: 149 passed.

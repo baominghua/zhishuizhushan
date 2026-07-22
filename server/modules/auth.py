@@ -104,6 +104,16 @@ def token_profiles() -> dict[str, AuthContext]:
                     profiles[token_value] = parsed_profile
         return profiles
 
+    if "=" not in raw_tokens and "|" not in raw_tokens:
+        for token_value in split_token_profile_values(raw_tokens):
+            profiles[token_value] = AuthContext(
+                user=token_value,
+                roles={"admin"},
+                projects={"*"},
+                areas={"*"},
+            )
+        return profiles
+
     for record in re.split(r"[;\n]+", raw_tokens):
         record = record.strip()
         if not record:

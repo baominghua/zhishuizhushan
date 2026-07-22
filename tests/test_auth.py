@@ -178,3 +178,41 @@ def test_compact_service_profiles_preserve_legacy_identity_roles_and_scopes(app_
     assert empty_profile.json()["user"] == "empty-user"
     assert empty_profile.json()["roles"] == []
     assert empty_profile.json()["dataScopes"] == {}
+
+
+def test_comma_delimited_service_tokens_preserve_legacy_admin_defaults(app_client, monkeypatch):
+    import server.modules.settings as settings
+
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("REMOTE_SENSING_API_TOKENS", "alpha,beta")
+    settings.get_settings.cache_clear()
+    try:
+        alpha = app_client.get("/api/auth/me", headers={"Authorization": "Bearer alpha"})
+        beta = app_client.get("/api/auth/me", headers={"Authorization": "Bearer beta"})
+    finally:
+        settings.get_settings.cache_clear()
+
+    for response, user in ((alpha, "alpha"), (beta, "beta")):
+        assert response.status_code == 200
+        assert response.json()["user"] == user
+        assert response.json()["roles"] == ["admin"]
+        assert response.json()["dataScopes"] == {"areas": ["*"], "projects": ["*"]}
+
+
+def test_semicolon_delimited_service_tokens_preserve_legacy_admin_defaults(app_client, monkeypatch):
+    import server.modules.settings as settings
+
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("REMOTE_SENSING_API_TOKENS", "alpha;beta")
+    settings.get_settings.cache_clear()
+    try:
+        alpha = app_client.get("/api/auth/me", headers={"Authorization": "Bearer alpha"})
+        beta = app_client.get("/api/auth/me", headers={"Authorization": "Bearer beta"})
+    finally:
+        settings.get_settings.cache_clear()
+
+    for response, user in ((alpha, "alpha"), (beta, "beta")):
+        assert response.status_code == 200
+        assert response.json()["user"] == user
+        assert response.json()["roles"] == ["admin"]
+        assert response.json()["dataScopes"] == {"areas": ["*"], "projects": ["*"]}
