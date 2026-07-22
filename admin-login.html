@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>智慧竹山后台登录</title>
-    <link rel="stylesheet" href="admin.css?v=20260715-auth1" />
+    <link rel="stylesheet" href="admin.css?v=20260722-password-auth" />
   </head>
   <body class="admin-login-page">
     <main class="admin-login-shell">
@@ -21,22 +21,34 @@
         </div>
         <form id="loginForm">
           <label>
-            <span>API 地址</span>
-            <input id="apiBase" type="url" value="http://127.0.0.1:8010" autocomplete="url" required />
+            <span>用户名</span>
+            <input id="username" name="username" type="text" autocomplete="username" required autofocus />
           </label>
           <label>
-            <span>访问令牌</span>
-            <input id="accessToken" type="password" autocomplete="current-password" required />
-          </label>
-          <label class="checkbox-field admin-login-remember">
-            <span>在此浏览器保持登录</span>
-            <input id="rememberToken" type="checkbox" />
+            <span>密码</span>
+            <span class="admin-login-password-control">
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+              <button
+                id="togglePassword"
+                class="icon-button admin-login-password-toggle"
+                type="button"
+                aria-label="显示密码"
+                aria-pressed="false"
+                title="显示密码"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                  <circle cx="12" cy="12" r="2.75" />
+                </svg>
+              </button>
+            </span>
           </label>
           <button id="loginButton" type="submit">登录后台</button>
         </form>
         <p id="loginStatus" class="admin-login-status" role="status" aria-live="polite"></p>
+        <div id="serviceTokenFallback" hidden></div>
       </section>
     </main>
-    <script src="admin-login.js?v=20260715-auth1"></script>
+    <script src="admin-login.js?v=20260722-password-auth"></script>
   </body>
 </html>

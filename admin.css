@@ -2761,6 +2761,29 @@ input[readonly] {
   justify-content: space-between;
 }
 
+.admin-login-password-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-login-password-control input {
+  min-width: 0;
+}
+
+.admin-login-password-toggle {
+  width: var(--control-height);
+  min-width: var(--control-height);
+  height: var(--control-height);
+  min-height: var(--control-height);
+}
+
+#serviceTokenFallback form {
+  display: grid;
+  gap: 16px;
+}
+
 .admin-login-status {
   min-height: 22px;
   margin: 0;
@@ -2774,6 +2797,10 @@ input[readonly] {
 
 .admin-login-status[data-kind="success"] {
   color: var(--success);
+}
+
+.admin-login-status[data-kind="warning"] {
+  color: var(--warning);
 }
 
 .sidebar-session-control {
