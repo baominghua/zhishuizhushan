@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import secrets
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
@@ -11,7 +14,6 @@ from .database import (
     admin_sessions_json_path,
     load_json_records,
     mysql_connect,
-    save_json_records,
     use_mysql,
 )
 
@@ -19,6 +21,7 @@ from .database import (
 SESSION_LIFETIME = timedelta(hours=24)
 FAILED_LOGIN_LIMIT = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
+JSON_STORE_LOCK = threading.RLock()
 
 
 class CredentialRecord(TypedDict):
@@ -86,6 +89,20 @@ def token_hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def save_json_records(path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            json.dump(records, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
 def new_credential(user_id: str, password_hash: str) -> CredentialRecord:
     now = iso_utc(utc_now())
     return {
@@ -132,18 +149,50 @@ def credential_from_mysql(row: tuple[Any, ...]) -> CredentialRecord:
     }
 
 
+def mysql_credential_for_user(cur: Any, user_id: str, *, lock: bool = False) -> CredentialRecord | None:
+    sql = (
+        "SELECT id, admin_user_id, password_hash, password_changed_at, "
+        "must_change_password, failed_login_count, locked_until, credential_version, "
+        "created_at, updated_at FROM admin_user_credentials WHERE admin_user_id = %s"
+    )
+    if lock:
+        sql += " FOR UPDATE"
+    cur.execute(sql, (user_id,))
+    row = cur.fetchone()
+    return credential_from_mysql(row) if row else None
+
+
+def write_mysql_credential(cur: Any, normalized: CredentialRecord) -> None:
+    cur.execute(
+        """
+        INSERT INTO admin_user_credentials (
+            id, admin_user_id, password_hash, password_changed_at, must_change_password,
+            failed_login_count, locked_until, credential_version, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            password_hash = VALUES(password_hash),
+            password_changed_at = VALUES(password_changed_at),
+            must_change_password = VALUES(must_change_password),
+            failed_login_count = VALUES(failed_login_count),
+            locked_until = VALUES(locked_until),
+            credential_version = VALUES(credential_version),
+            updated_at = VALUES(updated_at)
+        """,
+        (
+            normalized["id"], normalized["userId"], normalized["passwordHash"],
+            mysql_datetime(normalized["passwordChangedAt"]), normalized["mustChangePassword"],
+            normalized["failedLoginCount"], mysql_datetime(normalized["lockedUntil"]),
+            normalized["credentialVersion"], mysql_datetime(normalized["createdAt"]),
+            mysql_datetime(normalized["updatedAt"]),
+        ),
+    )
+
+
 def credential_for_user(user_id: str) -> CredentialRecord | None:
     if use_mysql():
         with mysql_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id, admin_user_id, password_hash, password_changed_at, "
-                    "must_change_password, failed_login_count, locked_until, credential_version, "
-                    "created_at, updated_at FROM admin_user_credentials WHERE admin_user_id = %s",
-                    (user_id,),
-                )
-                row = cur.fetchone()
-        return credential_from_mysql(row) if row else None
+                return mysql_credential_for_user(cur, user_id)
     for record in load_json_records(admin_credentials_json_path()):
         if str(record.get("userId")) == user_id:
             return normalize_credential(record)
@@ -155,58 +204,71 @@ def save_credential(record: CredentialRecord) -> None:
     if use_mysql():
         with mysql_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO admin_user_credentials (
-                        id, admin_user_id, password_hash, password_changed_at, must_change_password,
-                        failed_login_count, locked_until, credential_version, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        password_hash = VALUES(password_hash),
-                        password_changed_at = VALUES(password_changed_at),
-                        must_change_password = VALUES(must_change_password),
-                        failed_login_count = VALUES(failed_login_count),
-                        locked_until = VALUES(locked_until),
-                        credential_version = VALUES(credential_version),
-                        updated_at = VALUES(updated_at)
-                    """,
-                    (
-                        normalized["id"], normalized["userId"], normalized["passwordHash"],
-                        mysql_datetime(normalized["passwordChangedAt"]), normalized["mustChangePassword"],
-                        normalized["failedLoginCount"], mysql_datetime(normalized["lockedUntil"]),
-                        normalized["credentialVersion"], mysql_datetime(normalized["createdAt"]),
-                        mysql_datetime(normalized["updatedAt"]),
-                    ),
-                )
+                write_mysql_credential(cur, normalized)
             conn.commit()
         return
-    records = load_json_records(admin_credentials_json_path())
-    records = [item for item in records if str(item.get("userId")) != normalized["userId"]]
-    records.append(normalized)
-    save_json_records(admin_credentials_json_path(), records)
+    with JSON_STORE_LOCK:
+        records = load_json_records(admin_credentials_json_path())
+        for index, existing in enumerate(records):
+            if str(existing.get("userId")) == normalized["userId"]:
+                existing_credential = normalize_credential(existing)
+                normalized["id"] = existing_credential["id"]
+                normalized["createdAt"] = existing_credential["createdAt"]
+                records[index] = normalized
+                break
+        else:
+            records.append(normalized)
+        save_json_records(admin_credentials_json_path(), records)
 
 
 def record_failed_login(user_id: str, now: datetime) -> CredentialRecord:
-    credential = credential_for_user(user_id)
-    if credential is None:
-        raise KeyError(f"Credential not found for user {user_id}")
-    credential["failedLoginCount"] += 1
-    if credential["failedLoginCount"] >= FAILED_LOGIN_LIMIT:
-        credential["lockedUntil"] = iso_utc(now + LOCKOUT_DURATION)
-    credential["updatedAt"] = iso_utc(now)
-    save_credential(credential)
-    return credential
+    if use_mysql():
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                credential = mysql_credential_for_user(cur, user_id, lock=True)
+                if credential is None:
+                    raise KeyError(f"Credential not found for user {user_id}")
+                credential["failedLoginCount"] += 1
+                if credential["failedLoginCount"] >= FAILED_LOGIN_LIMIT:
+                    credential["lockedUntil"] = iso_utc(now + LOCKOUT_DURATION)
+                credential["updatedAt"] = iso_utc(now)
+                write_mysql_credential(cur, credential)
+            conn.commit()
+        return credential
+    with JSON_STORE_LOCK:
+        credential = credential_for_user(user_id)
+        if credential is None:
+            raise KeyError(f"Credential not found for user {user_id}")
+        credential["failedLoginCount"] += 1
+        if credential["failedLoginCount"] >= FAILED_LOGIN_LIMIT:
+            credential["lockedUntil"] = iso_utc(now + LOCKOUT_DURATION)
+        credential["updatedAt"] = iso_utc(now)
+        save_credential(credential)
+        return credential
 
 
 def reset_failed_login(user_id: str) -> CredentialRecord:
-    credential = credential_for_user(user_id)
-    if credential is None:
-        raise KeyError(f"Credential not found for user {user_id}")
-    credential["failedLoginCount"] = 0
-    credential["lockedUntil"] = None
-    credential["updatedAt"] = iso_utc(utc_now())
-    save_credential(credential)
-    return credential
+    if use_mysql():
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                credential = mysql_credential_for_user(cur, user_id, lock=True)
+                if credential is None:
+                    raise KeyError(f"Credential not found for user {user_id}")
+                credential["failedLoginCount"] = 0
+                credential["lockedUntil"] = None
+                credential["updatedAt"] = iso_utc(utc_now())
+                write_mysql_credential(cur, credential)
+            conn.commit()
+        return credential
+    with JSON_STORE_LOCK:
+        credential = credential_for_user(user_id)
+        if credential is None:
+            raise KeyError(f"Credential not found for user {user_id}")
+        credential["failedLoginCount"] = 0
+        credential["lockedUntil"] = None
+        credential["updatedAt"] = iso_utc(utc_now())
+        save_credential(credential)
+        return credential
 
 
 def normalize_session(source: dict[str, Any]) -> SessionRecord:
@@ -266,10 +328,11 @@ def save_session(record: SessionRecord) -> None:
                 )
             conn.commit()
         return
-    records = load_json_records(admin_sessions_json_path())
-    records = [item for item in records if str(item.get("id")) != normalized["id"]]
-    records.append(normalized)
-    save_json_records(admin_sessions_json_path(), records)
+    with JSON_STORE_LOCK:
+        records = load_json_records(admin_sessions_json_path())
+        records = [item for item in records if str(item.get("id")) != normalized["id"]]
+        records.append(normalized)
+        save_json_records(admin_sessions_json_path(), records)
 
 
 def create_session(
@@ -341,11 +404,13 @@ def revoke_session(raw_token: str) -> None:
                 )
             conn.commit()
         return
-    for record in load_json_records(admin_sessions_json_path()):
-        if record.get("tokenHash") == hashed_token and record.get("revokedAt") is None:
-            record["revokedAt"] = revoked_at
-            save_session(normalize_session(record))
-            return
+    with JSON_STORE_LOCK:
+        records = load_json_records(admin_sessions_json_path())
+        for record in records:
+            if record.get("tokenHash") == hashed_token and record.get("revokedAt") is None:
+                record["revokedAt"] = revoked_at
+                save_json_records(admin_sessions_json_path(), records)
+                return
 
 
 def revoke_user_sessions(user_id: str, except_session_id: str | None = None) -> int:
@@ -363,16 +428,17 @@ def revoke_user_sessions(user_id: str, except_session_id: str | None = None) -> 
             conn.commit()
         return revoked
 
-    records = load_json_records(admin_sessions_json_path())
-    revoked = 0
-    for record in records:
-        if (
-            str(record.get("userId")) == user_id
-            and record.get("revokedAt") is None
-            and str(record.get("id")) != except_session_id
-        ):
-            record["revokedAt"] = revoked_at
-            revoked += 1
-    if revoked:
-        save_json_records(admin_sessions_json_path(), records)
-    return revoked
+    with JSON_STORE_LOCK:
+        records = load_json_records(admin_sessions_json_path())
+        revoked = 0
+        for record in records:
+            if (
+                str(record.get("userId")) == user_id
+                and record.get("revokedAt") is None
+                and str(record.get("id")) != except_session_id
+            ):
+                record["revokedAt"] = revoked_at
+                revoked += 1
+        if revoked:
+            save_json_records(admin_sessions_json_path(), records)
+        return revoked

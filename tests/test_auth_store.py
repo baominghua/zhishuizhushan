@@ -1,7 +1,9 @@
 from datetime import UTC, datetime, timedelta
+import threading
 
 import pytest
 
+import server.modules.auth_store as auth_store
 from server.modules.auth_store import (
     create_session,
     credential_for_user,
@@ -13,6 +15,7 @@ from server.modules.auth_store import (
     save_credential,
     session_for_token,
 )
+from server.modules.database import admin_credentials_json_path, admin_sessions_json_path
 
 
 @pytest.fixture(autouse=True)
@@ -72,3 +75,151 @@ def test_session_revocation_by_token_and_user_preserves_excepted_session(isolate
     assert session_for_token(second_token, now) == second
     assert revoke_user_sessions("user-1") == 1
     assert session_for_token(second_token, now) is None
+
+
+def _run_concurrently(workers):
+    start = threading.Barrier(len(workers) + 1)
+    errors = []
+
+    def run(worker):
+        try:
+            start.wait()
+            worker()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(worker,)) for worker in workers]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+
+def _delay_parallel_json_writes(monkeypatch, path, participants):
+    original_save = auth_store.save_json_records
+    write_barrier = threading.Barrier(participants)
+
+    def delayed_save(saved_path, records):
+        if saved_path == path:
+            try:
+                write_barrier.wait(timeout=0.1)
+            except threading.BrokenBarrierError:
+                pass
+        original_save(saved_path, records)
+
+    monkeypatch.setattr(auth_store, "save_json_records", delayed_save)
+
+
+def test_concurrent_json_failed_logins_keep_every_increment(monkeypatch, isolated_env):
+    now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    save_credential(new_credential("user-1", "$argon2id$test"))
+    _delay_parallel_json_writes(monkeypatch, admin_credentials_json_path(), participants=5)
+
+    _run_concurrently([lambda: record_failed_login("user-1", now) for _ in range(5)])
+
+    credential = credential_for_user("user-1")
+    assert credential["failedLoginCount"] == 5
+    assert credential["lockedUntil"] == (now + timedelta(minutes=15)).isoformat()
+
+
+def test_mysql_failed_login_locks_credential_row_in_its_update_transaction(monkeypatch, isolated_env):
+    now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    row = (
+        "credential-1", "user-1", "$argon2id$test", now.replace(tzinfo=None), True,
+        4, None, 1, now.replace(tzinfo=None), now.replace(tzinfo=None),
+    )
+    connections = []
+
+    class Cursor:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=()):
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            return row
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+            self.committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def commit(self):
+            self.committed = True
+
+    def connect():
+        connection = Connection()
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
+    monkeypatch.setattr(auth_store, "mysql_connect", connect)
+
+    credential = record_failed_login("user-1", now)
+
+    assert credential["failedLoginCount"] == 5
+    assert len(connections) == 1
+    assert connections[0].committed is True
+    assert "FOR UPDATE" in connections[0].cursor_instance.calls[0][0]
+
+
+def test_concurrent_json_session_creates_and_revocations_keep_all_records(monkeypatch, isolated_env):
+    now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    _delay_parallel_json_writes(monkeypatch, admin_sessions_json_path(), participants=5)
+    created = []
+    created_lock = threading.Lock()
+
+    def create():
+        raw_token, _csrf_token, _record = create_session("user-1", 1, now, "127.0.0.1", "pytest")
+        with created_lock:
+            created.append(raw_token)
+
+    _run_concurrently([create for _ in range(5)])
+    assert len(created) == 5
+    assert len(auth_store.load_json_records(admin_sessions_json_path())) == 5
+
+    _delay_parallel_json_writes(monkeypatch, admin_sessions_json_path(), participants=5)
+    _run_concurrently([lambda token=token: revoke_session(token) for token in created])
+
+    assert all(session_for_token(token, now) is None for token in created)
+
+
+def test_json_session_store_never_persists_raw_tokens(isolated_env):
+    now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    raw_token, csrf_token, _record = create_session("user-1", 1, now, "127.0.0.1", "pytest")
+
+    persisted = admin_sessions_json_path().read_text(encoding="utf-8")
+
+    assert raw_token not in persisted
+    assert csrf_token not in persisted
+
+
+def test_json_credential_upsert_preserves_existing_identity(isolated_env):
+    original = new_credential("user-1", "$argon2id$first")
+    save_credential(original)
+
+    replacement = new_credential("user-1", "$argon2id$replacement")
+    save_credential(replacement)
+
+    stored = credential_for_user("user-1")
+    assert stored["id"] == original["id"]
+    assert stored["createdAt"] == original["createdAt"]
+    assert stored["passwordHash"] == "$argon2id$replacement"
