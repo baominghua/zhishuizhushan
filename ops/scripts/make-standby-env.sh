@@ -14,6 +14,10 @@ sed \
   -e 's#http://36\.140\.138\.117#http://36.137.23.53#g' \
   "${source_env}" > "${target}"
 chmod 0600 "${target}"
+for key in SMART_BAMBOO_HUMAN_AUTH_ENABLED SMART_BAMBOO_TLS_ENABLED REMOTE_SENSING_API_TOKENS SMART_BAMBOO_BREAK_GLASS_TOKEN; do
+  grep -q "^${key}=" "${source_env}"
+  grep -q "^${key}=" "${target}"
+done
 dashboard_token="$(sed -n 's/^SMART_BAMBOO_DASHBOARD_TOKEN=//p' "${source_env}" | tail -n 1)"
 if [[ ! "${dashboard_token}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
   echo "ERROR: source environment has no valid dashboard token." >&2

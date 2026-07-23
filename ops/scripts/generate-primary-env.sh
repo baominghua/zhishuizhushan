@@ -15,7 +15,9 @@ mysql_root_password="$(openssl rand -hex 24)"
 replication_password="$(openssl rand -hex 24)"
 geoserver_password="$(openssl rand -hex 24)"
 dashboard_token="$(openssl rand -hex 32)"
-release_tag="20260717-$(git -C "${repo_root}" rev-parse --short=12 HEAD)"
+break_glass_token="$(openssl rand -hex 32)"
+release_commit="$(git -C "${repo_root}" rev-parse HEAD)"
+release_tag="20260717-${release_commit:0:12}"
 
 cat > "${target}" <<EOF
 MYSQL_DATABASE=smart_bamboo
@@ -25,14 +27,19 @@ MYSQL_ROOT_PASSWORD=${mysql_root_password}
 REPLICATION_USER=smart_bamboo_repl
 REPLICATION_PASSWORD=${replication_password}
 SMART_BAMBOO_RELEASE_TAG=${release_tag}
+SMART_BAMBOO_RELEASE_COMMIT=${release_commit}
 SMART_BAMBOO_DASHBOARD_TOKEN=${dashboard_token}
+SMART_BAMBOO_BREAK_GLASS_TOKEN=${break_glass_token}
 SMART_BAMBOO_HUMAN_AUTH_ENABLED=0
 SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1
 SMART_BAMBOO_TRUST_PROXY_HEADERS=1
 SMART_BAMBOO_SESSION_COOKIE_SECURE=1
+SMART_BAMBOO_TLS_ENABLED=0
+SMART_BAMBOO_TLS_CERT_PATH=
+SMART_BAMBOO_TLS_KEY_PATH=
 SMART_BAMBOO_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306/smart_bamboo?charset=utf8mb4
 REMOTE_SENSING_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306/smart_bamboo?charset=utf8mb4
-REMOTE_SENSING_API_TOKENS='{"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]}}'
+REMOTE_SENSING_API_TOKENS='{"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]},"${break_glass_token}":{"user":"break_glass","roles":["admin"],"projects":["*"],"areas":["*"]}}'
 REMOTE_SENSING_CORS_ORIGINS=http://36.140.138.117
 REMOTE_SENSING_TASK_WORKERS=4
 REMOTE_SENSING_TIANDITU_TK=
@@ -55,4 +62,4 @@ window.SATELLITE_CONFIG = {
 };
 EOF
 chmod 0640 "$(dirname "${target}")/satellite-config.local.js"
-echo "Created ${target}; the browser received a separate read-only dashboard token."
+echo "Created ${target}; record the immutable release commit and store the break-glass token offline."

@@ -1,5 +1,8 @@
 from pathlib import Path
+import json
 import re
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -293,6 +296,77 @@ def test_primary_human_auth_configuration_keeps_http_acceptance_mode_but_locks_s
     assert '"roles":["viewer"]' in env_generator
     assert "proxy_set_header X-Forwarded-Proto $scheme;" in nginx
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in nginx
+
+
+def test_human_auth_rollout_has_tls_token_sync_and_failover_guards():
+    primary_env = read_text("ops/scripts/generate-primary-env.sh")
+    standby_env = read_text("ops/scripts/make-standby-env.sh")
+    verify = read_text("ops/scripts/verify-cluster.sh")
+    promote = read_text("ops/scripts/promote-standby.sh")
+    tls_compose = read_text("ops/compose.tls.yml")
+    tls_nginx = read_text("ops/nginx/smart-bamboo-tls.conf")
+    rotate_break_glass = read_text("ops/scripts/rotate-break-glass-token.py")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+
+    assert "SMART_BAMBOO_BREAK_GLASS_TOKEN" in primary_env
+    assert '"break_glass"' in primary_env
+    assert "SMART_BAMBOO_RELEASE_COMMIT" in primary_env
+    assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED" in standby_env
+    assert "REMOTE_SENSING_API_TOKENS" in standby_env
+    assert "--allow-human-auth-pending" in verify
+    assert "human_auth_pending_https" in verify
+    assert '!= "warning"' in verify
+    assert "CONFIRM_HUMAN_AUTH_ENABLED=1" in promote
+    assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED" in promote
+    assert '"0.0.0.0:443:443"' in tls_compose
+    assert "SMART_BAMBOO_TLS_CERT_PATH" in tls_compose
+    assert "listen 443 ssl" in tls_nginx
+    assert "X-Forwarded-Proto https" in tls_nginx
+    assert "SMART_BAMBOO_BREAK_GLASS_TOKEN" in rotate_break_glass
+    assert "REMOTE_SENSING_API_TOKENS" in rotate_break_glass
+    assert "Temporary password" not in rotate_break_glass
+    assert "SMART_BAMBOO_RELEASE_COMMIT" in runbook
+    assert "--allow-human-auth-pending" in runbook
+    assert "system.users.setPassword" in runbook
+    assert "system.users.revokeSessions" in runbook
+    assert "admin_user_credentials" in runbook
+    assert runbook.index("SMART_BAMBOO_HUMAN_AUTH_ENABLED=1") < runbook.index("以 bootstrap 管理员登录")
+
+
+def test_break_glass_rotation_replaces_a_bom_prefixed_legacy_token(tmp_path):
+    env_file = tmp_path / "primary.env"
+    profiles = {
+        "dashboard-token": {"user": "dashboard", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
+        "old-break-glass": {"user": "break_glass", "roles": ["admin"], "projects": ["*"], "areas": ["*"]},
+    }
+    env_file.write_text(
+        "\n".join(
+            [
+                "SMART_BAMBOO_BREAK_GLASS_TOKEN=old-break-glass",
+                "REMOTE_SENSING_API_TOKENS='" + json.dumps(profiles, separators=(",", ":")) + "'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8-sig",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ops/scripts/rotate-break-glass-token.py"), "--env-file", str(env_file)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("Break-glass token") == 1
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    break_glass_lines = [line for line in lines if line.startswith("SMART_BAMBOO_BREAK_GLASS_TOKEN=")]
+    assert len(break_glass_lines) == 1
+    assert break_glass_lines[0] != "SMART_BAMBOO_BREAK_GLASS_TOKEN=old-break-glass"
+    encoded_profiles = next(line for line in lines if line.startswith("REMOTE_SENSING_API_TOKENS=")).split("=", 1)[1].strip("'")
+    profiles = json.loads(encoded_profiles)
+    assert "old-break-glass" not in profiles
+    assert sorted(profile["user"] for profile in profiles.values()) == ["break_glass", "dashboard"]
 
 
 @pytest.mark.parametrize(

@@ -1,15 +1,16 @@
 # 管理员密码认证上线运行手册
 
-本文仅覆盖智慧竹山管理员密码认证的分阶段上线。双云主机既有基础设施流程见 `ops/README.md`。所有命令在服务器的 `/opt/smart-bamboo` 执行；秘密只能在服务器控制台输入或保存在 `/srv/smart-bamboo*/config/*.env`，不得贴入聊天、终端历史或 Git。
+本手册覆盖智慧竹山管理员密码认证的生产上线和容灾切换。所有命令均在云主机 `/opt/smart-bamboo` 执行。密钥、证书、临时密码和 token 只能在受控服务器控制台输入或保存至 `/srv/smart-bamboo*/config/`，不得放入 Git、工单正文、截图或 shell 历史。
 
-## 0. 固定文件、目录与发布原则
+## 0. 固定拓扑与不变量
 
-- 主节点（`36.140.138.117`）：数据目录 `/srv/smart-bamboo`，环境文件 `/srv/smart-bamboo/config/primary.env`，Compose 文件 `ops/compose.primary.yml`。
-- 热备节点（`36.137.23.53`）：数据目录 `/srv/smart-bamboo-dr`，环境文件 `/srv/smart-bamboo-dr/config/standby.env`，Compose 文件 `ops/compose.standby.yml`。
-- 两套 Compose 都要求 `SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1`、`SMART_BAMBOO_TRUST_PROXY_HEADERS=1`、`SMART_BAMBOO_SESSION_COOKIE_SECURE=1`。认证开关初始必须保持 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`。
-- 密码认证只在主节点启用；热备继续复制数据库并保持 failover profile 停止，直到既有容灾流程提升它。
+- 主节点：`36.140.138.117`，运行目录 `/opt/smart-bamboo`，数据/环境目录 `/srv/smart-bamboo`，环境文件 `/srv/smart-bamboo/config/primary.env`，Compose 文件 `ops/compose.primary.yml`。
+- 热备节点：`36.137.23.53`，运行目录 `/opt/smart-bamboo`，数据/环境目录 `/srv/smart-bamboo-dr`，环境文件 `/srv/smart-bamboo-dr/config/standby.env`，Compose 文件 `ops/compose.standby.yml`。
+- `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 是准备阶段唯一允许的认证状态；此时健康检查只能有 `human_auth_pending_https` 这一项预期 warning，不能使用要求 `ready` 的验证命令。
+- 正式启用必须同时满足 `SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1`、`SMART_BAMBOO_TRUST_PROXY_HEADERS=1`、`SMART_BAMBOO_SESSION_COOKIE_SECURE=1`、`SMART_BAMBOO_TLS_ENABLED=1`。
+- `REMOTE_SENSING_API_TOKENS` 至少保留只读 dashboard token 和服务器控制台保管的 `break_glass` 管理员 token。人类认证、旧管理员 token 或浏览器会话均不能是唯一管理入口。
 
-设置可复用的主节点 Compose 命令：
+主节点 Compose 数组：
 
 ```bash
 cd /opt/smart-bamboo
@@ -18,9 +19,31 @@ PRIMARY=(docker compose --project-directory /opt/smart-bamboo \
   -f ops/compose.primary.yml)
 ```
 
-## 1. 备份和发布前 gate
+## 1. 固定审批提交和备份
 
-先在移动云创建发布前磁盘快照，再生成可校验的 MySQL 备份。备份脚本使用 `db-primary`、`/srv/smart-bamboo/config/primary.env` 和 `/srv/smart-bamboo/backups`，会输出 SQL gzip 文件和同名 SHA-256 文件。
+发布负责人必须提供已审批的不可变 full commit SHA（或经审计的 immutable tag 解析出的 full SHA）。不要 checkout 移动分支后直接部署。主、备均执行：
+
+```bash
+cd /opt/smart-bamboo
+read -r -p 'Approved immutable release commit: ' RELEASE_COMMIT; echo
+git fetch origin "$RELEASE_COMMIT"
+git checkout --detach "$RELEASE_COMMIT"
+test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+git status --short
+```
+
+主节点将实际检出的 commit 写入受保护环境文件，避免镜像 tag 和部署源码漂移；不要重新运行 `generate-primary-env.sh`，它会轮换所有秘密。
+
+```bash
+RELEASE_TAG="release-${RELEASE_COMMIT:0:12}"
+sed -i "s/^SMART_BAMBOO_RELEASE_COMMIT=.*/SMART_BAMBOO_RELEASE_COMMIT=${RELEASE_COMMIT}/" \
+  /srv/smart-bamboo/config/primary.env
+sed -i "s/^SMART_BAMBOO_RELEASE_TAG=.*/SMART_BAMBOO_RELEASE_TAG=${RELEASE_TAG}/" \
+  /srv/smart-bamboo/config/primary.env
+grep -E '^SMART_BAMBOO_RELEASE_(COMMIT|TAG)=' /srv/smart-bamboo/config/primary.env
+```
+
+创建云硬盘发布前快照，然后生成可校验 MySQL 备份：
 
 ```bash
 cd /opt/smart-bamboo
@@ -28,136 +51,139 @@ bash ops/scripts/backup-mysql.sh
 ls -lh /srv/smart-bamboo/backups/smart-bamboo-*.sql.gz*
 ```
 
-在两台云主机执行 Compose 渲染，确认端口和挂载没有漂移。主节点的 `app`/`geoserver` 仅绑定 `127.0.0.1`，Nginx 才公开 `0.0.0.0:80`；热备在没有 `--profile failover` 时不能启动应用面。
+## 2. 认证关闭的构建、schema 和迁移 gate
+
+首先确认主环境保持准备状态。此阶段的 `verify-cluster` 明确只允许单个 `human_auth_pending_https` warning；任意 database、schema、目录或 token warning/error 都会失败。
 
 ```bash
-cd /opt/smart-bamboo
-docker compose --project-directory /opt/smart-bamboo \
-  --env-file /srv/smart-bamboo/config/primary.env \
-  -f ops/compose.primary.yml config >/tmp/primary-compose.txt
-grep -nE '0\.0\.0\.0:80|127\.0\.0\.1:8010|192\.168\.0\.32:3306' /tmp/primary-compose.txt
-
-docker compose --project-directory /opt/smart-bamboo \
-  --env-file /srv/smart-bamboo-dr/config/standby.env \
-  -f ops/compose.standby.yml config >/tmp/standby-compose.txt
-grep -nE '0\.0\.0\.0:80|127\.0\.0\.1:8010|/srv/smart-bamboo-dr' /tmp/standby-compose.txt
-```
-
-`docker compose config` 是云主机发布 gate。本地没有 Docker CLI 时，不得将本地验证写为通过。
-
-## 2. 拉取、构建和 schema 检查（保持人类认证关闭）
-
-先检查主节点环境文件仍处于分阶段模式。不要在这一阶段把认证开关改为 `1`。
-
-```bash
-cd /opt/smart-bamboo
-git fetch origin
-git checkout codex/production-deploy
-git pull --ff-only origin codex/production-deploy
-grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|AUTH_REQUIRE_HTTPS|TRUST_PROXY_HEADERS|SESSION_COOKIE_SECURE)=' \
+grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|TLS_ENABLED|AUTH_REQUIRE_HTTPS|TRUST_PROXY_HEADERS|SESSION_COOKIE_SECURE)=' \
   /srv/smart-bamboo/config/primary.env
-# Required: 0, 1, 1, 1 respectively.
+# Required: 0, 0, 1, 1, 1 respectively.
+"${PRIMARY[@]}" config >/tmp/primary-compose.txt
 "${PRIMARY[@]}" up -d --build
-"${PRIMARY[@]}" ps
-curl -fsS http://127.0.0.1:8010/api/health
-bash ops/scripts/verify-cluster.sh primary
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 ```
 
-应用启动会初始化 MySQL schema。只有健康响应显示 `deployment.database.platform.schemaReady=true`、`deployment.database.remoteSensingCatalog.schemaReady=true` 和 `deployment.readiness.status=ready` 才能继续。若仍有旧 JSON 私有数据，先只读盘点，再执行幂等迁移；任何 `verification.verified` 非真、`missingRecords` 非零或退出码非零均停止发布。
+应用启动会创建 MySQL schema。若有旧 JSON 私有数据，先只读盘点，再执行迁移；盘点或命令任一退出码非零即停止。
 
 ```bash
 "${PRIMARY[@]}" exec -T app python server/scripts/migrate_json_to_mysql.py --dry-run
 "${PRIMARY[@]}" exec -T app python server/scripts/migrate_json_to_mysql.py
-curl -fsS http://127.0.0.1:8010/api/health
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 ```
 
-从库通过既有流程接收同一份主节点备份、构建但不启动 failover 应用，并验证复制。不要在未提升的热备节点执行密码 bootstrap。
+确认 bootstrap 已写入 `admin_user_credentials`、`admin_sessions`、`admin_users` 和 `admin_roles` 所需 schema 后，仅在主节点运行一次。自动生成的临时密码只会输出一次，操作员须立即离线保存并清屏；不可重跑以获取同一密码。
 
 ```bash
-cd /opt/smart-bamboo
-docker compose --project-directory /opt/smart-bamboo \
-  --env-file /srv/smart-bamboo-dr/config/standby.env \
-  -f ops/compose.standby.yml --profile failover pull
-docker compose --project-directory /opt/smart-bamboo \
-  --env-file /srv/smart-bamboo-dr/config/standby.env \
-  -f ops/compose.standby.yml --profile failover build app
-bash ops/scripts/verify-cluster.sh standby
-```
-
-## 3. 初始化第一个管理员
-
-确认主库 schema 已就绪、`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 仍生效后，在主节点运行一次 bootstrap。脚本在 MySQL 事务中创建/恢复 `admin` 角色、管理员用户、credential，并撤销该用户既有会话；自动生成的临时密码只打印这一次。控制台操作员必须立即离线保存该行，然后清屏，不得重跑命令来“查看”密码。
-
-```bash
-cd /opt/smart-bamboo
 "${PRIMARY[@]}" exec -T app python ops/scripts/bootstrap-admin-password.py \
   --username bootstrap_admin --display-name 'Bootstrap Administrator'
 ```
 
-若组织已通过安全通道准备合规临时密码，可使用标准输入避免脚本输出密码。密码不应出现在 shell 历史或日志中：
+## 3. 真实 TLS 终止前置步骤
+
+仓库基础 `ops/nginx/smart-bamboo.conf` 仅提供 HTTP，且其 `X-Forwarded-Proto` 是 `$scheme`；它不具备密码认证上线条件。正式 TLS 使用 `ops/compose.tls.yml` 覆盖 Nginx，并挂载运维人员从真实证书颁发方取得的证书和私钥。该仓库不提供域名、证书或私钥。
+
+将真实证书文件放在主节点受限目录，并以实际路径写入环境。`PUBLIC_FQDN` 必须是已经在 DNS 和证书 SAN 中批准的名称，不要以 IP 或示例域名替代。
 
 ```bash
+install -d -m 750 /srv/smart-bamboo/tls
+install -m 640 -o root -g root <real-fullchain.pem> /srv/smart-bamboo/tls/fullchain.pem
+install -m 640 -o root -g root <real-privkey.pem> /srv/smart-bamboo/tls/privkey.pem
+editor /srv/smart-bamboo/config/primary.env
+# Set SMART_BAMBOO_TLS_ENABLED=1
+# Set SMART_BAMBOO_TLS_CERT_PATH=/srv/smart-bamboo/tls/fullchain.pem
+# Set SMART_BAMBOO_TLS_KEY_PATH=/srv/smart-bamboo/tls/privkey.pem
+# Set REMOTE_SENSING_CORS_ORIGINS=https://<approved-public-fqdn>
 cd /opt/smart-bamboo
-read -rs -p 'Temporary bootstrap password: ' BOOTSTRAP_PASSWORD; echo
-printf '%s\n' "$BOOTSTRAP_PASSWORD" | "${PRIMARY[@]}" exec -T app \
-  python ops/scripts/bootstrap-admin-password.py \
-  --username bootstrap_admin --display-name 'Bootstrap Administrator' --password-stdin
-unset BOOTSTRAP_PASSWORD
+bash ops/scripts/enable-tls.sh primary
+read -r -p 'Approved public DNS name: ' PUBLIC_FQDN; echo
+openssl s_client -connect "${PUBLIC_FQDN}:443" -servername "${PUBLIC_FQDN}" -verify_return_error </dev/null
+curl --fail --show-error --silent "https://${PUBLIC_FQDN}/api/auth/config"
 ```
 
-## 4. HTTPS 验收后启用人类认证
+`enable-tls.sh` 检查证书存在、剩余有效期至少 30 天并先运行 `docker compose ... config`；TLS Nginx 把 HTTP 308 重定向至 HTTPS，并固定上游 `X-Forwarded-Proto https`。外部 DNS、证书链和 HTTPS health 未通过时，保持 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`。
 
-在 Nginx 已配置真实 HTTPS 终止且外部浏览器访问使用 `https://` 后，确认代理会转发 `X-Forwarded-Proto` 和 `X-Forwarded-For`。先用 HTTPS 登录页完成一次临时管理员登录；HTTP 密码登录应返回 426，而不是绕过 HTTPS。
+## 4. 启用认证、正式 ready 与登录
 
-```bash
-curl -fsSI https://<production-domain>/admin-login.html
-curl -fsS https://<production-domain>/api/auth/config
-```
-
-确认后只修改主节点环境文件中的这一行，再重新创建 app。不要改变另外三个 HTTPS/cookie/proxy 安全变量，也不要在热备节点手工改为 `1`。
+只有上一步 TLS 外部验收完成后，才启用人类认证。顺序不可倒置：先 HTTPS，后开关，后健康 `ready`，最后才进行密码登录和强制改密。
 
 ```bash
 sed -i 's/^SMART_BAMBOO_HUMAN_AUTH_ENABLED=.*/SMART_BAMBOO_HUMAN_AUTH_ENABLED=1/' \
   /srv/smart-bamboo/config/primary.env
-grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|AUTH_REQUIRE_HTTPS|TRUST_PROXY_HEADERS|SESSION_COOKIE_SECURE)=' \
+grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|TLS_ENABLED|AUTH_REQUIRE_HTTPS|TRUST_PROXY_HEADERS|SESSION_COOKIE_SECURE)=' \
   /srv/smart-bamboo/config/primary.env
-"${PRIMARY[@]}" up -d --no-deps app
-"${PRIMARY[@]}" ps
-curl -fsS http://127.0.0.1:8010/api/health
+docker compose --project-directory /opt/smart-bamboo \
+  --env-file /srv/smart-bamboo/config/primary.env \
+  -f ops/compose.primary.yml -f ops/compose.tls.yml up -d --no-deps app nginx
 bash ops/scripts/verify-cluster.sh primary
 ```
 
-健康响应必须同时确认 HTTPS/proxy/secure-cookie、MySQL credential/session 表和 active admin credential 均通过；`deployment.readiness.status` 必须为 `ready`。任何失败均保持认证开关为 `0` 并修复根因。
+此时 `/api/health` 必须为 `ready` 且无 warnings，具体包括 TLS/proxy/secure cookie、`admin_user_credentials`、`admin_sessions`、活跃管理员 credential 和 MySQL schema。通过后，才从 HTTPS 的 `/admin-login.html` 以 bootstrap 管理员登录，完成强制改密并确认可以访问 `/admin.html`。
 
-## 5. 登录、授权、审计和服务 token 验收
+## 5. 权限、审计与 token 观察期
 
-在 HTTPS 浏览器中完成以下人工检查，并将操作者、时间、结果和关联审计事件编号记录在变更单中：
+在 HTTPS 浏览器中记录操作者、时间、结果和审计事件编号：
 
-1. 以 bootstrap 管理员登录 `/admin-login.html`，确认强制改密界面阻止其他后台操作；改为组织正式密码后，确认可访问 `/admin.html`。
-2. 在 `/admin-users.html` 用有 `system.users.set_password` 权限的管理员为测试用户设置临时密码，确认该用户首次登录仍被强制改密；用 `system.users.revoke_sessions` 撤销该用户会话，确认旧 cookie 随即失效。
-3. 在 `/admin-roles.html` 为非管理员角色配置菜单、动作权限和 projects/areas data scope；分别验证允许范围内的读取/写入与范围外的拒绝。
-4. 访问大屏和移动端，确认 `SMART_BAMBOO_DASHBOARD_TOKEN` 对应 viewer 只读服务 token 仍可读取 dashboard，且不会获得管理员写权限。不要在浏览器、截图或工单正文暴露该 token。
-5. 在用户与角色审计列表核对 `bootstrap_password`、`login_success`、`login_failure`、`login_locked`、`password_change`、`logout`、设置临时密码和会话撤销事件；审计内容不得出现密码、cookie、CSRF 或 bearer token。
+1. 以 bootstrap 管理员登录并强制改密；确认改密前所有非认证后台操作被阻止。
+2. 使用具有 `system.users.setPassword` 的管理员为测试用户设置临时密码；该用户首次登录必须强制改密。使用 `system.users.revokeSessions` 撤销该用户会话，确认旧 cookie 立即失效。
+3. 在 `/admin-roles.html` 验证菜单、动作权限以及 projects/areas data scope 的允许和拒绝路径。
+4. 验证 `SMART_BAMBOO_DASHBOARD_TOKEN` 对应 viewer 服务 token 只能读取 dashboard；不在浏览器或截图中暴露 token。
+5. 在审计列表检查 `bootstrap_password`、`login_success`、`login_failure`、`login_locked`、`password_change`、`logout`、临时密码和会话撤销事件；审计中不得出现密码、cookie、CSRF 或 bearer token。
 
-旧的管理员 service token 必须在确认上述人类会话路径和只读 dashboard token 都正常后撤销：编辑 `/srv/smart-bamboo/config/primary.env` 的 `REMOTE_SENSING_API_TOKENS`，删除旧管理员 token 条目，只保留或轮换最小权限服务身份；随后重建 app 并以旧 token 验证 401/403。
+旧管理员 service token 必须先进入稳定观察期，期间至少验证一次人类认证、dashboard token 和 break-glass token。观察期完成并经变更负责人批准后，才从主节点 `/srv/smart-bamboo/config/primary.env` 的 `REMOTE_SENSING_API_TOKENS` 删除旧 token，**保留** `break_glass` 和 dashboard 条目；重建 app 后用旧 token 验证拒绝。
+
+```bash
+editor /srv/smart-bamboo/config/primary.env
+"${PRIMARY[@]}" up -d --no-deps app
+bash ops/scripts/verify-cluster.sh primary
+```
+
+删除旧 token 后必须立即同步主环境到热备，避免故障切换把已撤销 token 复活。先在主节点加密传输 primary 环境文件，在热备生成 standby 环境；命令会检查认证、TLS、break-glass 和 token 字段存在。
+
+```bash
+# On primary, after every authentication or token change.
+openssl enc -aes-256-cbc -pbkdf2 -salt \
+  -in /srv/smart-bamboo/config/primary.env -out /root/primary.env.enc
+scp /root/primary.env.enc root@192.168.0.104:/root/
+rm -f /root/primary.env.enc
+
+# On standby console.
+openssl enc -d -aes-256-cbc -pbkdf2 -in /root/primary.env.enc -out /root/primary.env
+cd /opt/smart-bamboo
+bash ops/scripts/make-standby-env.sh /root/primary.env /srv/smart-bamboo-dr/config/standby.env
+rm -f /root/primary.env /root/primary.env.enc
+```
+
+## 6. 热备提升和 break-glass 恢复
+
+热备提升前，先在热备核对同一 immutable commit 和同步后的环境值。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令要求显式确认并自动加入 TLS Compose 覆盖；TLS 未同步则拒绝提升。
 
 ```bash
 cd /opt/smart-bamboo
-editor /srv/smart-bamboo/config/primary.env
-"${PRIMARY[@]}" up -d --no-deps app
-curl -fsS http://127.0.0.1:8010/api/health
+test "$(git rev-parse HEAD)" = "$(sed -n 's/^SMART_BAMBOO_RELEASE_COMMIT=//p' /srv/smart-bamboo-dr/config/standby.env)"
+grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|TLS_ENABLED|RELEASE_COMMIT)=' \
+  /srv/smart-bamboo-dr/config/standby.env
+CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
+  bash ops/scripts/promote-standby.sh
+docker compose --project-directory /opt/smart-bamboo \
+  --env-file /srv/smart-bamboo-dr/config/standby.env \
+  -f ops/compose.standby.yml -f ops/compose.tls.yml --profile failover ps
 ```
 
-## 6. 回滚
-
-认证路径故障时，只关闭人类认证开关并重新创建 app：
+认证故障回滚时仅将主节点 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 并重建 app；此时使用已保留的 break-glass 服务 token 进入管理面。不得删除或清空 `admin_user_credentials`、`admin_sessions`、`admin_users`、`admin_roles` 或审计记录。
 
 ```bash
 sed -i 's/^SMART_BAMBOO_HUMAN_AUTH_ENABLED=.*/SMART_BAMBOO_HUMAN_AUTH_ENABLED=0/' \
   /srv/smart-bamboo/config/primary.env
 "${PRIMARY[@]}" up -d --no-deps app
-curl -fsS http://127.0.0.1:8010/api/health
-bash ops/scripts/verify-cluster.sh primary
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 ```
 
-回滚**不得**删除或清空 `admin_credentials`、`admin_sessions`、`admin_users`、`admin_roles` 或审计记录；这些表保留用于修复后重新启用认证。服务 token 的轮换与撤销按独立变更处理，避免在回滚时恢复已撤销的管理员 token。
+若误删了旧管理员 token，也不得恢复它；在服务器控制台使用仍保留的 break-glass token。若 break-glass token 本身不可用，经双人复核后只在主节点执行下列命令。它产生新的随机 token 并只输出一次，自动更新 `SMART_BAMBOO_BREAK_GLASS_TOKEN` 与 `REMOTE_SENSING_API_TOKENS` 的对应 profile；随后重建 app 并立刻按第 5 节同步至热备。任何 token 恢复都不能从聊天记录、浏览器存储或旧工单回收。
+
+```bash
+cd /opt/smart-bamboo
+python3 ops/scripts/rotate-break-glass-token.py --env-file /srv/smart-bamboo/config/primary.env
+"${PRIMARY[@]}" up -d --no-deps app
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
+```

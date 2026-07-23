@@ -18,6 +18,26 @@ set -a
 source "${env_file}"
 set +a
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${repo_root}/ops/compose.standby.yml")
+human_auth_enabled="${SMART_BAMBOO_HUMAN_AUTH_ENABLED:-0}"
+tls_enabled="${SMART_BAMBOO_TLS_ENABLED:-0}"
+case "${human_auth_enabled}" in
+  1)
+    if [[ "${tls_enabled}" != "1" ]]; then
+      echo "ERROR: standby human authentication requires SMART_BAMBOO_TLS_ENABLED=1." >&2
+      exit 3
+    fi
+    if [[ "${CONFIRM_HUMAN_AUTH_ENABLED:-}" != "1" ]]; then
+      echo "ERROR: set CONFIRM_HUMAN_AUTH_ENABLED=1 to promote the synchronized password-authentication state." >&2
+      exit 4
+    fi
+    compose+=( -f "${repo_root}/ops/compose.tls.yml" )
+    ;;
+  0) ;;
+  *)
+    echo "ERROR: SMART_BAMBOO_HUMAN_AUTH_ENABLED must be 0 or 1." >&2
+    exit 5
+    ;;
+esac
 "${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" <<'SQL'
 STOP REPLICA;
 RESET REPLICA ALL;
@@ -32,4 +52,4 @@ skip_replica_start=ON
 EOF
 chmod 0640 /srv/smart-bamboo-dr/config/role-override.cnf
 "${compose[@]}" --profile failover up -d app geoserver nginx
-echo "Standby promoted. Open public port 80 only after application health passes."
+echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Open public port 80/443 only after application health passes."

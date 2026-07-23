@@ -214,12 +214,12 @@ Health inventory must also be reviewed before release:
 
 上线顺序不得跳过：
 
-1. 在主节点执行 `bash ops/scripts/backup-mysql.sh` 并保留生成的 `.sql.gz` 与 `.sha256`；云控制台同时建立发布前快照。
-2. 拉取已审批提交并执行主、备 `docker compose ... config`。主节点先构建启动，但确认 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`；热备只 pull/build 和验证复制，不启动 failover profile。
-3. 通过 `/api/health` 和 `bash ops/scripts/verify-cluster.sh primary` 确认 MySQL schema、credential/session 表和应用 readiness；有旧私有数据时先 `--dry-run` 再运行 `server/scripts/migrate_json_to_mysql.py`，任何退出码非零或盘点不一致都停止。
+1. 固定审批的 immutable full commit SHA（或 immutable tag 解析出的 SHA），`git checkout --detach` 后用 `git rev-parse HEAD` 比对；不要只拉取移动分支。主节点执行 `bash ops/scripts/backup-mysql.sh` 并保留 `.sql.gz` 与 `.sha256`，云控制台同时建立发布前快照。
+2. 主、备均执行对应的 `docker compose ... config`。准备阶段主节点确认 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`，只允许 `human_auth_pending_https` warning，使用 `bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending`；热备只 pull/build 和验证复制，不启动 failover profile。
+3. 通过 `/api/health` 和上述受限 warning gate 确认 MySQL schema、`admin_user_credentials`/`admin_sessions` 和应用状态；有旧私有数据时先 `--dry-run` 再运行 `server/scripts/migrate_json_to_mysql.py`，任何退出码非零或盘点不一致都停止。
 4. 在主节点 app 容器中仅执行一次 `ops/scripts/bootstrap-admin-password.py`；自动产生的临时密码只显示一次，立即离线保存，首次登录后必须强制改密。
-5. 在真实 HTTPS 和 Nginx proxy header 验收完成前不把 `SMART_BAMBOO_HUMAN_AUTH_ENABLED` 改为 `1`。启用后检查 secure cookie、受信 `X-Forwarded-Proto`、active admin credential、`deployment.readiness.status=ready`。
-6. 人工验收临时登录、强制改密、用户/角色动作权限、projects/areas data scope、会话撤销、审计事件和只读 dashboard service token；确认后从 `REMOTE_SENSING_API_TOKENS` 撤销旧管理员 service token。
-7. 认证回滚只能将主节点 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 后重建 app；严禁删除 credential/session 表或审计记录。
+5. 基础 Nginx 只有 HTTP；必须配置真实证书路径并运行 `bash ops/scripts/enable-tls.sh primary`，从外部验证 DNS、证书链、HTTPS 和 `X-Forwarded-Proto=https`。随后才把 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，要求正式 `ready` 后才登录并强制改密。
+6. 人工验收临时登录、强制改密、用户/角色动作权限、projects/areas data scope、会话撤销（`system.users.setPassword`、`system.users.revokeSessions`）、审计事件和只读 dashboard service token。保留 break-glass 管理员 token；旧管理员 service token 仅在稳定观察期后撤销，并立刻同步 primary.env 到 standby.env，防止故障切换复活。
+7. 热备提升必须验证同步的 immutable commit、`SMART_BAMBOO_HUMAN_AUTH_ENABLED` 和 TLS 环境；认证已启用时带 `CONFIRM_HUMAN_AUTH_ENABLED=1` 执行提升。认证回滚只能将主节点开关改为 `0` 后重建 app，并用 break-glass token 管理；严禁删除 `admin_user_credentials`、session 表或审计记录。
 
 本机没有 Docker CLI 时，`docker compose config`、主/备 readiness、HTTPS 及浏览器验收均为云主机发布 gate，不能记录为本地通过。

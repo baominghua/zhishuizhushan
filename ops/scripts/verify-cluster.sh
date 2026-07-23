@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-role="${1:?Usage: $0 primary|standby [ENV_FILE]}"
+role="${1:?Usage: $0 primary|standby [ENV_FILE] [--allow-human-auth-pending]}"
+shift
+env_override=""
+allow_human_auth_pending=0
+for argument in "$@"; do
+  case "${argument}" in
+    --allow-human-auth-pending) allow_human_auth_pending=1 ;;
+    *)
+      if [[ -z "${env_override}" ]]; then
+        env_override="${argument}"
+      else
+        echo "ERROR: unknown argument: ${argument}" >&2
+        exit 64
+      fi
+      ;;
+  esac
+done
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ "${role}" == "primary" ]]; then
-  env_file="${2:-/srv/smart-bamboo/config/primary.env}"
+  env_file="${env_override:-/srv/smart-bamboo/config/primary.env}"
   compose_file="${repo_root}/ops/compose.primary.yml"
   db_service="db-primary"
 else
-  env_file="${2:-/srv/smart-bamboo-dr/config/standby.env}"
+  env_file="${env_override:-/srv/smart-bamboo-dr/config/standby.env}"
   compose_file="${repo_root}/ops/compose.standby.yml"
   db_service="db-replica"
 fi
@@ -19,7 +35,25 @@ compose=(docker compose --project-directory "${repo_root}" --env-file "${env_fil
 "${compose[@]}" ps
 
 if [[ "${role}" == "primary" ]]; then
-  curl -fsS http://127.0.0.1:8010/api/health | grep -q '"status":"ready"'
+  health_payload="$(curl -fsS http://127.0.0.1:8010/api/health)"
+  if [[ "${allow_human_auth_pending}" == "1" ]]; then
+    printf '%s' "${health_payload}" | "${compose[@]}" exec -T app python -c '
+import json
+import sys
+readiness = json.load(sys.stdin)["deployment"]["readiness"]
+warning_keys = {item["key"] for item in readiness["warnings"]}
+if readiness["status"] != "warning" or readiness["blockingIssues"] or warning_keys != {"human_auth_pending_https"}:
+    raise SystemExit("expected only the human_auth_pending_https rollout warning")
+'
+  elif [[ "${allow_human_auth_pending}" == "0" ]]; then
+    printf '%s' "${health_payload}" | "${compose[@]}" exec -T app python -c '
+import json
+import sys
+readiness = json.load(sys.stdin)["deployment"]["readiness"]
+if readiness["status"] != "ready" or readiness["blockingIssues"] or readiness["warnings"]:
+    raise SystemExit("expected ready deployment with no warnings")
+'
+  fi
   "${compose[@]}" exec -T "${db_service}" mysql -Nse "SELECT @@server_id, @@gtid_mode, @@binlog_format;" -uroot -p"${MYSQL_ROOT_PASSWORD}"
   exit 0
 fi

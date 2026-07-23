@@ -81,7 +81,7 @@ docker compose --project-directory /opt/smart-bamboo \
   --env-file /srv/smart-bamboo/config/primary.env \
   -f ops/compose.primary.yml up -d --build
 bash ops/scripts/configure-primary-replication.sh
-bash ops/scripts/verify-cluster.sh primary
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 curl -fsS http://127.0.0.1:8010/api/health
 ```
 
@@ -165,7 +165,7 @@ sha256sum -c /srv/smart-bamboo/incoming/private-data.sbbundle.sha256
 bash ops/scripts/migrate-private-data.sh /srv/smart-bamboo/incoming/private-data.sbbundle || test $? -eq 2
 CONFIRM_MIGRATE_PRIVATE_DATA=YES \
   bash ops/scripts/migrate-private-data.sh /srv/smart-bamboo/incoming/private-data.sbbundle
-bash ops/scripts/verify-cluster.sh primary
+bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 ```
 
 迁移后在后台核对林班、林权、图层、成果批次、影像和经营主体数量。任一核心数据集不一致即停止发布。
@@ -213,3 +213,16 @@ curl -fsS http://127.0.0.1:8010/api/health
 只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
 
 最终验收：公网仅 80 可达；3306、8010、8080 均不可达；林班地图、分层筛选、后台权限、成果导入和影像管理通过。
+
+## 管理员密码认证和 TLS 切换
+
+本手册的初始 Compose 是 HTTP 准备模式，`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 时 `verify-cluster.sh primary --allow-human-auth-pending` 只允许 `human_auth_pending_https` 这一预期 warning。不得在这个阶段使用要求 `ready` 的验证命令。
+
+密码认证上线前，必须把真实、已批准域名的证书和私钥放入 `/srv/smart-bamboo/tls/`，在受保护的 `primary.env` 设置 `SMART_BAMBOO_TLS_ENABLED=1`、`SMART_BAMBOO_TLS_CERT_PATH` 和 `SMART_BAMBOO_TLS_KEY_PATH`，然后执行：
+
+```bash
+cd /opt/smart-bamboo
+bash ops/scripts/enable-tls.sh primary
+```
+
+该命令使用 `ops/compose.tls.yml` 和 TLS Nginx 覆盖，将 HTTP 重定向到 HTTPS，并向 app 传递 `X-Forwarded-Proto=https`。仅在外部 DNS、证书链与 HTTPS 验收通过后，才将 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1` 并执行不带 `--allow-human-auth-pending` 的 `bash ops/scripts/verify-cluster.sh primary`。具体 token 观察期、热备同步、提升确认和 break-glass 恢复见 `docs/admin-password-authentication-runbook.md`。
