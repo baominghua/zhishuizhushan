@@ -122,3 +122,15 @@ Controller acceptance was completed after `d735f08` and passed `19/19`. The cont
 - Final targeted deployment/configuration verification: `60 passed in 11.62s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
 - Final full pytest verification: `784 passed in 185.03s (0:03:05)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`.
 - `bash -n` passed for all 15 tracked shell scripts. Python compilation passed for the durable writer, protected-env and replication-status helpers, and deployment regressions.
+
+## Sixth Independent Review Follow-up
+
+- `role-override.cnf` contains no secret and is now durably installed with mode `0644`, matching the initial data-disk file convention so the MySQL container user can read it after restart.
+- `durable-atomic-write.py` now applies the requested mode through `os.fchmod` on the temporary file before file flush/fsync. The atomic rename and parent-directory fsync follow, so file content and permission metadata share the same durable write boundary.
+
+## Sixth Follow-up Verification
+
+- Updated regression assertions verify the `0644` role override and the ordering `fchmod -> file fsync -> rename -> parent-directory fsync`. Focused durability verification: `2 passed in 0.20s`.
+- Final targeted deployment/configuration verification: `60 passed in 11.72s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
+- Final full pytest verification: `784 passed in 174.26s (0:02:54)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`. `bash -n` passed for all 15 tracked shell scripts.
+- Actual MySQL container restart and the cloud-host bind-mounted role-override readability remain cloud-host release gates; they were not claimed as completed locally.

@@ -480,9 +480,11 @@ def test_fifth_review_makes_power_loss_boundaries_durable_and_recovery_role_awar
 
     assert "durable-atomic-write.py" in promote
     assert "durable_write \"${state_file}\" 0600" in promote
-    assert "durable_write \"${role_override}\" 0640" in promote
-    assert "os.fsync(handle.fileno())" in durable_writer
+    assert "durable_write \"${role_override}\" 0644" in promote
+    assert "os.fchmod(handle.fileno(), args.mode)" in durable_writer
+    assert durable_writer.index("os.fchmod(handle.fileno(), args.mode)") < durable_writer.index("os.fsync(handle.fileno())")
     assert durable_writer.index("os.fsync(handle.fileno())") < durable_writer.index("os.replace(temporary, args.target)")
+    assert "os.chmod(temporary, args.mode)" not in durable_writer
     assert durable_writer.index("os.replace(temporary, args.target)") < durable_writer.index("fsync_directory(args.target.parent)")
     assert "io_restart_is_healthy" in promote
     assert '"${io}" == "Connecting"' in promote

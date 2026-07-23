@@ -81,7 +81,7 @@ replica_status() { "${compose[@]}" exec -T db-replica mysql -uroot -p"${mysql_ro
 status_field() { python3 "${repo_root}/ops/scripts/read-replica-status.py" "$1" <<<"$2"; }
 database_role() { mysql_exec "SELECT CONCAT(@@GLOBAL.read_only, ',', @@GLOBAL.super_read_only);"; }
 install_role_override() {
-  printf '[mysqld]\nread_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON\n' | durable_write "${role_override}" 0640
+  printf '[mysqld]\nread_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON\n' | durable_write "${role_override}" 0644
 }
 io_restart_is_healthy() {
   local status io sql sql_error

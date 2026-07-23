@@ -40,10 +40,10 @@ def main() -> int:
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as handle:
+            os.fchmod(handle.fileno(), args.mode)
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary, args.mode)
         os.replace(temporary, args.target)
         fsync_directory(args.target.parent)
     finally:
