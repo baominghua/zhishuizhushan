@@ -183,6 +183,44 @@ test("session refresh renders effective permissions and blocks then releases for
   assert.equal(harness.elements.get("#confirmPassword").value, "");
 });
 
+test("a new tab recovers a CSRF token from the shared browser cookie before enabling writes", async () => {
+  const profile = {
+    authenticated: true,
+    authType: "session",
+    user: "operator",
+    roles: ["operator"],
+    permissions: ["system.users.view"],
+    menuModules: [],
+    visibleMenuModules: [],
+    mustChangePassword: false,
+  };
+  const harness = createHarness({
+    session: { smartBambooCsrfToken: "" },
+    responses: [
+      jsonResponse(200, { ...profile, csrfToken: "recovered-csrf" }),
+      jsonResponse(200, profile),
+      jsonResponse(200, { ok: true }),
+    ],
+  });
+
+  await harness.context.__AdminCommon.refreshSession();
+  const completed = await harness.context.__AdminCommon.logout();
+
+  assert.equal(completed, true);
+  assert.deepEqual(
+    harness.calls.map((call) => call.url),
+    [
+      "https://zhushan.example/api/auth/session",
+      "https://zhushan.example/api/auth/me",
+      "https://zhushan.example/api/auth/logout",
+    ],
+  );
+  assert.equal(
+    harness.calls[2].options.headers.get("X-CSRF-Token"),
+    "recovered-csrf",
+  );
+});
+
 test("page permission denial does not disable the forced password change dialog", async () => {
   const harness = createHarness({
     href: "https://zhushan.example/admin.html",

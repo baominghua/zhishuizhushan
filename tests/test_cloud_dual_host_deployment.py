@@ -120,7 +120,8 @@ def test_mysql_replication_configs_use_gtid_and_read_only_replica():
     assert "relay_log=relay-bin" in replica
     assert "read_only=ON" in replica
     assert "super_read_only=ON" in replica
-    assert "skip_replica_start=ON" in replica
+    assert "skip_replica_start=OFF" in replica
+    assert "skip_replica_start=ON" not in replica
 
 
 def test_disk_bootstrap_requires_explicit_empty_disk_confirmation():
@@ -672,6 +673,10 @@ def test_primary_env_upgrade_is_idempotent_and_does_not_rotate_database_secrets(
     assert "MYSQL_PASSWORD=unchanged-mysql-password" in after_first
     assert "MYSQL_ROOT_PASSWORD=unchanged-root-password" in after_first
     assert "SMART_BAMBOO_RELEASE_COMMIT=" + "a" * 40 in after_first
+    assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED=0" in after_first
+    assert "SMART_BAMBOO_AUTH_REQUIRE_HTTPS=1" in after_first
+    assert "SMART_BAMBOO_TRUST_PROXY_HEADERS=1" in after_first
+    assert "SMART_BAMBOO_SESSION_COOKIE_SECURE=1" in after_first
     assert after_first.count("SMART_BAMBOO_BREAK_GLASS_TOKEN=") == 1
     assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600" in (ROOT / "ops/scripts/upgrade-primary-env.py").read_text(encoding="utf-8")
     if os.name != "nt":
@@ -739,3 +744,122 @@ def test_compose_human_auth_defaults_follow_proxy_topology(compose_path, trusted
     else:
         assert "nginx" not in compose["services"]
         assert app_ports == ["${SMART_BAMBOO_APP_PORT:-8010}:8010"]
+
+
+def test_login_endpoint_is_rate_limited_at_both_nginx_edges():
+    for path in (
+        "ops/nginx/smart-bamboo.conf",
+        "ops/nginx/smart-bamboo-tls.conf",
+    ):
+        nginx = read_text(path)
+        assert "limit_req_zone" in nginx
+        assert "limit_req_status 429" in nginx
+        assert "location = /api/auth/login" in nginx
+        assert "limit_req zone=" in nginx
+
+
+def test_standby_replication_health_and_restart_are_fail_closed():
+    compose = read_text("ops/compose.standby.yml")
+    replica = read_text("ops/mysql/replica.cnf")
+    healthcheck = read_text("ops/mysql/replica-healthcheck.sh")
+    disk_prepare = read_text("ops/scripts/prepare-data-disk.sh")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+
+    assert "skip_replica_start=OFF" in replica
+    assert "read_only=ON\nsuper_read_only=ON\nskip_replica_start=OFF" in disk_prepare
+    assert "replica-healthcheck.sh:/usr/local/bin/replica-healthcheck.sh:ro" in compose
+    assert "/usr/local/bin/replica-healthcheck.sh" in compose
+    assert "Replica_IO_Running" in healthcheck
+    assert "Replica_SQL_Running" in healthcheck
+    assert "Last_IO_Error" in healthcheck
+    assert "Last_SQL_Error" in healthcheck
+    assert "Auto_Position" in healthcheck
+    assert "read_only" in healthcheck
+    assert "super_read_only" in healthcheck
+    assert '"${Replica_IO_Running}" == "Yes"' in healthcheck
+    assert 'Replica_IO_Running}" == "Connecting"' not in healthcheck
+    assert "role-override.cnf" in runbook
+    assert "skip_replica_start=OFF" in runbook
+
+
+def test_standby_promotion_requires_provider_fencing_replication_integrity_and_rpo_gate():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+
+    assert "SMART_BAMBOO_FENCE_ADAPTER" in promote
+    assert "SMART_BAMBOO_PRIMARY_INSTANCE_ID" in promote
+    assert "verify-fence-proof.py" in promote
+    assert "stat -c" in promote
+    assert "fence adapter must be owned by root" in promote
+    assert "group/world writable" in promote
+    assert "FENCE_PROOF_VERIFIED" in promote
+    assert "http://192.168.0.32/api/health" not in promote
+    assert "CONFIRM_FORCE_SPLIT_BRAIN_RISK" not in promote
+    assert "Replica_IO_Running" in promote
+    assert "Last_IO_Error" in promote
+    assert "Auto_Position" in promote
+    assert 'initial_io_running" == "Yes"' in promote
+    assert 'initial_auto_position" == "1"' in promote
+    assert "CONFIRM_SOURCE_RPO_ACCEPTED" in promote
+    assert promote.index("run_fence_adapter") < promote.index('mysql_exec "STOP REPLICA IO_THREAD;"')
+    assert promote.index("require_source_rpo_acceptance") < promote.index("ensure_database_promoted")
+    assert "移动云" in runbook
+    assert "provider-backed" in runbook
+    assert "关停" in runbook or "隔离" in runbook
+    assert "HTTP" in runbook
+    assert "fencing" in runbook.lower()
+
+
+def test_fence_proof_verifier_rejects_wrong_target_and_accepts_explicit_provider_proof():
+    verifier = ROOT / "ops/scripts/verify-fence-proof.py"
+    proof = {
+        "fenced": True,
+        "provider": "mobile-cloud",
+        "instanceId": "ECS-98299861",
+        "state": "stopped",
+        "nonce": "nonce-123",
+        "proofId": "provider-request-456",
+    }
+    command = [
+        sys.executable,
+        str(verifier),
+        "--expected-instance",
+        "ECS-98299861",
+        "--expected-nonce",
+        "nonce-123",
+    ]
+
+    accepted = subprocess.run(
+        command,
+        input=json.dumps(proof),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    proof["instanceId"] = "wrong-instance"
+    rejected = subprocess.run(
+        command,
+        input=json.dumps(proof),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert accepted.stdout.strip() == "FENCE_PROOF_VERIFIED"
+    assert rejected.returncode != 0
+
+
+def test_promotion_validates_break_glass_profile_without_exposing_mysql_password_in_argv():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    verifier = read_text("ops/scripts/verify-break-glass-env.py")
+
+    assert "verify-break-glass-env.py" in promote
+    assert "REMOTE_SENSING_API_TOKENS" in verifier
+    assert "SMART_BAMBOO_BREAK_GLASS_TOKEN" in verifier
+    assert '"break_glass"' in verifier
+    assert '"admin"' in verifier
+    assert '"*"' in verifier
+    assert '-p"${mysql_root_password}"' not in promote
+    assert "MYSQL_PWD" in promote
+    assert "read -r MYSQL_PWD" in promote

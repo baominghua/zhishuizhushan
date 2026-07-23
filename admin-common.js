@@ -270,7 +270,7 @@ const AdminCommon = (() => {
   }
 
   function isAuthBypassPath(path) {
-    return ["/api/auth/me", "/api/auth/change-password", "/api/auth/logout"].includes(path);
+    return ["/api/auth/session", "/api/auth/me", "/api/auth/change-password", "/api/auth/logout"].includes(path);
   }
 
   async function parseResponse(response, requestGeneration = null) {
@@ -633,8 +633,15 @@ const AdminCommon = (() => {
     if (currentProfile) sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(currentProfile));
   }
 
+  async function recoverCsrfToken() {
+    if (csrfToken()) return;
+    const session = await authApi("/api/auth/session");
+    if (session?.csrfToken) sessionStorage.setItem(CSRF_TOKEN_KEY, session.csrfToken);
+  }
+
   async function refreshSession({ afterPasswordChange = false } = {}) {
     try {
+      await recoverCsrfToken();
       const payload = await authApi("/api/auth/me");
       cacheProfile(payload);
       applyMenuAndPermissions(payload);

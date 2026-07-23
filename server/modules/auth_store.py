@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -21,6 +22,10 @@ from .database import (
 SESSION_LIFETIME = timedelta(hours=24)
 FAILED_LOGIN_LIMIT = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
+
+
+class CredentialConflict(RuntimeError):
+    pass
 
 
 class CredentialRecord(TypedDict):
@@ -149,11 +154,27 @@ def save_json_records(path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with temporary_path.open("w", encoding="utf-8") as handle:
+        descriptor = os.open(
+            temporary_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(records, handle, ensure_ascii=False, indent=2)
             handle.flush()
+            os.fchmod(handle.fileno(), 0o600)
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        try:
+            directory_descriptor = os.open(path.parent, directory_flags)
+        except OSError:
+            directory_descriptor = None
+        if directory_descriptor is not None:
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
     finally:
         if temporary_path.exists():
             temporary_path.unlink()
@@ -277,13 +298,37 @@ def save_credential(record: CredentialRecord) -> None:
         save_json_records(admin_credentials_json_path(), records)
 
 
-def record_failed_login(user_id: str, now: datetime) -> CredentialRecord:
+def credential_matches(
+    credential: CredentialRecord,
+    expected_version: int,
+    expected_password_hash: str,
+) -> bool:
+    return (
+        credential["credentialVersion"] == expected_version
+        and hmac.compare_digest(credential["passwordHash"], expected_password_hash)
+    )
+
+
+def record_failed_login(
+    user_id: str,
+    now: datetime,
+    *,
+    expected_version: int | None = None,
+    expected_password_hash: str | None = None,
+) -> CredentialRecord:
+    def ensure_expected(credential: CredentialRecord) -> None:
+        if expected_version is None or expected_password_hash is None:
+            return
+        if not credential_matches(credential, expected_version, expected_password_hash):
+            raise CredentialConflict("Credential changed during password verification")
+
     if use_mysql():
         with mysql_connect() as conn:
             with conn.cursor() as cur:
                 credential = mysql_credential_for_user(cur, user_id, lock=True)
                 if credential is None:
                     raise KeyError(f"Credential not found for user {user_id}")
+                ensure_expected(credential)
                 credential["failedLoginCount"] += 1
                 if credential["failedLoginCount"] >= FAILED_LOGIN_LIMIT:
                     credential["lockedUntil"] = iso_utc(now + LOCKOUT_DURATION)
@@ -295,6 +340,7 @@ def record_failed_login(user_id: str, now: datetime) -> CredentialRecord:
         credential = credential_for_user(user_id)
         if credential is None:
             raise KeyError(f"Credential not found for user {user_id}")
+        ensure_expected(credential)
         credential["failedLoginCount"] += 1
         if credential["failedLoginCount"] >= FAILED_LOGIN_LIMIT:
             credential["lockedUntil"] = iso_utc(now + LOCKOUT_DURATION)
@@ -371,9 +417,12 @@ def save_session(record: SessionRecord) -> None:
                         user_agent, issued_at, last_seen_at, expires_at, revoked_at
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
-                        credential_version = VALUES(credential_version), ip_address = VALUES(ip_address),
-                        user_agent = VALUES(user_agent), last_seen_at = VALUES(last_seen_at),
-                        expires_at = VALUES(expires_at), revoked_at = VALUES(revoked_at)
+                        credential_version = IF(revoked_at IS NULL, VALUES(credential_version), credential_version),
+                        ip_address = IF(revoked_at IS NULL, VALUES(ip_address), ip_address),
+                        user_agent = IF(revoked_at IS NULL, VALUES(user_agent), user_agent),
+                        last_seen_at = IF(revoked_at IS NULL, VALUES(last_seen_at), last_seen_at),
+                        expires_at = IF(revoked_at IS NULL, VALUES(expires_at), expires_at),
+                        revoked_at = COALESCE(revoked_at, VALUES(revoked_at))
                     """,
                     (
                         normalized["id"], normalized["userId"], normalized["tokenHash"], normalized["csrfTokenHash"],
@@ -386,12 +435,42 @@ def save_session(record: SessionRecord) -> None:
         return
     with database.JSON_STORE_LOCK:
         records = load_json_records(admin_sessions_json_path())
-        records = [item for item in records if str(item.get("id")) != normalized["id"]]
-        records.append(normalized)
+        for index, existing in enumerate(records):
+            if str(existing.get("id")) != normalized["id"]:
+                continue
+            current = normalize_session(existing)
+            if current["revokedAt"] is not None:
+                normalized = current
+            elif normalized["revokedAt"] is None:
+                normalized["revokedAt"] = current["revokedAt"]
+            records[index] = normalized
+            break
+        else:
+            records.append(normalized)
         save_json_records(admin_sessions_json_path(), records)
 
 
-def create_session(
+def insert_mysql_session(cur: Any, normalized: SessionRecord) -> None:
+    cur.execute(
+        """
+        INSERT INTO admin_sessions (
+            id, admin_user_id, token_hash, csrf_token_hash, credential_version, ip_address,
+            user_agent, issued_at, last_seen_at, expires_at, revoked_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            normalized["id"], normalized["userId"], normalized["tokenHash"],
+            normalized["csrfTokenHash"], normalized["credentialVersion"],
+            normalized["ipAddress"], normalized["userAgent"],
+            mysql_datetime(normalized["issuedAt"]),
+            mysql_datetime(normalized["lastSeenAt"]),
+            mysql_datetime(normalized["expiresAt"]),
+            mysql_datetime(normalized["revokedAt"]),
+        ),
+    )
+
+
+def new_session(
     user_id: str,
     credential_version: int,
     now: datetime,
@@ -414,8 +493,187 @@ def create_session(
         "expiresAt": iso_utc(now + SESSION_LIFETIME),
         "revokedAt": None,
     }
+    return raw_token, csrf_token, record
+
+
+def create_session(
+    user_id: str,
+    credential_version: int,
+    now: datetime,
+    ip_address: str,
+    user_agent: str,
+) -> tuple[str, str, SessionRecord]:
+    raw_token, csrf_token, record = new_session(
+        user_id, credential_version, now, ip_address, user_agent
+    )
     save_session(record)
     return raw_token, csrf_token, record
+
+
+def complete_login(
+    user_id: str,
+    expected_version: int,
+    expected_password_hash: str,
+    *,
+    rehashed_password_hash: str | None,
+    now: datetime,
+    ip_address: str,
+    user_agent: str,
+    expires_at: str,
+) -> tuple[str, str, SessionRecord, CredentialRecord]:
+    def update_credential(credential: CredentialRecord) -> None:
+        if not credential_matches(
+            credential, expected_version, expected_password_hash
+        ):
+            raise CredentialConflict("Credential changed during password verification")
+        credential["failedLoginCount"] = 0
+        credential["lockedUntil"] = None
+        if rehashed_password_hash is not None:
+            credential["passwordHash"] = rehashed_password_hash
+        credential["updatedAt"] = iso_utc(now)
+
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    credential = mysql_credential_for_user(cur, user_id, lock=True)
+                    if credential is None:
+                        raise CredentialConflict("Credential no longer exists")
+                    update_credential(credential)
+                    write_mysql_credential(cur, credential)
+                    raw_token, csrf_token, session = new_session(
+                        user_id,
+                        credential["credentialVersion"],
+                        now,
+                        ip_address,
+                        user_agent,
+                    )
+                    session["expiresAt"] = expires_at
+                    insert_mysql_session(cur, session)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return raw_token, csrf_token, session, credential
+
+    credential_path = admin_credentials_json_path()
+    session_path = admin_sessions_json_path()
+    with database.json_transaction([credential_path, session_path]):
+        credential = credential_for_user(user_id)
+        if credential is None:
+            raise CredentialConflict("Credential no longer exists")
+        update_credential(credential)
+        save_credential(credential)
+        raw_token, csrf_token, session = new_session(
+            user_id,
+            credential["credentialVersion"],
+            now,
+            ip_address,
+            user_agent,
+        )
+        session["expiresAt"] = expires_at
+        save_session(session)
+    return raw_token, csrf_token, session, credential
+
+
+def change_password_if_current(
+    user_id: str,
+    current_session: SessionRecord,
+    expected_version: int,
+    expected_password_hash: str,
+    *,
+    new_password_hash: str,
+    now: datetime,
+    expires_at: str,
+) -> CredentialRecord:
+    def updated_credential(credential: CredentialRecord) -> CredentialRecord:
+        if not credential_matches(
+            credential, expected_version, expected_password_hash
+        ):
+            raise CredentialConflict("Credential changed during password verification")
+        credential["passwordHash"] = new_password_hash
+        credential["passwordChangedAt"] = iso_utc(now)
+        credential["mustChangePassword"] = False
+        credential["failedLoginCount"] = 0
+        credential["lockedUntil"] = None
+        credential["credentialVersion"] += 1
+        credential["updatedAt"] = iso_utc(now)
+        return credential
+
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    credential = mysql_credential_for_user(cur, user_id, lock=True)
+                    if credential is None:
+                        raise CredentialConflict("Credential no longer exists")
+                    credential = updated_credential(credential)
+                    write_mysql_credential(cur, credential)
+                    cur.execute(
+                        """
+                        UPDATE admin_sessions
+                        SET credential_version = %s, last_seen_at = %s, expires_at = %s
+                        WHERE id = %s AND admin_user_id = %s
+                          AND revoked_at IS NULL AND credential_version = %s
+                        """,
+                        (
+                            credential["credentialVersion"],
+                            mysql_datetime(iso_utc(now)),
+                            mysql_datetime(expires_at),
+                            current_session["id"],
+                            user_id,
+                            expected_version,
+                        ),
+                    )
+                    if int(cur.rowcount) != 1:
+                        raise CredentialConflict(
+                            "Session changed during password update"
+                        )
+                    revoke_user_sessions_mysql(
+                        cur, user_id, except_session_id=current_session["id"]
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return credential
+
+    credential_path = admin_credentials_json_path()
+    session_path = admin_sessions_json_path()
+    with database.json_transaction([credential_path, session_path]):
+        credential = credential_for_user(user_id)
+        if credential is None:
+            raise CredentialConflict("Credential no longer exists")
+        records = load_json_records(session_path)
+        current = next(
+            (
+                record
+                for record in records
+                if str(record.get("id")) == current_session["id"]
+            ),
+            None,
+        )
+        if (
+            current is None
+            or current.get("revokedAt") is not None
+            or int(current.get("credentialVersion", 0)) != expected_version
+        ):
+            raise CredentialConflict("Session changed during password update")
+        credential = updated_credential(credential)
+        save_credential(credential)
+        revoked_at = iso_utc(now)
+        for record in records:
+            if str(record.get("id")) == current_session["id"]:
+                record["credentialVersion"] = credential["credentialVersion"]
+                record["lastSeenAt"] = iso_utc(now)
+                record["expiresAt"] = expires_at
+            elif (
+                str(record.get("userId")) == user_id
+                and record.get("revokedAt") is None
+            ):
+                record["revokedAt"] = revoked_at
+        save_json_records(session_path, records)
+    return credential
 
 
 def session_for_token(raw_token: str, now: datetime) -> SessionRecord | None:
@@ -446,6 +704,96 @@ def session_for_token(raw_token: str, now: datetime) -> SessionRecord | None:
     if expires_at is None or expires_at <= now.astimezone(UTC):
         return None
     return record
+
+
+def touch_session(record: SessionRecord) -> bool:
+    normalized = normalize_session(record)
+    if use_mysql():
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE admin_sessions
+                    SET last_seen_at = %s, expires_at = %s
+                    WHERE id = %s AND token_hash = %s
+                      AND credential_version = %s AND revoked_at IS NULL
+                    """,
+                    (
+                        mysql_datetime(normalized["lastSeenAt"]),
+                        mysql_datetime(normalized["expiresAt"]),
+                        normalized["id"],
+                        normalized["tokenHash"],
+                        normalized["credentialVersion"],
+                    ),
+                )
+                touched = int(cur.rowcount) == 1
+            conn.commit()
+        return touched
+
+    with database.JSON_STORE_LOCK:
+        records = load_json_records(admin_sessions_json_path())
+        for current in records:
+            if str(current.get("id")) != normalized["id"]:
+                continue
+            if (
+                current.get("tokenHash") != normalized["tokenHash"]
+                or current.get("revokedAt") is not None
+                or int(current.get("credentialVersion", 0))
+                != normalized["credentialVersion"]
+            ):
+                return False
+            current["lastSeenAt"] = normalized["lastSeenAt"]
+            current["expiresAt"] = normalized["expiresAt"]
+            save_json_records(admin_sessions_json_path(), records)
+            return True
+    return False
+
+
+def rotate_session_csrf(record: SessionRecord) -> str | None:
+    normalized = normalize_session(record)
+    raw_token = secrets.token_urlsafe(32)
+    csrf_hash = token_hash(raw_token)
+    if use_mysql():
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE admin_sessions
+                    SET csrf_token_hash = %s
+                    WHERE id = %s AND token_hash = %s
+                      AND credential_version = %s AND revoked_at IS NULL
+                    """,
+                    (
+                        csrf_hash,
+                        normalized["id"],
+                        normalized["tokenHash"],
+                        normalized["credentialVersion"],
+                    ),
+                )
+                rotated = int(cur.rowcount) == 1
+            conn.commit()
+        if not rotated:
+            return None
+    else:
+        with database.JSON_STORE_LOCK:
+            records = load_json_records(admin_sessions_json_path())
+            for current in records:
+                if str(current.get("id")) != normalized["id"]:
+                    continue
+                if (
+                    current.get("tokenHash") != normalized["tokenHash"]
+                    or current.get("revokedAt") is not None
+                    or int(current.get("credentialVersion", 0))
+                    != normalized["credentialVersion"]
+                ):
+                    return None
+                current["csrfTokenHash"] = csrf_hash
+                save_json_records(admin_sessions_json_path(), records)
+                break
+            else:
+                return None
+    record["csrfTokenHash"] = csrf_hash
+    return raw_token
 
 
 def revoke_session(raw_token: str) -> None:

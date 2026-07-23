@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import copy
 from datetime import timedelta
+import threading
+import time
 
 import pytest
 
@@ -257,6 +260,27 @@ def test_successful_login_resets_previous_failed_login_count(password_user_clien
     assert credential["lockedUntil"] is None
 
 
+def test_login_audit_appends_to_current_user_without_restoring_stale_status_or_roles(
+    password_user_client,
+):
+    _client, user = password_user_client
+    stale = copy.deepcopy(admin_users.find_user(user["id"]))
+    disabled = {
+        **copy.deepcopy(stale),
+        "status": "inactive",
+        "roles": ["viewer"],
+    }
+    admin_users.save_users([disabled])
+
+    human_auth._save_user_audit(stale, "login_failure", "198.51.100.10")
+
+    stored = admin_users.find_user(user["id"])
+    assert stored is not None
+    assert stored["status"] == "inactive"
+    assert stored["roles"] == ["viewer"]
+    assert stored["properties"]["auditEvents"][-1]["action"] == "login_failure"
+
+
 def test_session_returns_current_human_profile(password_user_client):
     client, _user = password_user_client
 
@@ -265,12 +289,64 @@ def test_session_returns_current_human_profile(password_user_client):
 
     assert response.status_code == 200
     assert session.status_code == 200
-    assert session.json() == {
-        "authenticated": True,
-        "user": "field_worker",
-        "roles": ["operator"],
-        "mustChangePassword": True,
-    }
+    assert session.json()["authenticated"] is True
+    assert session.json()["user"] == "field_worker"
+    assert session.json()["roles"] == ["operator"]
+    assert session.json()["mustChangePassword"] is True
+    assert session.json()["csrfToken"]
+
+
+def test_recovered_csrf_token_from_session_can_authorize_a_new_tab_logout(
+    password_user_client,
+):
+    client, _user = password_user_client
+    assert login(client).status_code == 200
+
+    recovered = client.get("/api/auth/session")
+    response = client.post(
+        "/api/auth/logout",
+        headers={"X-CSRF-Token": recovered.json()["csrfToken"]},
+    )
+
+    assert recovered.status_code == 200
+    assert response.status_code == 200
+
+
+def test_csrf_recovery_is_stable_across_multiple_browser_tabs(password_user_client):
+    client, _user = password_user_client
+    login_response = login(client)
+    login_csrf = login_response.json()["csrfToken"]
+
+    first_tab = client.get("/api/auth/session")
+    second_tab = client.get("/api/auth/session")
+    response = client.post(
+        "/api/auth/logout",
+        headers={"X-CSRF-Token": first_tab.json()["csrfToken"]},
+    )
+
+    assert first_tab.status_code == 200
+    assert second_tab.status_code == 200
+    assert first_tab.json()["csrfToken"] == login_csrf
+    assert second_tab.json()["csrfToken"] == login_csrf
+    assert response.status_code == 200
+
+
+def test_session_recovery_never_rotates_csrf_when_the_shared_cookie_is_missing(
+    password_user_client,
+):
+    client, _user = password_user_client
+    login_response = login(client)
+    login_csrf = login_response.json()["csrfToken"]
+    client.cookies.delete("smart_bamboo_session_csrf")
+
+    recovery = client.get("/api/auth/session")
+    logout = client.post(
+        "/api/auth/logout",
+        headers={"X-CSRF-Token": login_csrf},
+    )
+
+    assert recovery.status_code == 401
+    assert logout.status_code == 200
 
 
 def test_request_context_accepts_human_session(password_user_client):
@@ -438,6 +514,158 @@ def test_change_password_enforces_csrf_and_revokes_other_sessions(password_user_
     assert not verify_password(updated["passwordHash"], "Bamboo-2026!")
     assert session_for_token(other_token, utc_now()) is None
     assert client.get("/api/auth/session").status_code == 200
+
+
+def test_change_password_rejects_reusing_the_current_password(password_user_client):
+    client, _user = password_user_client
+    login_response = login(client)
+
+    response = client.post(
+        "/api/auth/change-password",
+        json={
+            "currentPassword": "Bamboo-2026!",
+            "newPassword": "Bamboo-2026!",
+        },
+        headers=csrf_headers(login_response),
+    )
+
+    assert response.status_code == 422
+    assert "different" in str(response.json()["detail"]).lower()
+
+
+def test_concurrent_password_reset_prevents_old_password_login_session(
+    password_user_client, monkeypatch
+):
+    client, user = password_user_client
+    original_verify = human_auth.verify_password
+    reset_once = False
+
+    def reset_during_verification(password_hash, password):
+        nonlocal reset_once
+        verified = original_verify(password_hash, password)
+        if verified and not reset_once:
+            reset_once = True
+            admin_users.set_temporary_password(user, "Reset-Bamboo-2026!")
+        return verified
+
+    monkeypatch.setattr(human_auth, "verify_password", reset_during_verification)
+    response = login(client)
+    stored = credential_for_user(user["id"])
+
+    assert response.status_code == 409
+    assert client.cookies.get("smart_bamboo_session") is None
+    assert stored is not None
+    assert verify_password(stored["passwordHash"], "Reset-Bamboo-2026!")
+    assert not verify_password(stored["passwordHash"], "Bamboo-2026!")
+
+
+def test_concurrent_password_reset_prevents_stale_change_password_overwrite(
+    password_user_client, monkeypatch
+):
+    client, user = password_user_client
+    login_response = login(client)
+    original_verify = human_auth.verify_password
+    reset_once = False
+
+    def reset_during_verification(password_hash, password):
+        nonlocal reset_once
+        verified = original_verify(password_hash, password)
+        if verified and not reset_once:
+            reset_once = True
+            admin_users.set_temporary_password(user, "Reset-Bamboo-2026!")
+        return verified
+
+    monkeypatch.setattr(human_auth, "verify_password", reset_during_verification)
+    response = client.post(
+        "/api/auth/change-password",
+        json={
+            "currentPassword": "Bamboo-2026!",
+            "newPassword": "New-Bamboo-2026!",
+        },
+        headers=csrf_headers(login_response),
+    )
+    stored = credential_for_user(user["id"])
+
+    assert response.status_code == 409
+    assert stored is not None
+    assert verify_password(stored["passwordHash"], "Reset-Bamboo-2026!")
+    assert not verify_password(stored["passwordHash"], "New-Bamboo-2026!")
+
+
+def test_password_verification_is_serialized_per_username(monkeypatch):
+    active = 0
+    maximum = 0
+    state_lock = threading.Lock()
+
+    def slow_verify(_password_hash, _password):
+        nonlocal active, maximum
+        with state_lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.03)
+        with state_lock:
+            active -= 1
+        return False
+
+    monkeypatch.setattr(human_auth, "verify_password", slow_verify)
+    threads = [
+        threading.Thread(
+            target=human_auth._verify_password_bounded,
+            args=("field_worker", "hash", "password"),
+        )
+        for _ in range(6)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert maximum == 1
+
+
+def test_password_verification_has_a_global_concurrency_bound(monkeypatch):
+    active = 0
+    maximum = 0
+    reached_bound = threading.Event()
+    release = threading.Event()
+    state_lock = threading.Lock()
+
+    def held_verify(_password_hash, _password):
+        nonlocal active, maximum
+        with state_lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == human_auth.PASSWORD_VERIFY_CONCURRENCY:
+                reached_bound.set()
+        release.wait(timeout=2)
+        with state_lock:
+            active -= 1
+        return False
+
+    monkeypatch.setattr(human_auth, "verify_password", held_verify)
+    threads = [
+        threading.Thread(
+            target=human_auth._verify_password_bounded,
+            args=(f"user-{index}", "hash", "password"),
+        )
+        for index in range(human_auth.PASSWORD_VERIFY_CONCURRENCY + 3)
+    ]
+    for thread in threads:
+        thread.start()
+    assert reached_bound.wait(timeout=1)
+    time.sleep(0.05)
+    assert maximum == human_auth.PASSWORD_VERIFY_CONCURRENCY
+    release.set()
+    for thread in threads:
+        thread.join()
+
+
+def test_username_verification_locks_are_released_after_use():
+    for index in range(100):
+        with human_auth._username_verification_guard(f"unknown-{index}"):
+            pass
+
+    assert human_auth._USERNAME_LOCKS == {}
 
 
 def test_authentication_audits_never_record_credentials_or_session_secrets(password_user_client):

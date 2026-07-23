@@ -185,9 +185,26 @@ rm -f /root/fullchain.pem /root/privkey.pem
 
 ## 6. 热备提升和 break-glass 恢复
 
-热备提升前，先在热备核对同一 immutable commit 和同步后的环境值。脚本在停止复制或解除只读前读取 `SHOW REPLICA STATUS`，要求 SQL 线程运行、`Last_SQL_Error` 为空，并先停止 IO 线程以冻结 `Retrieved_Gtid_Set`，等待并验证该集合全部包含于 `@@GLOBAL.gtid_executed`。超时或状态缺失即拒绝提升；脚本不执行 `RESET REPLICA ALL`，保留复制元数据供取证和重建。该检查只能保证已经接收的 GTID 全部应用，源端在 IO 线程冻结前尚未传输的事务仍须由值班负责人结合源端证据确认 source-side RPO。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令要求显式确认；仅当 `SMART_BAMBOO_TLS_ENABLED=1` 时才加入 TLS Compose 覆盖并检查证书、私钥、公钥匹配和有效期。
+首次启用新版复制健康检查前，先把既有热备的只读覆盖文件改为自动恢复复制。该文件仍保持 `read_only=ON` 与 `super_read_only=ON`；只有提升脚本在 provider fencing 和 RPO gate 全部通过后才会把它替换为可写角色。修改后重建副本容器，并确认容器健康检查要求 IO/SQL 两个线程都为 `Yes`：
 
-提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，阶段依次为 `preflight`、`draining`、`commit-intent`、`database-promoted` 与 `services-started`。在 `draining` 失败时，脚本 best-effort 重启 IO 线程并明确打印恢复结果；若恢复失败，状态记为 `recovery-failed`，必须先处理复制故障。`commit-intent` 已写入后不得回滚到副本模式：在同一确认门和主节点不可用检查仍通过时重跑命令，脚本会查询数据库只读状态并明确 fail-forward 到 `database-promoted` 和服务启动，避免可写状态不明。
+```bash
+cd /opt/smart-bamboo
+printf '[mysqld]\nread_only=ON\nsuper_read_only=ON\nskip_replica_start=OFF\n' |
+  python3 ops/scripts/durable-atomic-write.py \
+    /srv/smart-bamboo-dr/config/role-override.cnf 0644
+docker compose --project-directory /opt/smart-bamboo \
+  --env-file /srv/smart-bamboo-dr/config/standby.env \
+  -f ops/compose.standby.yml up -d --force-recreate db-replica
+docker compose --project-directory /opt/smart-bamboo \
+  --env-file /srv/smart-bamboo-dr/config/standby.env \
+  -f ops/compose.standby.yml ps db-replica
+```
+
+热备提升前，必须先在移动云控制台关停主云主机，或使用云平台能力把主机/数据盘/网络写入路径隔离。**HTTP 健康探测失败、SSH 不通、人工口头确认都不是 fencing 证明。** 提升脚本不再探测主节点 HTTP；它强制调用一个 provider-backed fence adapter，并要求 adapter 在执行云平台关停/隔离后重新查询 provider 状态，再返回含 `fenced=true`、provider、主机 instance ID、状态、一次性 nonce 和 proof ID 的 JSON。adapter 必须是绝对路径、root-owned、不可被组或其他用户写入的本地可执行文件；缺失、权限不安全、目标实例不符、nonce 不符或 provider proof 不完整时一律拒绝提升。仓库不伪造也不内置移动云 adapter，真实 adapter 和云平台凭据接入是云上发布 gate。
+
+脚本在停止复制或解除只读前读取 `SHOW REPLICA STATUS`，要求 `Replica_IO_Running=Yes`、`Replica_SQL_Running=Yes`、`Last_IO_Error` 与 `Last_SQL_Error` 均为空，并要求 `Auto_Position=1`。随后才停止 IO 线程以冻结 `Retrieved_Gtid_Set`，等待并验证该集合全部包含于 `@@GLOBAL.gtid_executed`。超时或状态缺失即拒绝提升；脚本不执行 `RESET REPLICA ALL`，保留复制元数据供取证和重建。该检查只能保证已经接收的 GTID 全部应用，源端在 IO 线程冻结前尚未传输的事务仍须由值班负责人结合云平台、主库和业务证据确认 source-side RPO，并显式设置 `CONFIRM_SOURCE_RPO_ACCEPTED=YES`。该确认在解除 MySQL 只读以及启动公网 Nginx 之前强制校验。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令还要求显式确认；仅当 `SMART_BAMBOO_TLS_ENABLED=1` 时才加入 TLS Compose 覆盖并检查证书、私钥、公钥匹配和有效期。
+
+提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，最近一次通过验证的 provider fencing proof 保存在同目录的 `fence-proof.json`。阶段依次为 `preflight`、`draining`、`commit-intent`、`database-promoted` 与 `services-started`。在 `draining` 失败时，脚本 best-effort 重启 IO 线程并明确打印恢复结果；若恢复失败，状态记为 `recovery-failed`，必须先处理复制故障。`commit-intent` 已写入后不得回滚到副本模式：重跑命令仍必须重新取得 provider proof、重新确认 source-side RPO，脚本再查询数据库只读状态并明确 fail-forward 到 `database-promoted` 和服务启动，避免可写状态不明。
 
 `promotion-state` 与 `role-override.cnf` 都以同目录临时文件写入、flush/fsync、原子 rename 后 fsync 父目录的顺序持久化。正常首次切换严格按 `commit-intent` 持久化、停止复制并解除只读、持久化安装 role override、持久化 `database-promoted`、启动服务执行。掉电后每个边界均可重跑判断：`draining` 或 `recovery-failed` 先读取数据库角色，只有明确 `read_only=1,super_read_only=1` 时才尝试恢复 IO，且必须重新读取 `SHOW REPLICA STATUS` 确认 IO 为 `Yes` 或 `Connecting`、SQL 线程正常且无 SQL 错误；明确 `0,0` 表示 marker 落后，禁止重启 IO，直接持久化 override 并 fail-forward。`database-promoted` 若重启后仍为 `1,1`，脚本会再次停止复制、关闭只读、持久化 override 后继续；任何混合读写状态都拒绝执行并要求人工处置。
 
@@ -196,7 +213,13 @@ cd /opt/smart-bamboo
 test "$(git rev-parse HEAD)" = "$(sed -n 's/^SMART_BAMBOO_RELEASE_COMMIT=//p' /srv/smart-bamboo-dr/config/standby.env)"
 grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|TLS_ENABLED|RELEASE_COMMIT)=' \
   /srv/smart-bamboo-dr/config/standby.env
-CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
+# /root/smart-bamboo-mobile-cloud-fence is installed separately, mode 0700,
+# owned by root, and verifies the stopped/isolated state through the provider API.
+SMART_BAMBOO_FENCE_ADAPTER=/root/smart-bamboo-mobile-cloud-fence \
+SMART_BAMBOO_PRIMARY_INSTANCE_ID=ECS-98299861 \
+CONFIRM_PRIMARY_UNAVAILABLE=YES \
+CONFIRM_SOURCE_RPO_ACCEPTED=YES \
+CONFIRM_HUMAN_AUTH_ENABLED=1 \
   bash ops/scripts/promote-standby.sh
 if grep -qx 'SMART_BAMBOO_TLS_ENABLED=1' /srv/smart-bamboo-dr/config/standby.env; then
   docker compose --project-directory /opt/smart-bamboo \
@@ -213,7 +236,11 @@ fi
 
 ```bash
 cat /srv/smart-bamboo-dr/config/promotion-state
-CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
+SMART_BAMBOO_FENCE_ADAPTER=/root/smart-bamboo-mobile-cloud-fence \
+SMART_BAMBOO_PRIMARY_INSTANCE_ID=ECS-98299861 \
+CONFIRM_PRIMARY_UNAVAILABLE=YES \
+CONFIRM_SOURCE_RPO_ACCEPTED=YES \
+CONFIRM_HUMAN_AUTH_ENABLED=1 \
   bash ops/scripts/promote-standby.sh
 ```
 

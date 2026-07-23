@@ -16,9 +16,10 @@ services:
     volumes:
       - /srv/smart-bamboo-dr/mysql-replica:/var/lib/mysql
       - ./ops/mysql/replica.cnf:/etc/mysql/conf.d/replication.cnf:ro
+      - ./ops/mysql/replica-healthcheck.sh:/usr/local/bin/replica-healthcheck.sh:ro
       - /srv/smart-bamboo-dr/config/role-override.cnf:/etc/mysql/conf.d/zz-role-override.cnf:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      test: ["CMD", "bash", "/usr/local/bin/replica-healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 20

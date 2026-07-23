@@ -52,7 +52,12 @@ def bearer_token(request: Request) -> str:
 
 def parse_token_profile(raw_profile: Any, token: str) -> AuthContext | None:
     if isinstance(raw_profile, str):
-        raw_profile = {"user": raw_profile}
+        return AuthContext(
+            user=raw_profile.strip() or token,
+            roles={"admin"},
+            projects={"*"},
+            areas={"*"},
+        )
     if not isinstance(raw_profile, dict):
         return None
 

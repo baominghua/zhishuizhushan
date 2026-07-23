@@ -91,7 +91,7 @@ else
 [mysqld]
 read_only=ON
 super_read_only=ON
-skip_replica_start=ON
+skip_replica_start=OFF
 EOF
 fi
 chown -R 1000:1000 "${mount_point}/geoserver"

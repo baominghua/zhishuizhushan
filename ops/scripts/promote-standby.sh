@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ "${CONFIRM_PRIMARY_UNAVAILABLE:-}" != "YES" ]]; then
-  echo "ERROR: set CONFIRM_PRIMARY_UNAVAILABLE=YES only after confirming the primary cannot write." >&2
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "ERROR: run standby promotion as root." >&2
   exit 1
 fi
-if curl -fsS --connect-timeout 2 --max-time 5 http://192.168.0.32/api/health >/dev/null 2>&1; then
-  [[ "${CONFIRM_FORCE_SPLIT_BRAIN_RISK:-}" == "YES" ]] || { echo "ERROR: primary still responds. Promotion blocked to prevent split brain." >&2; exit 2; }
+if [[ "${CONFIRM_PRIMARY_UNAVAILABLE:-}" != "YES" ]]; then
+  echo "ERROR: set CONFIRM_PRIMARY_UNAVAILABLE=YES only after the provider has stopped or isolated the primary." >&2
+  exit 1
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 env_file="${1:-/srv/smart-bamboo-dr/config/standby.env}"
 env_reader="${repo_root}/ops/scripts/read-protected-env.py"
 durable_writer="${repo_root}/ops/scripts/durable-atomic-write.py"
+fence_proof_verifier="${repo_root}/ops/scripts/verify-fence-proof.py"
+break_glass_verifier="${repo_root}/ops/scripts/verify-break-glass-env.py"
 state_file="/srv/smart-bamboo-dr/config/promotion-state"
 role_override="/srv/smart-bamboo-dr/config/role-override.cnf"
+fence_proof_file="/srv/smart-bamboo-dr/config/fence-proof.json"
+fence_adapter="${SMART_BAMBOO_FENCE_ADAPTER:-}"
+primary_instance_id="${SMART_BAMBOO_PRIMARY_INSTANCE_ID:-}"
 io_stopped=0
 
 read_env_value() { python3 "${env_reader}" "${env_file}" "$1"; }
@@ -40,8 +46,6 @@ human_auth_enabled="$(read_env_value SMART_BAMBOO_HUMAN_AUTH_ENABLED)"
 tls_enabled="$(read_env_value SMART_BAMBOO_TLS_ENABLED)"
 release_commit="$(read_env_value SMART_BAMBOO_RELEASE_COMMIT)"
 release_tag="$(read_env_value SMART_BAMBOO_RELEASE_TAG)"
-remote_tokens="$(read_env_value REMOTE_SENSING_API_TOKENS)"
-break_glass_token="$(read_env_value SMART_BAMBOO_BREAK_GLASS_TOKEN)"
 mysql_root_password="$(read_env_value MYSQL_ROOT_PASSWORD)"
 tls_cert_path="$(read_env_value SMART_BAMBOO_TLS_CERT_PATH)"
 tls_key_path="$(read_env_value SMART_BAMBOO_TLS_KEY_PATH)"
@@ -52,7 +56,8 @@ for required_dir in /srv/smart-bamboo-dr/config /srv/smart-bamboo-dr/data /srv/s
 done
 [[ "${release_commit}" =~ ^[0-9a-fA-F]{40}$ && "${release_tag}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: standby release commit/tag is invalid." >&2; exit 3; }
 [[ "$(git -C "${repo_root}" rev-parse HEAD)" == "${release_commit}" ]] || { echo "ERROR: checked-out commit does not match SMART_BAMBOO_RELEASE_COMMIT." >&2; exit 3; }
-[[ -n "${remote_tokens}" && -n "${break_glass_token}" && -n "${mysql_root_password}" ]] || { echo "ERROR: standby token or MySQL root-password configuration is incomplete." >&2; exit 3; }
+[[ -n "${mysql_root_password}" ]] || { echo "ERROR: standby MySQL root-password configuration is incomplete." >&2; exit 3; }
+python3 "${break_glass_verifier}" "${env_file}"
 case "${human_auth_enabled}" in
   1) [[ "${tls_enabled}" == "1" ]] || { echo "ERROR: standby human authentication requires SMART_BAMBOO_TLS_ENABLED=1." >&2; exit 4; }
      [[ "${CONFIRM_HUMAN_AUTH_ENABLED:-}" == "1" ]] || { echo "ERROR: set CONFIRM_HUMAN_AUTH_ENABLED=1 to promote the synchronized password-authentication state." >&2; exit 5; } ;;
@@ -76,20 +81,84 @@ esac
 "${compose[@]}" config --quiet
 for image in "smart-bamboo-app:${release_tag}" "docker.osgeo.org/geoserver:2.25.7" "nginx:1.30.4-alpine"; do docker image inspect "${image}" >/dev/null; done
 
-mysql_exec() { "${compose[@]}" exec -T db-replica mysql -N -B -uroot -p"${mysql_root_password}" -e "$1"; }
-replica_status() { "${compose[@]}" exec -T db-replica mysql -uroot -p"${mysql_root_password}" -e "SHOW REPLICA STATUS\\G"; }
+mysql_exec() {
+  local query="$1"
+  printf '%s\n' "${mysql_root_password}" |
+    "${compose[@]}" exec -T db-replica sh -ceu '
+      IFS= read -r MYSQL_PWD
+      export MYSQL_PWD
+      exec mysql -N -B -uroot -e "$1"
+    ' sh "${query}"
+}
+replica_status() {
+  printf '%s\n' "${mysql_root_password}" |
+    "${compose[@]}" exec -T db-replica sh -ceu '
+      IFS= read -r MYSQL_PWD
+      export MYSQL_PWD
+      exec mysql -uroot -e "SHOW REPLICA STATUS\\G"
+    '
+}
 status_field() { python3 "${repo_root}/ops/scripts/read-replica-status.py" "$1" <<<"$2"; }
 database_role() { mysql_exec "SELECT CONCAT(@@GLOBAL.read_only, ',', @@GLOBAL.super_read_only);"; }
+validate_fence_adapter() {
+  [[ -n "${fence_adapter}" ]] || { echo "ERROR: SMART_BAMBOO_FENCE_ADAPTER is required; promotion has no safe default." >&2; return 1; }
+  [[ "${fence_adapter}" == /* && -f "${fence_adapter}" && ! -L "${fence_adapter}" && -x "${fence_adapter}" ]] || {
+    echo "ERROR: fence adapter must be an absolute executable regular file, not a symlink." >&2
+    return 1
+  }
+  local owner mode
+  read -r owner mode < <(stat -c '%u %a' -- "${fence_adapter}")
+  [[ "${owner}" == "0" ]] || { echo "ERROR: fence adapter must be owned by root." >&2; return 1; }
+  (( (8#${mode: -3} & 8#022) == 0 )) || {
+    echo "ERROR: fence adapter must not be group/world writable." >&2
+    return 1
+  }
+}
+run_fence_adapter() {
+  validate_fence_adapter
+  [[ -n "${primary_instance_id}" ]] || {
+    echo "ERROR: SMART_BAMBOO_PRIMARY_INSTANCE_ID is required for provider fencing." >&2
+    return 1
+  }
+  local nonce proof verification
+  nonce="$(openssl rand -hex 32)"
+  proof="$("${fence_adapter}" --instance-id "${primary_instance_id}" --nonce "${nonce}")" || {
+    echo "ERROR: provider-backed fence adapter failed." >&2
+    return 1
+  }
+  verification="$(
+    printf '%s' "${proof}" |
+      python3 "${fence_proof_verifier}" \
+        --expected-instance "${primary_instance_id}" \
+        --expected-nonce "${nonce}"
+  )"
+  [[ "${verification}" == "FENCE_PROOF_VERIFIED" ]] || {
+    echo "ERROR: provider fencing did not return an explicit verified proof." >&2
+    return 1
+  }
+  printf '%s\n' "${proof}" | durable_write "${fence_proof_file}" 0600
+  echo "FENCE_PROOF_VERIFIED"
+}
+require_source_rpo_acceptance() {
+  [[ "${CONFIRM_SOURCE_RPO_ACCEPTED:-}" == "YES" ]] || {
+    echo "ERROR: set CONFIRM_SOURCE_RPO_ACCEPTED=YES only after reviewing provider and source-side RPO evidence." >&2
+    return 1
+  }
+}
 install_role_override() {
   printf '[mysqld]\nread_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON\n' | durable_write "${role_override}" 0644
 }
 io_restart_is_healthy() {
-  local status io sql sql_error
+  local status io sql io_error sql_error auto_position
   status="$(replica_status)" || return 1
   io="$(status_field Replica_IO_Running "${status}")" || return 1
   sql="$(status_field Replica_SQL_Running "${status}")" || return 1
+  io_error="$(status_field Last_IO_Error "${status}")" || return 1
   sql_error="$(status_field Last_SQL_Error "${status}")" || return 1
-  [[ ( "${io}" == "Yes" || "${io}" == "Connecting" ) && "${sql}" == "Yes" && -z "${sql_error}" ]]
+  auto_position="$(status_field Auto_Position "${status}")" || return 1
+  [[ ( "${io}" == "Yes" || "${io}" == "Connecting" ) &&
+     "${sql}" == "Yes" && -z "${io_error}" && -z "${sql_error}" &&
+     "${auto_position}" == "1" ]]
 }
 resume_io_or_fail() {
   if mysql_exec "START REPLICA IO_THREAD;" >/dev/null && io_restart_is_healthy; then
@@ -121,8 +190,11 @@ ensure_database_promoted() {
 finish_services() {
   "${compose[@]}" --profile failover up -d app geoserver nginx
   write_state services-started
-  echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Retrieved GTIDs were fully applied; confirm source-side RPO for transactions never received before opening public port 80/443."
+  echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Provider fencing was verified and source-side RPO was explicitly accepted before opening public port 80/443."
 }
+
+require_source_rpo_acceptance
+run_fence_adapter
 
 phase="$(read_state)"
 case "${phase}" in
@@ -149,10 +221,16 @@ case "${phase}" in
   preflight)
     write_state preflight
     initial_status="$(replica_status)" || { echo "ERROR: SHOW REPLICA STATUS failed before promotion." >&2; exit 9; }
+    initial_io_running="$(status_field Replica_IO_Running "${initial_status}")" || { echo "ERROR: replication IO-thread status is missing or ambiguous." >&2; exit 9; }
     initial_sql_running="$(status_field Replica_SQL_Running "${initial_status}")" || { echo "ERROR: replication SQL-thread status is missing or ambiguous." >&2; exit 9; }
+    initial_io_error="$(status_field Last_IO_Error "${initial_status}")" || { echo "ERROR: replication Last_IO_Error status is missing or ambiguous." >&2; exit 9; }
     initial_sql_error="$(status_field Last_SQL_Error "${initial_status}")" || { echo "ERROR: replication Last_SQL_Error status is missing or ambiguous." >&2; exit 9; }
+    initial_auto_position="$(status_field Auto_Position "${initial_status}")" || { echo "ERROR: replication Auto_Position status is missing or ambiguous." >&2; exit 9; }
+    [[ "$initial_io_running" == "Yes" ]] || { echo "ERROR: replication IO thread must be running before promotion." >&2; exit 9; }
     [[ "${initial_sql_running}" == "Yes" ]] || { echo "ERROR: replication SQL thread is not running." >&2; exit 9; }
+    [[ -z "${initial_io_error}" ]] || { echo "ERROR: replication has Last_IO_Error: ${initial_io_error}" >&2; exit 9; }
     [[ -z "${initial_sql_error}" ]] || { echo "ERROR: replication has Last_SQL_Error: ${initial_sql_error}" >&2; exit 9; }
+    [[ "$initial_auto_position" == "1" ]] || { echo "ERROR: replication must use GTID Auto_Position=1 before promotion." >&2; exit 9; }
     mysql_exec "STOP REPLICA IO_THREAD;"
     io_stopped=1
     trap restore_io_on_failure EXIT

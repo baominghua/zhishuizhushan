@@ -16,6 +16,20 @@ from .settings import get_settings
 JSON_STORE_LOCK = globals().get("JSON_STORE_LOCK") or threading.RLock()
 
 
+def fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 @contextmanager
 def json_transaction(paths: list[Path]):
     """Restore every participating JSON file if a multi-file update fails."""
@@ -29,12 +43,23 @@ def json_transaction(paths: list[Path]):
                 if contents is None:
                     if path.exists():
                         path.unlink()
+                        fsync_directory(path.parent)
                     continue
                 path.parent.mkdir(parents=True, exist_ok=True)
                 temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.restore")
                 try:
-                    temporary.write_bytes(contents)
+                    descriptor = os.open(
+                        temporary,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                    with os.fdopen(descriptor, "wb") as handle:
+                        handle.write(contents)
+                        handle.flush()
+                        os.fchmod(handle.fileno(), 0o600)
+                        os.fsync(handle.fileno())
                     os.replace(temporary, path)
+                    fsync_directory(path.parent)
                 finally:
                     if temporary.exists():
                         temporary.unlink()

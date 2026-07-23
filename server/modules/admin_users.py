@@ -351,6 +351,104 @@ def append_user_audit_event(
     return updated
 
 
+def append_auth_audit_event(
+    user_id: str,
+    action: str,
+    actor_username: str,
+    *,
+    client_ip: str | None = None,
+) -> dict[str, Any] | None:
+    """Append an authentication event without writing a stale user snapshot."""
+    context = AuthContext(
+        user=actor_username,
+        roles=set(),
+        projects=set(),
+        areas=set(),
+    )
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"{MYSQL_SELECT_SQL} WHERE au.id = %s FOR UPDATE",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        conn.rollback()
+                        return None
+                    current = normalize_postgis_user_row(row)
+                    updated = append_user_audit_event(
+                        current,
+                        action,
+                        context,
+                        client_ip=client_ip,
+                    )
+                    cur.execute(
+                        "UPDATE admin_users SET properties = %s WHERE id = %s",
+                        (
+                            serializable_json(updated.get("properties"), {}),
+                            user_id,
+                        ),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return updated
+
+    if use_postgis():
+        with postgis_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"{POSTGIS_SELECT_SQL} WHERE id = %s FOR UPDATE",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        conn.rollback()
+                        return None
+                    current = normalize_postgis_user_row(row)
+                    updated = append_user_audit_event(
+                        current,
+                        action,
+                        context,
+                        client_ip=client_ip,
+                    )
+                    cur.execute(
+                        "UPDATE admin_users SET properties = %s::jsonb WHERE id = %s",
+                        (
+                            serializable_json(updated.get("properties"), {}),
+                            user_id,
+                        ),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return updated
+
+    with database.JSON_STORE_LOCK:
+        users = load_json_records(admin_users_json_path())
+        for index, current in enumerate(users):
+            if str(current.get("id")) != str(user_id):
+                continue
+            updated = append_user_audit_event(
+                current,
+                action,
+                context,
+                client_ip=client_ip,
+            )
+            users[index] = {
+                **current,
+                "properties": updated.get("properties") or {},
+            }
+            save_json_records(admin_users_json_path(), users)
+            return users[index]
+    return None
+
+
 def user_event_record(user: dict[str, Any], event: dict[str, Any], index: int) -> dict[str, Any]:
     after = event.get("after") if isinstance(event.get("after"), dict) else {}
     before = event.get("before") if isinstance(event.get("before"), dict) else {}

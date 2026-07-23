@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
+import os
 import sqlite3
+import stat
 import threading
 
 import pytest
@@ -14,6 +16,7 @@ from server.modules.auth_store import (
     revoke_session,
     revoke_user_sessions,
     save_credential,
+    save_session,
     session_for_token,
 )
 from server.modules.database import admin_credentials_json_path, admin_sessions_json_path
@@ -271,6 +274,76 @@ def test_session_revocation_by_token_and_user_preserves_excepted_session(isolate
     assert session_for_token(second_token, now) is None
 
 
+def test_stale_json_session_save_cannot_clear_a_concurrent_revocation(isolated_env):
+    now = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    raw_token, _csrf, _session = create_session(
+        "user-1", 1, now, "127.0.0.1", "pytest"
+    )
+    stale = session_for_token(raw_token, now)
+    assert stale is not None
+
+    revoke_session(raw_token)
+    stale["lastSeenAt"] = (now + timedelta(minutes=1)).isoformat()
+    save_session(stale)
+
+    assert session_for_token(raw_token, now + timedelta(minutes=1)) is None
+
+
+def test_mysql_session_touch_is_conditional_on_an_unrevoked_current_row(monkeypatch):
+    calls = []
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, params=()):
+            calls.append((" ".join(sql.split()), params))
+
+    class Connection:
+        committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            self.committed = True
+
+    connection = Connection()
+    monkeypatch.setattr(auth_store, "use_mysql", lambda: True)
+    monkeypatch.setattr(auth_store, "mysql_connect", lambda: connection)
+    record = {
+        "id": "session-1",
+        "userId": "user-1",
+        "tokenHash": "token-hash",
+        "csrfTokenHash": "csrf-hash",
+        "credentialVersion": 1,
+        "ipAddress": "127.0.0.1",
+        "userAgent": "pytest",
+        "issuedAt": "2026-07-22T09:00:00+00:00",
+        "lastSeenAt": "2026-07-22T09:01:00+00:00",
+        "expiresAt": "2026-07-22T10:00:00+00:00",
+        "revokedAt": None,
+    }
+
+    touched = auth_store.touch_session(record)
+
+    assert touched is False
+    assert connection.committed is True
+    assert "revoked_at IS NULL" in calls[0][0]
+    assert "credential_version = %s" in calls[0][0]
+
+
 def _run_concurrently(workers):
     start = threading.Barrier(len(workers) + 1)
     errors = []
@@ -417,3 +490,24 @@ def test_json_credential_upsert_preserves_existing_identity(isolated_env):
     assert stored["id"] == original["id"]
     assert stored["createdAt"] == original["createdAt"]
     assert stored["passwordHash"] == "$argon2id$replacement"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are enforced on deployment hosts")
+def test_json_credentials_are_written_owner_only_and_directory_entry_is_durable(
+    monkeypatch, isolated_env
+):
+    fsynced_directories = []
+    original_open = os.open
+
+    def tracking_open(path, flags, *args, **kwargs):
+        descriptor = original_open(path, flags, *args, **kwargs)
+        if flags & getattr(os, "O_DIRECTORY", 0):
+            fsynced_directories.append(str(path))
+        return descriptor
+
+    monkeypatch.setattr(auth_store.os, "open", tracking_open)
+    save_credential(new_credential("user-1", "$argon2id$test"))
+
+    path = admin_credentials_json_path()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert str(path.parent) in fsynced_directories

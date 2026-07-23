@@ -123,7 +123,7 @@ def test_health_reports_unified_auth_configuration(app_client):
     }
 
 
-def test_json_string_service_profile_preserves_unprivileged_legacy_scope(app_client, monkeypatch):
+def test_json_string_service_profile_preserves_legacy_global_admin_scope(app_client, monkeypatch):
     import server.modules.settings as settings
 
     monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
@@ -132,17 +132,15 @@ def test_json_string_service_profile_preserves_unprivileged_legacy_scope(app_cli
     try:
         headers = {"Authorization": "Bearer legacy-token"}
         profile = app_client.get("/api/auth/me", headers=headers)
-        denied_delete = app_client.delete("/api/scenes/missing-scene", headers=headers)
+        allowed_delete = app_client.delete("/api/scenes/missing-scene", headers=headers)
     finally:
         settings.get_settings.cache_clear()
 
     assert profile.status_code == 200
     assert profile.json()["user"] == "legacy-user"
-    assert profile.json()["roles"] == []
-    assert profile.json()["permissions"] == []
-    assert profile.json()["dataScopes"] == {}
-    assert denied_delete.status_code == 403
-    assert "imagery.scenes.delete" in denied_delete.json()["detail"]
+    assert profile.json()["roles"] == ["admin"]
+    assert profile.json()["dataScopes"] == {"areas": ["*"], "projects": ["*"]}
+    assert allowed_delete.status_code == 404
 
 
 def test_compact_service_profiles_preserve_legacy_identity_roles_and_scopes(app_client, monkeypatch):
