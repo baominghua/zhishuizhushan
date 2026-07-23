@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import os
 import re
 import subprocess
 import sys
@@ -367,6 +368,117 @@ def test_break_glass_rotation_replaces_a_bom_prefixed_legacy_token(tmp_path):
     profiles = json.loads(encoded_profiles)
     assert "old-break-glass" not in profiles
     assert sorted(profile["user"] for profile in profiles.values()) == ["break_glass", "dashboard"]
+
+
+def test_second_review_hardens_tls_promotion_and_environment_lifecycle():
+    generate = read_text("ops/scripts/generate-primary-env.sh")
+    standby = read_text("ops/scripts/make-standby-env.sh")
+    enable_tls = read_text("ops/scripts/enable-tls.sh")
+    promote = read_text("ops/scripts/promote-standby.sh")
+    verify = read_text("ops/scripts/verify-cluster.sh")
+    rotate = read_text("ops/scripts/rotate-break-glass-token.py")
+    upgrade = read_text("ops/scripts/upgrade-primary-env.py")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+    cloud_runbook = read_text("ops/README.md")
+
+    assert "config --quiet" in enable_tls
+    assert "/tmp/" not in enable_tls
+    assert "SMART_BAMBOO_TLS_ENABLED" in promote
+    assert 'compose+=( -f "${repo_root}/ops/compose.tls.yml" )' in promote
+    assert promote.index("rev-parse HEAD") < promote.index("STOP REPLICA")
+    assert "openssl x509" in promote
+    assert "docker image inspect" in promote
+    assert "config --quiet" in promote
+    assert "/srv/smart-bamboo-dr/tls" in standby
+    assert "mktemp" in standby
+    assert "mv -f" in standby
+    assert "CONFIRM_REPLACE_PRIMARY_ENV=YES" in generate
+    assert "--replace" in generate
+    assert "SMART_BAMBOO_RELEASE_COMMIT" in upgrade
+    assert "SMART_BAMBOO_BREAK_GLASS_TOKEN" in upgrade
+    assert "--token-output-file" in rotate
+    assert "current_break_glass_token" in rotate
+    assert "role must be primary or standby" in verify
+    assert "primary only" in enable_tls
+    assert "CONFIRM_HUMAN_AUTH_ENABLED=1" in cloud_runbook
+    assert "443" in cloud_runbook
+    assert "交互式" in runbook
+    assert "does not prove TLS" in runbook
+
+
+def test_primary_env_upgrade_is_idempotent_and_does_not_rotate_database_secrets(tmp_path):
+    env_file = tmp_path / "primary.env"
+    token_file = tmp_path / "break-glass.token"
+    profiles = {"dashboard-token": {"user": "dashboard", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]}}
+    env_file.write_text(
+        "\n".join(
+            [
+                "MYSQL_PASSWORD=unchanged-mysql-password",
+                "MYSQL_ROOT_PASSWORD=unchanged-root-password",
+                "REMOTE_SENSING_API_TOKENS='" + json.dumps(profiles, separators=(",", ":")) + "'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    command = [
+        sys.executable,
+        str(ROOT / "ops/scripts/upgrade-primary-env.py"),
+        "--env-file",
+        str(env_file),
+        "--release-commit",
+        "a" * 40,
+        "--token-output-file",
+        str(token_file),
+    ]
+
+    first = subprocess.run(command, text=True, capture_output=True, check=False)
+    after_first = env_file.read_text(encoding="utf-8")
+    second = subprocess.run(command[:-2], text=True, capture_output=True, check=False)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert "MYSQL_PASSWORD=unchanged-mysql-password" in after_first
+    assert "MYSQL_ROOT_PASSWORD=unchanged-root-password" in after_first
+    assert "SMART_BAMBOO_RELEASE_COMMIT=" + "a" * 40 in after_first
+    assert after_first.count("SMART_BAMBOO_BREAK_GLASS_TOKEN=") == 1
+    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600" in (ROOT / "ops/scripts/upgrade-primary-env.py").read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert token_file.stat().st_mode & 0o777 == 0o600
+    assert token_file.read_text(encoding="utf-8").strip()
+
+
+def test_break_glass_rotation_revokes_current_token_and_all_emergency_profiles(tmp_path):
+    env_file = tmp_path / "primary.env"
+    token_file = tmp_path / "break-glass.token"
+    profiles = {
+        "current-pointer": {"user": "operator", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
+        "old-break-glass": {"user": "break_glass", "roles": ["admin"], "projects": ["*"], "areas": ["*"]},
+        "dashboard-token": {"user": "dashboard", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
+    }
+    env_file.write_text(
+        "SMART_BAMBOO_BREAK_GLASS_TOKEN=current-pointer\n"
+        + "REMOTE_SENSING_API_TOKENS='" + json.dumps(profiles, separators=(",", ":")) + "'\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ops/scripts/rotate-break-glass-token.py"), "--env-file", str(env_file), "--token-output-file", str(token_file)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "current-pointer" not in env_file.read_text(encoding="utf-8")
+    encoded_profiles = next(line for line in env_file.read_text(encoding="utf-8").splitlines() if line.startswith("REMOTE_SENSING_API_TOKENS=")).split("=", 1)[1].strip("'")
+    rotated_profiles = json.loads(encoded_profiles)
+    assert "current-pointer" not in rotated_profiles
+    assert "old-break-glass" not in rotated_profiles
+    assert sorted(profile["user"] for profile in rotated_profiles.values()) == ["break_glass", "dashboard"]
+    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600" in (ROOT / "ops/scripts/rotate-break-glass-token.py").read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert token_file.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize(

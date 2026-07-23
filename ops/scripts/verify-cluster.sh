@@ -3,6 +3,10 @@ set -Eeuo pipefail
 
 role="${1:?Usage: $0 primary|standby [ENV_FILE] [--allow-human-auth-pending]}"
 shift
+if [[ "${role}" != "primary" && "${role}" != "standby" ]]; then
+  echo "ERROR: role must be primary or standby." >&2
+  exit 64
+fi
 env_override=""
 allow_human_auth_pending=0
 for argument in "$@"; do

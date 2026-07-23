@@ -6,7 +6,22 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+replace=0
+if [[ "${1:-}" == "--replace" ]]; then
+  replace=1
+  shift
+fi
 target="${1:-/srv/smart-bamboo/config/primary.env}"
+if [[ "$#" -gt 1 ]]; then
+  echo "Usage: $0 [--replace] [TARGET]" >&2
+  exit 64
+fi
+if [[ -e "${target}" ]]; then
+  if [[ "${replace}" != "1" || "${CONFIRM_REPLACE_PRIMARY_ENV:-}" != "YES" ]]; then
+    echo "ERROR: refusing to overwrite ${target}; use --replace with CONFIRM_REPLACE_PRIMARY_ENV=YES only during a reviewed secret rotation." >&2
+    exit 2
+  fi
+fi
 mkdir -p "$(dirname "${target}")"
 umask 077
 

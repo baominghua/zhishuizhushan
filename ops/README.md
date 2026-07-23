@@ -13,8 +13,8 @@
 
 在移动云控制台完成：
 
-1. 高配机入方向开放 TCP 80；TCP 3306 仅允许 `192.168.0.104/32`；TCP 22 如需主从初始化文件传输，也仅允许 `192.168.0.104/32`。
-2. 低配机首期不开放 TCP 80；确认公网没有 3306、8010、8080 规则。
+1. 高配机入方向开放 TCP 80、443；TCP 3306 仅允许 `192.168.0.104/32`；TCP 22 如需主从初始化文件传输，也仅允许 `192.168.0.104/32`。
+2. 低配机首期不开放 TCP 80、443；确认公网没有 3306、8010、8080 规则。
 3. 两台机器出方向允许访问 GitHub、Docker Registry 和移动云对象存储。
 4. 创建私有对象存储桶，开启版本控制；数据库备份保留 90 天，原始影像按项目归档。
 5. 设置云硬盘快照：数据库数据盘每日、系统盘每周；每次正式发布前手工快照。
@@ -70,8 +70,7 @@ cd /opt/smart-bamboo
 bash ops/scripts/generate-primary-env.sh
 docker compose --project-directory /opt/smart-bamboo \
   --env-file /srv/smart-bamboo/config/primary.env \
-  -f ops/compose.primary.yml config >/tmp/primary-compose.txt
-grep -nE '0\.0\.0\.0:80|127\.0\.0\.1:8010|192\.168\.0\.32:3306' /tmp/primary-compose.txt
+  -f ops/compose.primary.yml config --quiet
 ```
 
 如已有天地图服务端密钥，先用编辑器填写 `primary.env` 中空白的 `REMOTE_SENSING_TIANDITU_TK`；不要把密钥发到聊天或 GitHub。随后启动正式服务并建立复制账号：
@@ -210,9 +209,9 @@ CONFIRM_PRIMARY_UNAVAILABLE=YES bash ops/scripts/promote-standby.sh
 curl -fsS http://127.0.0.1:8010/api/health
 ```
 
-只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
+只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80、443。若同步环境中的 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令还必须带 `CONFIRM_HUMAN_AUTH_ENABLED=1`；脚本会在 `STOP REPLICA` 前核对 commit、目录、镜像、TLS 证书/私钥、证书有效期和 Compose 合约。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
 
-最终验收：公网仅 80 可达；3306、8010、8080 均不可达；林班地图、分层筛选、后台权限、成果导入和影像管理通过。
+最终验收：公网仅 80、443 可达；3306、8010、8080 均不可达；林班地图、分层筛选、后台权限、成果导入和影像管理通过。
 
 ## 管理员密码认证和 TLS 切换
 
