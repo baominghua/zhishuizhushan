@@ -189,6 +189,8 @@ rm -f /root/fullchain.pem /root/privkey.pem
 
 提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，阶段依次为 `preflight`、`draining`、`commit-intent`、`database-promoted` 与 `services-started`。在 `draining` 失败时，脚本 best-effort 重启 IO 线程并明确打印恢复结果；若恢复失败，状态记为 `recovery-failed`，必须先处理复制故障。`commit-intent` 已写入后不得回滚到副本模式：在同一确认门和主节点不可用检查仍通过时重跑命令，脚本会查询数据库只读状态并明确 fail-forward 到 `database-promoted` 和服务启动，避免可写状态不明。
 
+`promotion-state` 与 `role-override.cnf` 都以同目录临时文件写入、flush/fsync、原子 rename 后 fsync 父目录的顺序持久化。正常首次切换严格按 `commit-intent` 持久化、停止复制并解除只读、持久化安装 role override、持久化 `database-promoted`、启动服务执行。掉电后每个边界均可重跑判断：`draining` 或 `recovery-failed` 先读取数据库角色，只有明确 `read_only=1,super_read_only=1` 时才尝试恢复 IO，且必须重新读取 `SHOW REPLICA STATUS` 确认 IO 为 `Yes` 或 `Connecting`、SQL 线程正常且无 SQL 错误；明确 `0,0` 表示 marker 落后，禁止重启 IO，直接持久化 override 并 fail-forward。`database-promoted` 若重启后仍为 `1,1`，脚本会再次停止复制、关闭只读、持久化 override 后继续；任何混合读写状态都拒绝执行并要求人工处置。
+
 ```bash
 cd /opt/smart-bamboo
 test "$(git rev-parse HEAD)" = "$(sed -n 's/^SMART_BAMBOO_RELEASE_COMMIT=//p' /srv/smart-bamboo-dr/config/standby.env)"

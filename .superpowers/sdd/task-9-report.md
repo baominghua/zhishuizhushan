@@ -106,3 +106,19 @@ Controller acceptance was completed after `d735f08` and passed `19/19`. The cont
 - Final targeted deployment/configuration verification: `58 passed in 11.64s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
 - Final full pytest verification: `782 passed in 181.19s (0:03:01)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`.
 - `bash -n` passed for all 15 tracked shell scripts. Python compilation passed for `read-protected-env.py`, `read-replica-status.py`, the credential lifecycle scripts, and the deployment regression module.
+
+## Fifth Independent Review Follow-up
+
+- Added `durable-atomic-write.py` for protected promotion-state and role-override writes. It writes and fsyncs a same-directory temporary file, atomically replaces the target, and fsyncs the parent directory on the Linux deployment target. Promotion calls it for both the `0600` marker and `0640` role override.
+- The irreversible sequence is now durable at each boundary: `commit-intent` marker, database `STOP REPLICA` plus read-only disable, durable role override installation, durable `database-promoted` marker, then failover services. Power loss at each transition is therefore distinguishable on retry.
+- `draining` and `recovery-failed` retries inspect the database role before touching replication. Only `1,1` resumes and verifies IO; `0,0` treats the marker as stale, never starts IO, durably installs the override, marks database-promoted, and fails forward. Mixed values fail closed. `database-promoted` follows the same database-role logic, including reboot recovery from an explicit `1,1` state.
+- IO recovery now reads `SHOW REPLICA STATUS` after `START REPLICA IO_THREAD`, accepts only IO `Yes` or `Connecting` with SQL `Yes` and no `Last_SQL_Error`, and records `recovery-failed` otherwise.
+- The progress ledger records a Minor: the non-executing protected dotenv parser intentionally supports a constrained grammar rather than every Docker Compose env-file edge case. Current generated protected env values remain within that controlled grammar.
+
+## Fifth Follow-up Verification
+
+- Added power-loss/stale-marker/reboot branch regressions, durable-write order assertions, post-restart IO-status assertions, and an executable durable atomic-writer replacement test.
+- The first durable-writer test failed on Windows because opening a directory handle for fsync is not supported by that platform. The helper now safely skips that platform-specific operation only off POSIX; its Linux path still requires directory fsync. This failure is not counted as passing. Focused rerun: `3 passed in 0.13s`.
+- Final targeted deployment/configuration verification: `60 passed in 11.62s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
+- Final full pytest verification: `784 passed in 185.03s (0:03:05)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`.
+- `bash -n` passed for all 15 tracked shell scripts. Python compilation passed for the durable writer, protected-env and replication-status helpers, and deployment regressions.

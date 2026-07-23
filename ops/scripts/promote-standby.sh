@@ -6,31 +6,24 @@ if [[ "${CONFIRM_PRIMARY_UNAVAILABLE:-}" != "YES" ]]; then
   exit 1
 fi
 if curl -fsS --connect-timeout 2 --max-time 5 http://192.168.0.32/api/health >/dev/null 2>&1; then
-  if [[ "${CONFIRM_FORCE_SPLIT_BRAIN_RISK:-}" != "YES" ]]; then
-    echo "ERROR: primary still responds. Promotion blocked to prevent split brain." >&2
-    exit 2
-  fi
+  [[ "${CONFIRM_FORCE_SPLIT_BRAIN_RISK:-}" == "YES" ]] || { echo "ERROR: primary still responds. Promotion blocked to prevent split brain." >&2; exit 2; }
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 env_file="${1:-/srv/smart-bamboo-dr/config/standby.env}"
 env_reader="${repo_root}/ops/scripts/read-protected-env.py"
+durable_writer="${repo_root}/ops/scripts/durable-atomic-write.py"
 state_file="/srv/smart-bamboo-dr/config/promotion-state"
 role_override="/srv/smart-bamboo-dr/config/role-override.cnf"
-role_override_tmp=""
 io_stopped=0
 
-read_env_value() {
-  python3 "${env_reader}" "${env_file}" "$1"
-}
+read_env_value() { python3 "${env_reader}" "${env_file}" "$1"; }
+durable_write() { python3 "${durable_writer}" "$1" "$2"; }
 write_state() {
-  local phase="$1" temporary
+  local phase="$1"
   case "${phase}" in preflight|draining|commit-intent|database-promoted|services-started|recovery-failed) ;; *)
     echo "ERROR: invalid promotion state: ${phase}" >&2; return 1 ;; esac
-  temporary="$(mktemp "${state_file}.XXXXXX")"
-  printf 'phase=%s\nrelease_commit=%s\n' "${phase}" "${release_commit}" > "${temporary}"
-  chmod 0600 "${temporary}"
-  mv -f "${temporary}" "${state_file}"
+  printf 'phase=%s\nrelease_commit=%s\n' "${phase}" "${release_commit}" | durable_write "${state_file}" 0600
 }
 read_state() {
   local phases commits
@@ -41,9 +34,6 @@ read_state() {
     echo "ERROR: promotion state is missing, duplicated, or belongs to another release." >&2; return 1; }
   case "${phases[0]}" in preflight|draining|commit-intent|database-promoted|services-started|recovery-failed) printf '%s' "${phases[0]}" ;; *)
     echo "ERROR: unsupported promotion state: ${phases[0]}" >&2; return 1 ;; esac
-}
-cleanup_role_override_tmp() {
-  [[ -z "${role_override_tmp}" ]] || rm -f "${role_override_tmp}"
 }
 
 human_auth_enabled="$(read_env_value SMART_BAMBOO_HUMAN_AUTH_ENABLED)"
@@ -86,84 +76,75 @@ esac
 "${compose[@]}" config --quiet
 for image in "smart-bamboo-app:${release_tag}" "docker.osgeo.org/geoserver:2.25.7" "nginx:1.30.4-alpine"; do docker image inspect "${image}" >/dev/null; done
 
-mysql_exec() {
-  "${compose[@]}" exec -T db-replica mysql -N -B -uroot -p"${mysql_root_password}" -e "$1"
-}
-replica_status() {
-  "${compose[@]}" exec -T db-replica mysql -uroot -p"${mysql_root_password}" -e "SHOW REPLICA STATUS\\G"
-}
-status_field() {
-  python3 "${repo_root}/ops/scripts/read-replica-status.py" "$1" <<<"$2"
-}
-database_role() {
-  mysql_exec "SELECT CONCAT(@@GLOBAL.read_only, ',', @@GLOBAL.super_read_only);"
-}
-prepare_role_override() {
-  role_override_tmp="$(mktemp /srv/smart-bamboo-dr/config/.role-override.cnf.XXXXXX)"
-  cat > "${role_override_tmp}" <<'EOF'
-[mysqld]
-read_only=OFF
-super_read_only=OFF
-skip_replica_start=ON
-EOF
-  chmod 0640 "${role_override_tmp}"
-}
+mysql_exec() { "${compose[@]}" exec -T db-replica mysql -N -B -uroot -p"${mysql_root_password}" -e "$1"; }
+replica_status() { "${compose[@]}" exec -T db-replica mysql -uroot -p"${mysql_root_password}" -e "SHOW REPLICA STATUS\\G"; }
+status_field() { python3 "${repo_root}/ops/scripts/read-replica-status.py" "$1" <<<"$2"; }
+database_role() { mysql_exec "SELECT CONCAT(@@GLOBAL.read_only, ',', @@GLOBAL.super_read_only);"; }
 install_role_override() {
-  mv -f "${role_override_tmp}" "${role_override}"
-  role_override_tmp=""
+  printf '[mysqld]\nread_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON\n' | durable_write "${role_override}" 0640
 }
-finish_services() {
-  install_role_override
-  "${compose[@]}" --profile failover up -d app geoserver nginx
-  write_state services-started
-  trap - EXIT
-  cleanup_role_override_tmp
-  echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Retrieved GTIDs were fully applied; confirm source-side RPO for transactions never received before opening public port 80/443."
+io_restart_is_healthy() {
+  local status io sql sql_error
+  status="$(replica_status)" || return 1
+  io="$(status_field Replica_IO_Running "${status}")" || return 1
+  sql="$(status_field Replica_SQL_Running "${status}")" || return 1
+  sql_error="$(status_field Last_SQL_Error "${status}")" || return 1
+  [[ ( "${io}" == "Yes" || "${io}" == "Connecting" ) && "${sql}" == "Yes" && -z "${sql_error}" ]]
+}
+resume_io_or_fail() {
+  if mysql_exec "START REPLICA IO_THREAD;" >/dev/null && io_restart_is_healthy; then
+    write_state preflight
+    echo "RECOVERY: REPLICA IO_THREAD is ${io:-healthy}; status verification passed and preflight may restart." >&2
+    return 0
+  fi
+  write_state recovery-failed || true
+  echo "ERROR: REPLICA IO_THREAD did not recover to Yes/Connecting with a healthy SQL thread; state is recovery-failed." >&2
+  return 1
 }
 restore_io_on_failure() {
   local status=$?
   trap - EXIT
-  cleanup_role_override_tmp
   if [[ "${io_stopped}" == "1" ]]; then
-    if mysql_exec "START REPLICA IO_THREAD;" >/dev/null; then
-      write_state preflight || true
-      echo "RECOVERY: restarted REPLICA IO_THREAD after pre-commit promotion failure." >&2
-    else
-      write_state recovery-failed || true
-      echo "ERROR: failed to restart REPLICA IO_THREAD; promotion state is recovery-failed and requires operator action." >&2
-    fi
+    resume_io_or_fail || true
   fi
   exit "${status}"
 }
+ensure_database_promoted() {
+  case "$(database_role)" in
+    0,0) ;;
+    1,1) mysql_exec "STOP REPLICA; SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF;" ;;
+    *) echo "ERROR: promotion marker has an unsafe, indeterminate database read-only state." >&2; return 1 ;;
+  esac
+  install_role_override
+  write_state database-promoted
+}
+finish_services() {
+  "${compose[@]}" --profile failover up -d app geoserver nginx
+  write_state services-started
+  echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Retrieved GTIDs were fully applied; confirm source-side RPO for transactions never received before opening public port 80/443."
+}
 
 phase="$(read_state)"
-prepare_role_override
-trap cleanup_role_override_tmp EXIT
 case "${phase}" in
   services-started)
     [[ "$(database_role)" == "0,0" ]] || { echo "ERROR: services-started marker conflicts with database read-only state." >&2; exit 11; }
+    install_role_override
     finish_services
     ;;
   database-promoted)
-    [[ "$(database_role)" == "0,0" ]] || { echo "ERROR: database-promoted marker conflicts with database read-only state." >&2; exit 11; }
+    ensure_database_promoted
     finish_services
     ;;
   commit-intent)
-    case "$(database_role)" in
-      0,0) write_state database-promoted ;;
-      1,1) mysql_exec "STOP REPLICA; SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF;"; write_state database-promoted ;;
-      *) echo "ERROR: commit-intent marker has an unsafe, indeterminate database read-only state." >&2; exit 11 ;;
-    esac
+    ensure_database_promoted
     finish_services
     ;;
   draining|recovery-failed)
-    if mysql_exec "START REPLICA IO_THREAD;" >/dev/null; then
-      write_state preflight
-      echo "RECOVERY: resumed REPLICA IO_THREAD before restarting promotion preflight." >&2
-    else
-      echo "ERROR: cannot resume REPLICA IO_THREAD from ${phase}; investigate replication before retrying." >&2
-      exit 11
-    fi
+    case "$(database_role)" in
+      1,1) resume_io_or_fail || exit 11 ;;
+      0,0) install_role_override; write_state database-promoted; finish_services; exit 0 ;;
+      *) echo "ERROR: ${phase} marker has an unsafe, indeterminate database read-only state." >&2; exit 11 ;;
+    esac
     ;&
   preflight)
     write_state preflight
@@ -189,9 +170,8 @@ case "${phase}" in
     subset_result="$(mysql_exec "SELECT GTID_SUBSET('${retrieved_gtid_set}', @@GLOBAL.gtid_executed);")" || { echo "ERROR: GTID convergence verification failed." >&2; exit 10; }
     [[ "${subset_result}" == "1" ]] || { echo "ERROR: Retrieved_Gtid_Set is not fully applied to @@GLOBAL.gtid_executed." >&2; exit 10; }
     write_state commit-intent
-    trap cleanup_role_override_tmp EXIT
-    mysql_exec "STOP REPLICA; SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF;"
-    write_state database-promoted
+    trap - EXIT
+    ensure_database_promoted
     finish_services
     ;;
 esac

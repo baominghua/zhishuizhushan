@@ -1,0 +1,21 @@
+# Admin Password Authentication SDD Progress
+
+- Plan: docs/superpowers/plans/2026-07-22-admin-password-authentication.md
+- Branch: codex/admin-password-auth
+- Start: b43c3e2
+- Baseline: 670 passed; one sandbox-only data-directory failure passed when REMOTE_SENSING_DATA_DIR used a writable path.
+- Task 1: complete (commits 3d7f120..ac33fbb, review clean)
+- Task 2: complete (commits 9cedde0..28daf3a, review clean after concurrency fix)
+- Task 2 minor notes: JSON timestamp spelling is not fully canonical; JSON locking is process-local and must remain single-process; run live MySQL integration during production acceptance.
+- Task 3: complete (commits fef46bb, 8c0435e; review clean after username normalization and production HTTPS fixes)
+- Task 3 minor notes: add live MySQL/PostGIS mixed-case legacy username coverage and direct-HTTPS Secure-cookie coverage during production acceptance.
+- Task 4: complete (commits 898eab9, 444549b, fb1f15c, 39856de; review clean after full legacy bearer compatibility fixes)
+- Task 4 minor note: middleware and route dependencies repeat some session reads/policy checks; no behavior issue observed, revisit during final review if optimization is clearly safe.
+- Task 5: complete (commits 6b8c278, 0780e18, 697e2ff, 869b332; review clean after atomic storage and fail-closed fixes)
+- Task 5 minor note: live MySQL concurrency/isolation acceptance remains required on the production host.
+- Task 6: complete (commits 4a9b890, f5b9a73, 66e32c1, b1d4216; review clean after fail-closed and behavior-test fixes)
+- Task 7: complete (commits 138846d, 8a3f376, 48b3744, 10a9126; review clean after forced-change gate and stale-response fixes)
+- Task 8: complete (commits bb5b807, 2c9463a, 3c355b6, 44d501e; review clean after readiness and proxy-topology fixes)
+- Task 8 minor note: MySQL 8.4 supports BINARY expr but deprecates it; consider CAST(... AS BINARY) in a future database compatibility pass.
+- Task 9: pending
+- Task 9 minor note: `read-protected-env.py` intentionally implements a narrow, non-executing dotenv grammar and is not a byte-for-byte implementation of every Docker Compose env-file edge case. Current generated protected env values are constrained to the supported value domain; retain this limitation in any future env generator changes.

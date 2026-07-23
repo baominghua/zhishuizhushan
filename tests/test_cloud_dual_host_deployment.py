@@ -474,6 +474,56 @@ def test_fourth_review_hardens_promotion_recovery_state_and_safe_env_parsing():
     assert "fail-forward" in runbook
 
 
+def test_fifth_review_makes_power_loss_boundaries_durable_and_recovery_role_aware():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    durable_writer = read_text("ops/scripts/durable-atomic-write.py")
+
+    assert "durable-atomic-write.py" in promote
+    assert "durable_write \"${state_file}\" 0600" in promote
+    assert "durable_write \"${role_override}\" 0640" in promote
+    assert "os.fsync(handle.fileno())" in durable_writer
+    assert durable_writer.index("os.fsync(handle.fileno())") < durable_writer.index("os.replace(temporary, args.target)")
+    assert durable_writer.index("os.replace(temporary, args.target)") < durable_writer.index("fsync_directory(args.target.parent)")
+    assert "io_restart_is_healthy" in promote
+    assert '"${io}" == "Connecting"' in promote
+    assert "Replica_SQL_Running" in promote
+    assert "Last_SQL_Error" in promote
+
+    transition = promote[promote.index("write_state commit-intent") :]
+    assert transition.index("write_state commit-intent") < transition.index("trap - EXIT")
+    assert transition.index("trap - EXIT") < transition.index("ensure_database_promoted")
+    promotion_step = promote[promote.index("ensure_database_promoted()") : promote.index("finish_services()")]
+    assert promotion_step.index("mysql_exec \"STOP REPLICA; SET GLOBAL") < promotion_step.index("install_role_override")
+    assert promotion_step.index("install_role_override") < promotion_step.index("write_state database-promoted")
+    assert promote.index("write_state database-promoted") < promote.index("--profile failover up -d")
+
+    recovery = promote[promote.index("draining|recovery-failed)") : promote.index("preflight)")]
+    assert 'case "$(database_role)" in' in recovery
+    assert "1,1) resume_io_or_fail" in recovery
+    assert "0,0) install_role_override; write_state database-promoted; finish_services" in recovery
+    assert "START REPLICA IO_THREAD" not in recovery
+    database_promoted = promote[promote.index("database-promoted)") : promote.index("commit-intent)")]
+    assert "ensure_database_promoted" in database_promoted
+    assert "1,1) mysql_exec \"STOP REPLICA; SET GLOBAL" in promote
+
+
+def test_durable_atomic_writer_replaces_target_without_leaving_temp_content(tmp_path):
+    target = tmp_path / "promotion-state"
+    target.write_text("phase=preflight\n", encoding="utf-8")
+    payload = b"phase=database-promoted\nrelease_commit=" + b"d" * 40 + b"\n"
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ops/scripts/durable-atomic-write.py"), str(target), "0600"],
+        input=payload,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert target.read_bytes() == payload
+    assert not list(tmp_path.glob(".promotion-state.*"))
+
+
 def test_protected_env_parser_never_executes_shell_syntax(tmp_path):
     env_file = tmp_path / "standby.env"
     marker = tmp_path / "should-not-exist"
