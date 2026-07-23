@@ -187,6 +187,8 @@ rm -f /root/fullchain.pem /root/privkey.pem
 
 热备提升前，先在热备核对同一 immutable commit 和同步后的环境值。脚本在停止复制或解除只读前读取 `SHOW REPLICA STATUS`，要求 SQL 线程运行、`Last_SQL_Error` 为空，并先停止 IO 线程以冻结 `Retrieved_Gtid_Set`，等待并验证该集合全部包含于 `@@GLOBAL.gtid_executed`。超时或状态缺失即拒绝提升；脚本不执行 `RESET REPLICA ALL`，保留复制元数据供取证和重建。该检查只能保证已经接收的 GTID 全部应用，源端在 IO 线程冻结前尚未传输的事务仍须由值班负责人结合源端证据确认 source-side RPO。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令要求显式确认；仅当 `SMART_BAMBOO_TLS_ENABLED=1` 时才加入 TLS Compose 覆盖并检查证书、私钥、公钥匹配和有效期。
 
+提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，阶段依次为 `preflight`、`draining`、`commit-intent`、`database-promoted` 与 `services-started`。在 `draining` 失败时，脚本 best-effort 重启 IO 线程并明确打印恢复结果；若恢复失败，状态记为 `recovery-failed`，必须先处理复制故障。`commit-intent` 已写入后不得回滚到副本模式：在同一确认门和主节点不可用检查仍通过时重跑命令，脚本会查询数据库只读状态并明确 fail-forward 到 `database-promoted` 和服务启动，避免可写状态不明。
+
 ```bash
 cd /opt/smart-bamboo
 test "$(git rev-parse HEAD)" = "$(sed -n 's/^SMART_BAMBOO_RELEASE_COMMIT=//p' /srv/smart-bamboo-dr/config/standby.env)"
@@ -203,6 +205,14 @@ else
     --env-file /srv/smart-bamboo-dr/config/standby.env \
     -f ops/compose.standby.yml --profile failover ps
 fi
+```
+
+中断恢复只能在热备控制台执行，先检查阶段和数据库状态，再使用同一命令重跑；不要手工删除状态文件、执行 `RESET REPLICA ALL` 或自行切换只读开关：
+
+```bash
+cat /srv/smart-bamboo-dr/config/promotion-state
+CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
+  bash ops/scripts/promote-standby.sh
 ```
 
 认证故障回滚时仅将主节点 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 并重建 app；此时使用已保留的 break-glass 服务 token 进入管理面。不得删除或清空 `admin_user_credentials`、`admin_sessions`、`admin_users`、`admin_roles` 或审计记录。

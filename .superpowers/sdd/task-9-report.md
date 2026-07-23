@@ -90,3 +90,19 @@ Controller acceptance was completed after `d735f08` and passed `19/19`. The cont
 - Final targeted deployment/configuration verification: `55 passed in 11.67s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
 - Full pytest verification: `779 passed in 192.70s (0:03:12)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`.
 - `bash -n` passed for all 15 tracked shell scripts. Python compilation passed for the two credential lifecycle scripts and the deployment regression module.
+
+## Fourth Independent Review Follow-up
+
+- `promote-standby.sh` is now a resumable, protected-file state machine. `/srv/smart-bamboo-dr/config/promotion-state` records `preflight`, `draining`, `commit-intent`, `database-promoted`, `services-started`, or an explicit `recovery-failed` condition together with the immutable release commit.
+- Once `STOP REPLICA IO_THREAD` succeeds, an EXIT recovery trap performs a best-effort `START REPLICA IO_THREAD` on every pre-commit failure and reports whether recovery succeeded. The trap is cancelled at the persisted `commit-intent` boundary, immediately before the database write-permission transition.
+- A retry always repeats the confirmation and primary-unavailability gates. A `draining` or `recovery-failed` marker first resumes the IO thread before new preflight. A `commit-intent` marker inspects `read_only` and `super_read_only`: it fail-forwards to database promotion only when the state is unambiguously both writable or both read-only; mixed values fail closed. Service-start failures after database promotion are resumed from `database-promoted` rather than being rejected because the SQL thread is intentionally stopped.
+- The role-override file is prepared before the irreversible transition and installed by same-directory atomic rename only after `database-promoted`. Temporary override files are cleaned on both normal and error exits.
+- Promotion and TLS activation no longer `source` Docker environment files. New `read-protected-env.py` parses only requested `KEY=VALUE` entries as data, rejects duplicate requested keys and malformed/multiline values, and never evaluates shell syntax. `read-replica-status.py` requires exactly one requested field, rejecting duplicate fields and unsupported multi-channel status instead of selecting the last value.
+- The runbook documents the state phases and the same-gate rerun command. It prohibits manually deleting the marker, resetting replication metadata, or changing database read-only flags during recovery.
+
+## Fourth Follow-up Verification
+
+- Added executable regressions proving that `$()`, backticks, and semicolon-containing dotenv values are returned as inert data without creating the embedded marker file, and that multi-channel/duplicate `SHOW REPLICA STATUS` fields are rejected. Source-order regressions cover the pre-commit IO recovery trap, state transitions, fail-forward branches, and the absence of `source`.
+- Final targeted deployment/configuration verification: `58 passed in 11.64s` for `tests/test_cloud_dual_host_deployment.py tests/test_deployment_config.py`, with isolated Task 9 `--basetemp` and `-p no:cacheprovider`.
+- Final full pytest verification: `782 passed in 181.19s (0:03:01)` using `REMOTE_SENSING_DATA_DIR`, an isolated Task 9 `--basetemp`, and `-p no:cacheprovider`.
+- `bash -n` passed for all 15 tracked shell scripts. Python compilation passed for `read-protected-env.py`, `read-replica-status.py`, the credential lifecycle scripts, and the deployment regression module.

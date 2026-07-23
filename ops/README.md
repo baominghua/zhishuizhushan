@@ -214,7 +214,7 @@ CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
 curl -fsS http://127.0.0.1:8010/api/health
 ```
 
-只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80、443。若同步环境中的 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令必须带 `CONFIRM_HUMAN_AUTH_ENABLED=1`；若 auth0（`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`），该确认变量不需要。脚本会在 `STOP REPLICA` 前核对 commit、目录、app/nginx/geoserver 镜像、TLS 证书/私钥公钥匹配、证书有效期和 Compose 合约，再验证已接收 GTID 的 SQL 应用完成。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
+只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80、443。若同步环境中的 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令必须带 `CONFIRM_HUMAN_AUTH_ENABLED=1`；若 auth0（`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`），该确认变量不需要。脚本以非执行式 dotenv 解析读取受保护环境，不会 `source` 其中的值；它会在 `STOP REPLICA` 前核对 commit、目录、app/nginx/geoserver 镜像、TLS 证书/私钥公钥匹配、证书有效期和 Compose 合约，再验证已接收 GTID 的 SQL 应用完成。提升阶段写入 `/srv/smart-bamboo-dr/config/promotion-state`；中断后保留同样确认门重跑，不要手工删状态文件或改只读开关。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
 
 最终验收：公网仅 80、443 可达；3306、8010、8080 均不可达；林班地图、分层筛选、后台权限、成果导入和影像管理通过。
 

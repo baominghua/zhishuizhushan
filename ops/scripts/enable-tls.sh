@@ -9,16 +9,20 @@ if [[ "${role}" != "primary" ]]; then
 fi
 env_file="${2:-/srv/smart-bamboo/config/primary.env}"
 compose_file="${repo_root}/ops/compose.primary.yml"
-set -a
-source "${env_file}"
-set +a
+env_reader="${repo_root}/ops/scripts/read-protected-env.py"
+read_env_value() {
+  python3 "${env_reader}" "${env_file}" "$1"
+}
+tls_enabled="$(read_env_value SMART_BAMBOO_TLS_ENABLED)"
+tls_cert_path="$(read_env_value SMART_BAMBOO_TLS_CERT_PATH)"
+tls_key_path="$(read_env_value SMART_BAMBOO_TLS_KEY_PATH)"
 
-[[ "${SMART_BAMBOO_TLS_ENABLED:-0}" == "1" ]] || { echo "ERROR: set SMART_BAMBOO_TLS_ENABLED=1 first." >&2; exit 2; }
-[[ -n "${SMART_BAMBOO_TLS_CERT_PATH:-}" && -f "${SMART_BAMBOO_TLS_CERT_PATH}" ]] || { echo "ERROR: certificate path is missing or unreadable." >&2; exit 3; }
-[[ -n "${SMART_BAMBOO_TLS_KEY_PATH:-}" && -f "${SMART_BAMBOO_TLS_KEY_PATH}" ]] || { echo "ERROR: private-key path is missing or unreadable." >&2; exit 4; }
-openssl x509 -in "${SMART_BAMBOO_TLS_CERT_PATH}" -noout -checkend 2592000
-cert_public_key="$(openssl x509 -in "${SMART_BAMBOO_TLS_CERT_PATH}" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
-key_public_key="$(openssl pkey -in "${SMART_BAMBOO_TLS_KEY_PATH}" -pubout -outform DER | sha256sum | awk '{print $1}')"
+[[ "${tls_enabled}" == "1" ]] || { echo "ERROR: set SMART_BAMBOO_TLS_ENABLED=1 first." >&2; exit 2; }
+[[ -n "${tls_cert_path}" && -f "${tls_cert_path}" ]] || { echo "ERROR: certificate path is missing or unreadable." >&2; exit 3; }
+[[ -n "${tls_key_path}" && -f "${tls_key_path}" ]] || { echo "ERROR: private-key path is missing or unreadable." >&2; exit 4; }
+openssl x509 -in "${tls_cert_path}" -noout -checkend 2592000
+cert_public_key="$(openssl x509 -in "${tls_cert_path}" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
+key_public_key="$(openssl pkey -in "${tls_key_path}" -pubout -outform DER | sha256sum | awk '{print $1}')"
 [[ -n "${cert_public_key}" && "${cert_public_key}" == "${key_public_key}" ]] || { echo "ERROR: TLS certificate and private key do not match." >&2; exit 2; }
 
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${compose_file}" -f "${repo_root}/ops/compose.tls.yml")

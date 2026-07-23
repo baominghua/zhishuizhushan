@@ -432,8 +432,8 @@ def test_third_review_requires_gtid_convergence_tls_key_match_and_safe_handoffs(
     assert "GTID_SUBSET" in promote
     assert "RESET REPLICA ALL" not in promote
     assert promote.index("openssl x509 -in") < promote.index("STOP REPLICA IO_THREAD")
-    assert "openssl x509 -in \"${SMART_BAMBOO_TLS_CERT_PATH}\" -pubkey" in promote
-    assert "openssl pkey -in \"${SMART_BAMBOO_TLS_KEY_PATH}\" -pubout" in promote
+    assert "openssl x509 -in \"${tls_cert_path}\" -pubkey" in promote
+    assert "openssl pkey -in \"${tls_key_path}\" -pubout" in promote
     assert "docker.osgeo.org/geoserver:2.25.7" in promote
     assert "nginx:1.30.4-alpine" in promote
     assert "--token-output-file is required" in rotate
@@ -448,6 +448,78 @@ def test_third_review_requires_gtid_convergence_tls_key_match_and_safe_handoffs(
     assert "source-side RPO" in runbook
     assert "CONFIRM_HUMAN_AUTH_ENABLED=1" in cloud_runbook
     assert "auth0" in cloud_runbook
+
+
+def test_fourth_review_hardens_promotion_recovery_state_and_safe_env_parsing():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    enable_tls = read_text("ops/scripts/enable-tls.sh")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+
+    assert "source \"${env_file}\"" not in promote
+    assert "read-protected-env.py" in promote
+    assert "trap restore_io_on_failure EXIT" in promote
+    assert promote.index("STOP REPLICA IO_THREAD") < promote.index("trap restore_io_on_failure EXIT")
+    assert promote.index("trap restore_io_on_failure EXIT") < promote.index("WAIT_FOR_EXECUTED_GTID_SET")
+    assert "START REPLICA IO_THREAD" in promote
+    assert "recovery-failed" in promote
+    assert "commit-intent" in promote
+    assert "database-promoted" in promote
+    assert "services-started" in promote
+    assert "promotion-state" in promote
+    assert "unsafe, indeterminate database read-only state" in promote
+    assert "read-replica-status.py" in promote
+    assert "tail -n 1" not in promote
+    assert "source \"${env_file}\"" not in enable_tls
+    assert "promotion-state" in runbook
+    assert "fail-forward" in runbook
+
+
+def test_protected_env_parser_never_executes_shell_syntax(tmp_path):
+    env_file = tmp_path / "standby.env"
+    marker = tmp_path / "should-not-exist"
+    payload = f"$(touch {marker});`touch {marker}`;literal"
+    env_file.write_text(
+        "MYSQL_ROOT_PASSWORD='" + payload + "'\n"
+        "SMART_BAMBOO_RELEASE_COMMIT=" + "c" * 40 + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "ops/scripts/read-protected-env.py"),
+            str(env_file),
+            "MYSQL_ROOT_PASSWORD",
+            "SMART_BAMBOO_RELEASE_COMMIT",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [payload, "c" * 40]
+    assert not marker.exists()
+
+
+def test_replica_status_parser_rejects_multiple_channels_and_duplicate_fields():
+    status = """*************************** 1. row ***************************
+Replica_SQL_Running: Yes
+Last_SQL_Error:
+*************************** 2. row ***************************
+Replica_SQL_Running: Yes
+Last_SQL_Error:
+"""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ops/scripts/read-replica-status.py"), "Replica_SQL_Running"],
+        input=status,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "exactly one" in result.stderr
 
 
 def test_break_glass_rotation_refuses_to_change_env_without_new_handoff_file(tmp_path):
