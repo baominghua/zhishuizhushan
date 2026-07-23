@@ -17,5 +17,5 @@
 - Task 7: complete (commits 138846d, 8a3f376, 48b3744, 10a9126; review clean after forced-change gate and stale-response fixes)
 - Task 8: complete (commits bb5b807, 2c9463a, 3c355b6, 44d501e; review clean after readiness and proxy-topology fixes)
 - Task 8 minor note: MySQL 8.4 supports BINARY expr but deprecates it; consider CAST(... AS BINARY) in a future database compatibility pass.
-- Task 9: pending
+- Task 9: complete (commits 9d88323..f6687ca; independent review clean after six hardening rounds)
 - Task 9 minor note: `read-protected-env.py` intentionally implements a narrow, non-executing dotenv grammar and is not a byte-for-byte implementation of every Docker Compose env-file edge case. Current generated protected env values are constrained to the supported value domain; retain this limitation in any future env generator changes.
