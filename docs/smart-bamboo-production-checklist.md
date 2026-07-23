@@ -207,3 +207,19 @@ Health inventory must also be reviewed before release:
 3. 卫星影像生产流：上传、COG 转换、金字塔、缩略图、覆盖范围自动入库。
 4. 地图生产压测：在真实 MySQL 8 与百万亩级数据上记录聚合、矢量瓦片冷/热缓存和筛选查询 P95。
 5. 业务应用层：巡护、采收运输、托管收益、交易结算、碳汇金融和移动端角色应用。
+
+## 9. 管理员密码认证上线 gate
+
+管理员密码认证按 `docs/admin-password-authentication-runbook.md` 分阶段上线。主节点固定使用 `/srv/smart-bamboo/config/primary.env` 与 `ops/compose.primary.yml`，热备固定使用 `/srv/smart-bamboo-dr/config/standby.env` 与 `ops/compose.standby.yml`。
+
+上线顺序不得跳过：
+
+1. 在主节点执行 `bash ops/scripts/backup-mysql.sh` 并保留生成的 `.sql.gz` 与 `.sha256`；云控制台同时建立发布前快照。
+2. 拉取已审批提交并执行主、备 `docker compose ... config`。主节点先构建启动，但确认 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`；热备只 pull/build 和验证复制，不启动 failover profile。
+3. 通过 `/api/health` 和 `bash ops/scripts/verify-cluster.sh primary` 确认 MySQL schema、credential/session 表和应用 readiness；有旧私有数据时先 `--dry-run` 再运行 `server/scripts/migrate_json_to_mysql.py`，任何退出码非零或盘点不一致都停止。
+4. 在主节点 app 容器中仅执行一次 `ops/scripts/bootstrap-admin-password.py`；自动产生的临时密码只显示一次，立即离线保存，首次登录后必须强制改密。
+5. 在真实 HTTPS 和 Nginx proxy header 验收完成前不把 `SMART_BAMBOO_HUMAN_AUTH_ENABLED` 改为 `1`。启用后检查 secure cookie、受信 `X-Forwarded-Proto`、active admin credential、`deployment.readiness.status=ready`。
+6. 人工验收临时登录、强制改密、用户/角色动作权限、projects/areas data scope、会话撤销、审计事件和只读 dashboard service token；确认后从 `REMOTE_SENSING_API_TOKENS` 撤销旧管理员 service token。
+7. 认证回滚只能将主节点 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 后重建 app；严禁删除 credential/session 表或审计记录。
+
+本机没有 Docker CLI 时，`docker compose config`、主/备 readiness、HTTPS 及浏览器验收均为云主机发布 gate，不能记录为本地通过。
