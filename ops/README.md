@@ -133,6 +133,10 @@ docker compose --project-directory /opt/smart-bamboo \
 docker compose --project-directory /opt/smart-bamboo \
   --env-file /srv/smart-bamboo-dr/config/standby.env \
   -f ops/compose.standby.yml --profile failover build app
+docker image inspect \
+  "smart-bamboo-app:$(sed -n 's/^SMART_BAMBOO_RELEASE_TAG=//p' /srv/smart-bamboo-dr/config/standby.env)" \
+  docker.osgeo.org/geoserver:2.25.7 \
+  nginx:1.30.4-alpine
 bash ops/scripts/initialize-replica.sh /srv/smart-bamboo-dr/backups/<备份文件>.sql.gz
 bash ops/scripts/verify-cluster.sh standby
 ```
@@ -205,11 +209,12 @@ systemctl list-timers --all 'smart-bamboo-*'
 
 ```bash
 cd /opt/smart-bamboo
-CONFIRM_PRIMARY_UNAVAILABLE=YES bash ops/scripts/promote-standby.sh
+CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
+  bash ops/scripts/promote-standby.sh
 curl -fsS http://127.0.0.1:8010/api/health
 ```
 
-只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80、443。若同步环境中的 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令还必须带 `CONFIRM_HUMAN_AUTH_ENABLED=1`；脚本会在 `STOP REPLICA` 前核对 commit、目录、镜像、TLS 证书/私钥、证书有效期和 Compose 合约。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
+只有健康检查为 `ready` 后，才在移动云安全组开放低配公网 TCP 80、443。若同步环境中的 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令必须带 `CONFIRM_HUMAN_AUTH_ENABLED=1`；若 auth0（`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`），该确认变量不需要。脚本会在 `STOP REPLICA` 前核对 commit、目录、app/nginx/geoserver 镜像、TLS 证书/私钥公钥匹配、证书有效期和 Compose 合约，再验证已接收 GTID 的 SQL 应用完成。若高配健康接口仍可访问，脚本默认阻止提升，避免双主写入。
 
 最终验收：公网仅 80、443 可达；3306、8010、8080 均不可达；林班地图、分层筛选、后台权限、成果导入和影像管理通过。
 

@@ -180,7 +180,8 @@ def test_cluster_operations_cover_replication_backup_monitoring_and_failover():
     assert "sha256sum" in backup
     assert "/api/health" in watch
     assert "STOP REPLICA" in promote
-    assert "RESET REPLICA ALL" in promote
+    assert "RESET REPLICA ALL" not in promote
+    assert "GTID_SUBSET" in promote
     assert "CONFIRM_PRIMARY_UNAVAILABLE=YES" in promote
     assert "--build" not in promote
     assert "sha256sum -c" in migrate
@@ -336,6 +337,7 @@ def test_human_auth_rollout_has_tls_token_sync_and_failover_guards():
 
 def test_break_glass_rotation_replaces_a_bom_prefixed_legacy_token(tmp_path):
     env_file = tmp_path / "primary.env"
+    handoff_file = tmp_path / "break-glass.token"
     profiles = {
         "dashboard-token": {"user": "dashboard", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
         "old-break-glass": {"user": "break_glass", "roles": ["admin"], "projects": ["*"], "areas": ["*"]},
@@ -352,14 +354,22 @@ def test_break_glass_rotation_replaces_a_bom_prefixed_legacy_token(tmp_path):
     )
 
     result = subprocess.run(
-        [sys.executable, str(ROOT / "ops/scripts/rotate-break-glass-token.py"), "--env-file", str(env_file)],
+        [
+            sys.executable,
+            str(ROOT / "ops/scripts/rotate-break-glass-token.py"),
+            "--env-file",
+            str(env_file),
+            "--token-output-file",
+            str(handoff_file),
+        ],
         text=True,
         capture_output=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.count("Break-glass token") == 1
+    assert "Break-glass token written once" in result.stdout
+    assert handoff_file.read_text(encoding="utf-8").strip()
     lines = env_file.read_text(encoding="utf-8").splitlines()
     break_glass_lines = [line for line in lines if line.startswith("SMART_BAMBOO_BREAK_GLASS_TOKEN=")]
     assert len(break_glass_lines) == 1
@@ -404,6 +414,103 @@ def test_second_review_hardens_tls_promotion_and_environment_lifecycle():
     assert "443" in cloud_runbook
     assert "交互式" in runbook
     assert "does not prove TLS" in runbook
+
+
+def test_third_review_requires_gtid_convergence_tls_key_match_and_safe_handoffs():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    rotate = read_text("ops/scripts/rotate-break-glass-token.py")
+    upgrade = read_text("ops/scripts/upgrade-primary-env.py")
+    standby = read_text("ops/scripts/make-standby-env.sh")
+    runbook = read_text("docs/admin-password-authentication-runbook.md")
+    cloud_runbook = read_text("ops/README.md")
+
+    assert "SHOW REPLICA STATUS" in promote
+    assert "Replica_SQL_Running" in promote
+    assert "Last_SQL_Error" in promote
+    assert "STOP REPLICA IO_THREAD" in promote
+    assert "WAIT_FOR_EXECUTED_GTID_SET" in promote
+    assert "GTID_SUBSET" in promote
+    assert "RESET REPLICA ALL" not in promote
+    assert promote.index("openssl x509 -in") < promote.index("STOP REPLICA IO_THREAD")
+    assert "openssl x509 -in \"${SMART_BAMBOO_TLS_CERT_PATH}\" -pubkey" in promote
+    assert "openssl pkey -in \"${SMART_BAMBOO_TLS_KEY_PATH}\" -pubout" in promote
+    assert "docker.osgeo.org/geoserver:2.25.7" in promote
+    assert "nginx:1.30.4-alpine" in promote
+    assert "--token-output-file is required" in rotate
+    assert rotate.index("write_handoff") < rotate.index("os.replace(temporary, path)")
+    assert "unlink(missing_ok=True)" in rotate
+    assert "valid_break_glass_profile" in upgrade
+    assert upgrade.index("write_handoff") < upgrade.index("os.replace(temporary, path)")
+    assert "rollback_pair" in standby
+    assert "backup_env" in standby
+    assert "TLS_ENABLED=1" in runbook
+    assert "Retrieved_Gtid_Set" in runbook
+    assert "source-side RPO" in runbook
+    assert "CONFIRM_HUMAN_AUTH_ENABLED=1" in cloud_runbook
+    assert "auth0" in cloud_runbook
+
+
+def test_break_glass_rotation_refuses_to_change_env_without_new_handoff_file(tmp_path):
+    env_file = tmp_path / "primary.env"
+    env_file.write_text(
+        "SMART_BAMBOO_BREAK_GLASS_TOKEN=old\n"
+        "REMOTE_SENSING_API_TOKENS='{\"old\":{\"user\":\"break_glass\",\"roles\":[\"admin\"],\"projects\":[\"*\"],\"areas\":[\"*\"]}}'\n",
+        encoding="utf-8",
+    )
+    original = env_file.read_text(encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "ops/scripts/rotate-break-glass-token.py"), "--env-file", str(env_file)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "--token-output-file is required" in result.stderr
+    assert env_file.read_text(encoding="utf-8") == original
+
+
+def test_primary_env_upgrade_replaces_invalid_break_glass_pointer_with_handoff(tmp_path):
+    env_file = tmp_path / "primary.env"
+    handoff_file = tmp_path / "break-glass.token"
+    profiles = {
+        "bad-pointer": {"user": "operator", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
+        "dashboard-token": {"user": "dashboard", "roles": ["viewer"], "projects": ["*"], "areas": ["*"]},
+    }
+    env_file.write_text(
+        "SMART_BAMBOO_BREAK_GLASS_TOKEN=bad-pointer\n"
+        + "REMOTE_SENSING_API_TOKENS='" + json.dumps(profiles, separators=(",", ":")) + "'\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "ops/scripts/upgrade-primary-env.py"),
+            "--env-file",
+            str(env_file),
+            "--release-commit",
+            "b" * 40,
+            "--token-output-file",
+            str(handoff_file),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    updated = env_file.read_text(encoding="utf-8")
+    encoded_profiles = next(line for line in updated.splitlines() if line.startswith("REMOTE_SENSING_API_TOKENS=")).split("=", 1)[1].strip("'")
+    upgraded_profiles = json.loads(encoded_profiles)
+    new_token = next(line for line in updated.splitlines() if line.startswith("SMART_BAMBOO_BREAK_GLASS_TOKEN=")).split("=", 1)[1]
+    assert "bad-pointer" not in upgraded_profiles
+    assert upgraded_profiles[new_token]["user"] == "break_glass"
+    assert upgraded_profiles[new_token]["roles"] == ["admin"]
+    assert upgraded_profiles[new_token]["projects"] == ["*"]
+    assert upgraded_profiles[new_token]["areas"] == ["*"]
+    assert handoff_file.read_text(encoding="utf-8").strip() == new_token
 
 
 def test_primary_env_upgrade_is_idempotent_and_does_not_rotate_database_secrets(tmp_path):

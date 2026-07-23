@@ -17,6 +17,9 @@ set +a
 [[ -n "${SMART_BAMBOO_TLS_CERT_PATH:-}" && -f "${SMART_BAMBOO_TLS_CERT_PATH}" ]] || { echo "ERROR: certificate path is missing or unreadable." >&2; exit 3; }
 [[ -n "${SMART_BAMBOO_TLS_KEY_PATH:-}" && -f "${SMART_BAMBOO_TLS_KEY_PATH}" ]] || { echo "ERROR: private-key path is missing or unreadable." >&2; exit 4; }
 openssl x509 -in "${SMART_BAMBOO_TLS_CERT_PATH}" -noout -checkend 2592000
+cert_public_key="$(openssl x509 -in "${SMART_BAMBOO_TLS_CERT_PATH}" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
+key_public_key="$(openssl pkey -in "${SMART_BAMBOO_TLS_KEY_PATH}" -pubout -outform DER | sha256sum | awk '{print $1}')"
+[[ -n "${cert_public_key}" && "${cert_public_key}" == "${key_public_key}" ]] || { echo "ERROR: TLS certificate and private key do not match." >&2; exit 2; }
 
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${compose_file}" -f "${repo_root}/ops/compose.tls.yml")
 "${compose[@]}" config --quiet

@@ -25,10 +25,13 @@ PRIMARY=(docker compose --project-directory /opt/smart-bamboo \
 
 ```bash
 install -d -m 700 /root/smart-bamboo-token-handoff
+handoff=/root/smart-bamboo-token-handoff/break-glass.token
+test ! -e "${handoff}"
 python3 ops/scripts/upgrade-primary-env.py \
   --env-file /srv/smart-bamboo/config/primary.env \
-  --token-output-file /root/smart-bamboo-token-handoff/break-glass.token
-chmod 600 /root/smart-bamboo-token-handoff/break-glass.token
+  --token-output-file "${handoff}"
+# The handoff file exists only if the upgrade had to repair/create break-glass.
+if test -f "${handoff}"; then chmod 600 "${handoff}"; fi
 ```
 
 ## 0.2 固定审批提交和备份
@@ -113,7 +116,7 @@ openssl s_client -connect "${PUBLIC_FQDN}:443" -servername "${PUBLIC_FQDN}" -ver
 curl --fail --show-error --silent "https://${PUBLIC_FQDN}/api/auth/config"
 ```
 
-`enable-tls.sh` 是 primary only：它检查证书存在、剩余有效期至少 30 天并运行 `docker compose ... config --quiet`；TLS Nginx 把 HTTP 308 重定向至 HTTPS，并固定上游 `X-Forwarded-Proto https`。外部 DNS、证书链和 HTTPS health 未通过时，保持 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`。应用 `/api/health` 只报告应用配置和数据就绪，does not prove TLS；外部 `openssl s_client` 与 HTTPS `curl` 是独立且必经的 TLS gate。
+`enable-tls.sh` 是 primary only：它检查证书存在、证书与私钥公钥匹配、剩余有效期至少 30 天并运行 `docker compose ... config --quiet`；TLS Nginx 把 HTTP 308 重定向至 HTTPS，并固定上游 `X-Forwarded-Proto https`。外部 DNS、证书链和 HTTPS health 未通过时，保持 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0`。应用 `/api/health` 只报告应用配置和数据就绪，does not prove TLS；外部 `openssl s_client` 与 HTTPS `curl` 是独立且必经的 TLS gate。
 
 ## 4. 启用认证、正式 ready 与登录
 
@@ -182,7 +185,7 @@ rm -f /root/fullchain.pem /root/privkey.pem
 
 ## 6. 热备提升和 break-glass 恢复
 
-热备提升前，先在热备核对同一 immutable commit 和同步后的环境值。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令要求显式确认并自动加入 TLS Compose 覆盖；TLS 未同步则拒绝提升。
+热备提升前，先在热备核对同一 immutable commit 和同步后的环境值。脚本在停止复制或解除只读前读取 `SHOW REPLICA STATUS`，要求 SQL 线程运行、`Last_SQL_Error` 为空，并先停止 IO 线程以冻结 `Retrieved_Gtid_Set`，等待并验证该集合全部包含于 `@@GLOBAL.gtid_executed`。超时或状态缺失即拒绝提升；脚本不执行 `RESET REPLICA ALL`，保留复制元数据供取证和重建。该检查只能保证已经接收的 GTID 全部应用，源端在 IO 线程冻结前尚未传输的事务仍须由值班负责人结合源端证据确认 source-side RPO。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，提升命令要求显式确认；仅当 `SMART_BAMBOO_TLS_ENABLED=1` 时才加入 TLS Compose 覆盖并检查证书、私钥、公钥匹配和有效期。
 
 ```bash
 cd /opt/smart-bamboo
@@ -191,9 +194,15 @@ grep -E '^SMART_BAMBOO_(HUMAN_AUTH_ENABLED|TLS_ENABLED|RELEASE_COMMIT)=' \
   /srv/smart-bamboo-dr/config/standby.env
 CONFIRM_PRIMARY_UNAVAILABLE=YES CONFIRM_HUMAN_AUTH_ENABLED=1 \
   bash ops/scripts/promote-standby.sh
-docker compose --project-directory /opt/smart-bamboo \
-  --env-file /srv/smart-bamboo-dr/config/standby.env \
-  -f ops/compose.standby.yml -f ops/compose.tls.yml --profile failover ps
+if grep -qx 'SMART_BAMBOO_TLS_ENABLED=1' /srv/smart-bamboo-dr/config/standby.env; then
+  docker compose --project-directory /opt/smart-bamboo \
+    --env-file /srv/smart-bamboo-dr/config/standby.env \
+    -f ops/compose.standby.yml -f ops/compose.tls.yml --profile failover ps
+else
+  docker compose --project-directory /opt/smart-bamboo \
+    --env-file /srv/smart-bamboo-dr/config/standby.env \
+    -f ops/compose.standby.yml --profile failover ps
+fi
 ```
 
 认证故障回滚时仅将主节点 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 并重建 app；此时使用已保留的 break-glass 服务 token 进入管理面。不得删除或清空 `admin_user_credentials`、`admin_sessions`、`admin_users`、`admin_roles` 或审计记录。
@@ -205,11 +214,12 @@ sed -i 's/^SMART_BAMBOO_HUMAN_AUTH_ENABLED=.*/SMART_BAMBOO_HUMAN_AUTH_ENABLED=0/
 bash ops/scripts/verify-cluster.sh primary --allow-human-auth-pending
 ```
 
-若误删了旧管理员 token，也不得恢复它；在服务器控制台使用仍保留的 break-glass token。若 break-glass token 本身不可用，经双人复核后只在交互式主节点控制台执行下列命令。默认 stdout 仅适用于已确认不被日志采集的人工终端，记录后立即 `clear`；systemd、CI、重定向日志一律使用 `--token-output-file` 的新建 0600 文件。工具会删除当前 `SMART_BAMBOO_BREAK_GLASS_TOKEN` 指向的 token 与所有 `user=break_glass` profiles，再生成一个新 token；随后重建 app 并立刻按第 5 节同步至热备。任何 token 恢复都不能从聊天记录、浏览器存储或旧工单回收。
+若误删了旧管理员 token，也不得恢复它；在服务器控制台使用仍保留的 break-glass token。若 break-glass token 本身不可用，经双人复核后只在交互式主节点控制台执行下列命令。生产环境一律使用不存在的 `--token-output-file` 新建 0600 文件；工具拒绝 stdout 输出任何 secret。工具先安全创建交接文件，再原子更新环境；若环境更新失败会删除本次交接文件。它会删除当前 `SMART_BAMBOO_BREAK_GLASS_TOKEN` 指向的 token 与所有 `user=break_glass` profiles，再生成一个新 token；随后重建 app 并立刻按第 5 节同步至热备。任何 token 恢复都不能从聊天记录、浏览器存储或旧工单回收。
 
 ```bash
 cd /opt/smart-bamboo
 install -d -m 700 /root/smart-bamboo-token-handoff
+test ! -e /root/smart-bamboo-token-handoff/break-glass.token
 python3 ops/scripts/rotate-break-glass-token.py --env-file /srv/smart-bamboo/config/primary.env \
   --token-output-file /root/smart-bamboo-token-handoff/break-glass.token
 chmod 600 /root/smart-bamboo-token-handoff/break-glass.token

@@ -33,6 +33,37 @@ def replace_env(lines: list[str], key: str, value: str, *, quote: bool = False) 
     return lines
 
 
+def write_handoff(token: str, output_file: str | None) -> Path:
+    if output_file is None:
+        raise SystemExit("--token-output-file is required; refusing to print a break-glass secret to stdout")
+    handoff = Path(output_file)
+    descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        handoff.unlink(missing_ok=True)
+        raise
+    return handoff
+
+
+def atomic_replace_env(path: Path, lines: list[str]) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            handle.writelines(lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main() -> int:
     args = parse_args()
     path = Path(args.env_file)
@@ -62,19 +93,13 @@ def main() -> int:
     lines = replace_env(lines, "SMART_BAMBOO_BREAK_GLASS_TOKEN", token)
     lines = replace_env(lines, "REMOTE_SENSING_API_TOKENS", encoded_profiles, quote=True)
 
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        handle.writelines(lines)
-        temporary = Path(handle.name)
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
-    if args.token_output_file:
-        output_path = Path(args.token_output_file)
-        descriptor = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(token + "\n")
-        print(f"Break-glass token written once to {output_path}; transfer it offline and remove the file.")
-    else:
-        print("Break-glass token (interactive console only; clear the screen after recording it offline): " + token)
+    handoff = write_handoff(token, args.token_output_file)
+    try:
+        atomic_replace_env(path, lines)
+    except BaseException:
+        handoff.unlink(missing_ok=True)
+        raise
+    print(f"Break-glass token written once to {handoff}; transfer it offline and remove the file.")
     return 0
 
 

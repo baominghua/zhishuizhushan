@@ -32,13 +32,45 @@ def set_value(lines: list[str], key: str, raw: str, *, quote: bool = False) -> N
     lines.append(rendered)
 
 
-def output_token(token: str, output_file: str | None) -> None:
+def valid_break_glass_profile(profile: object) -> bool:
+    return (
+        isinstance(profile, dict)
+        and profile.get("user") == "break_glass"
+        and "admin" in profile.get("roles", [])
+        and profile.get("projects") == ["*"]
+        and profile.get("areas") == ["*"]
+    )
+
+
+def write_handoff(token: str, output_file: str | None) -> Path:
     if output_file is None:
-        raise SystemExit("a missing break-glass token requires --token-output-file so it is not sent to service logs")
-    target = Path(output_file)
-    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(token + "\n")
+        raise SystemExit("a missing or invalid break-glass token requires --token-output-file so it is not sent to service logs")
+    handoff = Path(output_file)
+    descriptor = os.open(handoff, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        handoff.unlink(missing_ok=True)
+        raise
+    return handoff
+
+
+def atomic_replace_env(path: Path, lines: list[str]) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            handle.writelines(lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -58,18 +90,24 @@ def main() -> int:
     if not encoded:
         raise SystemExit("REMOTE_SENSING_API_TOKENS is required; refusing to create a replacement token set")
     profiles = json.loads(encoded)
+    if not isinstance(profiles, dict):
+        raise SystemExit("REMOTE_SENSING_API_TOKENS must be a JSON object")
     break_glass = existing.get("SMART_BAMBOO_BREAK_GLASS_TOKEN")
-    if not break_glass:
+    handoff: Path | None = None
+    if not break_glass or not valid_break_glass_profile(profiles.get(break_glass)):
+        if break_glass:
+            profiles.pop(break_glass, None)
         break_glass = secrets.token_hex(32)
-        output_token(break_glass, args.token_output_file)
+        handoff = write_handoff(break_glass, args.token_output_file)
         profiles[break_glass] = {"user": "break_glass", "roles": ["admin"], "projects": ["*"], "areas": ["*"]}
         set_value(lines, "SMART_BAMBOO_BREAK_GLASS_TOKEN", break_glass)
         set_value(lines, "REMOTE_SENSING_API_TOKENS", json.dumps(profiles, separators=(",", ":")), quote=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-        handle.writelines(lines)
-        temporary = Path(handle.name)
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
+    try:
+        atomic_replace_env(path, lines)
+    except BaseException:
+        if handoff is not None:
+            handoff.unlink(missing_ok=True)
+        raise
     print("Primary environment upgrade completed without rotating existing database or service credentials.")
     return 0
 

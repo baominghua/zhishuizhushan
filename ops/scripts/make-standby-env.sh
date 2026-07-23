@@ -10,10 +10,38 @@ fi
 mkdir -p "$(dirname "${target}")"
 umask 077
 target_dir="$(dirname "${target}")"
+target_satellite="${target_dir}/satellite-config.local.js"
 tmp_env="$(mktemp "${target_dir}/.standby.env.XXXXXX")"
 tmp_satellite="$(mktemp "${target_dir}/.satellite-config.local.js.XXXXXX")"
-cleanup() { rm -f "${tmp_env}" "${tmp_satellite}"; }
+backup_env=""
+backup_satellite=""
+env_existed=0
+satellite_existed=0
+env_installed=0
+satellite_installed=0
+cleanup() { rm -f "${tmp_env}" "${tmp_satellite}" "${backup_env:-}" "${backup_satellite:-}"; }
 trap cleanup EXIT
+if [[ -e "${target}" ]]; then
+  backup_env="$(mktemp "${target_dir}/.standby.env.backup.XXXXXX")"
+  cp -p "${target}" "${backup_env}"
+  env_existed=1
+fi
+if [[ -e "${target_satellite}" ]]; then
+  backup_satellite="$(mktemp "${target_dir}/.satellite-config.local.js.backup.XXXXXX")"
+  cp -p "${target_satellite}" "${backup_satellite}"
+  satellite_existed=1
+fi
+rollback_pair() {
+  local status=$?
+  set +e
+  if [[ "${satellite_installed}" == "1" ]]; then
+    if [[ "${satellite_existed}" == "1" ]]; then mv -f "${backup_satellite}" "${target_satellite}"; else rm -f "${target_satellite}"; fi
+  fi
+  if [[ "${env_installed}" == "1" ]]; then
+    if [[ "${env_existed}" == "1" ]]; then mv -f "${backup_env}" "${target}"; else rm -f "${target}"; fi
+  fi
+  exit "${status:-1}"
+}
 sed \
   -e 's/@db-primary:3306/@db-replica:3306/g' \
   -e 's#http://36\.140\.138\.117#http://36.137.23.53#g' \
@@ -38,7 +66,12 @@ window.SATELLITE_CONFIG = {
 EOF
 chmod 0600 "${tmp_env}"
 chmod 0640 "${tmp_satellite}"
-mv -f "${tmp_env}" "${target}"
-mv -f "${tmp_satellite}" "${target_dir}/satellite-config.local.js"
+mv -f "${tmp_env}" "${target}" || rollback_pair
+env_installed=1
+mv -f "${tmp_satellite}" "${target_satellite}" || rollback_pair
+satellite_installed=1
+grep -q '^window.SATELLITE_CONFIG' "${target_satellite}" || rollback_pair
+grep -q '^SMART_BAMBOO_RELEASE_COMMIT=' "${target}" || rollback_pair
 trap - EXIT
+cleanup
 echo "Created ${target}."
