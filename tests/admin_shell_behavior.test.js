@@ -92,7 +92,12 @@ function createHarness({ responses, href = "https://zhushan.example/admin-users.
     body: new Element("body"),
     createElement() { return new Element("", documentRef); },
     querySelector(selector) { return elements.get(selector) || null; },
-    querySelectorAll() { return []; },
+    querySelectorAll(selector) {
+      if (selector === "[data-permission], [data-permission-all], [data-permission-any]") {
+        return [documentRef.body];
+      }
+      return [];
+    },
   };
   documentRef.body.dataset = { adminModule: "users", permission: "system.users.view" };
   for (const id of ["apiBase", "statusBadge", "statusText"]) {
@@ -176,6 +181,35 @@ test("session refresh renders effective permissions and blocks then releases for
   assert.equal(harness.elements.get("#currentPassword").value, "");
   assert.equal(harness.elements.get("#newPassword").value, "");
   assert.equal(harness.elements.get("#confirmPassword").value, "");
+});
+
+test("page permission denial does not disable the forced password change dialog", async () => {
+  const harness = createHarness({
+    href: "https://zhushan.example/admin.html",
+    responses: [
+      jsonResponse(200, {
+        authenticated: true,
+        authType: "session",
+        user: "viewer",
+        roles: ["viewer"],
+        permissions: ["forest.blocks.view"],
+        menuModules: [],
+        visibleMenuModules: [],
+        mustChangePassword: true,
+      }),
+    ],
+  });
+  harness.documentRef.body.dataset = { adminModule: "overview", permission: "admin.overview.view" };
+
+  await harness.context.__AdminCommon.refreshSession();
+
+  assert.equal(harness.documentRef.body.classList.contains("permission-page-denied"), true);
+  assert.equal(harness.documentRef.body.classList.contains("password-change-required"), true);
+  assert.equal(harness.documentRef.body.classList.contains("permission-disabled"), false);
+  assert.equal(harness.documentRef.body.getAttribute("aria-disabled"), null);
+  const dialog = harness.documentRef.body.children.find((element) => element.id === "forcedPasswordChangeDialog");
+  assert.equal(dialog.getAttribute("aria-hidden"), "false");
+  assert.equal(harness.elements.get("#currentPassword").disabled, undefined);
 });
 
 test("startup and successful logout remove legacy token keys after the server confirms logout", async () => {

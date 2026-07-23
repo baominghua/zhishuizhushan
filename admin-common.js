@@ -735,6 +735,7 @@ const AdminCommon = (() => {
     const permissions = allowedPermissions ?? currentAllowedPermissions;
     const hasConfiguredPermissions = Array.isArray(permissions);
     document.querySelectorAll("[data-permission], [data-permission-all], [data-permission-any]").forEach((element) => {
+      if (element === document.body) return;
       const requirement = permissionRequirementState(element, permissions || [], hasConfiguredPermissions);
       const allowed = requirement.allowed;
       if ("disabled" in element) {
