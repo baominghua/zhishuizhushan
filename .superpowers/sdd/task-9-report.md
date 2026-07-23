@@ -70,3 +70,7 @@ The second review identified operational safety gaps in the first follow-up. The
 - `bash -n` passed for the operational shell scripts; `py_compile` passed for both token lifecycle scripts; PyYAML parsed all four Compose files (`docker-compose.yml`, primary, standby, and TLS). The deployment contract test suite covers the Compose environment contract.
 - Node `--check` passed for all 28 tracked JavaScript files. All three existing Node behavior files passed (21 assertions total).
 - Docker CLI remains unavailable locally. Actual `docker compose ... config --quiet`, image availability, certificate placement, TLS handshake, and cloud-host promotion remain explicit cloud-host release gates. Browser desktop/mobile screenshots and interactive cloud acceptance remain deferred to the controller.
+
+## Controller Browser Acceptance
+
+Controller acceptance was completed after `d735f08` and passed `19/19`. The controller verified that no legacy token field is exposed; the lockout flow returns four `401` responses followed by `423`; forced password change reaches the admin shell; disabling an account works; a viewer can be created; temporary-password and session-revocation actions work; the viewer receives `403` for both security actions; logout clears the session and redirects; and the 390px mobile viewport has no horizontal overflow. No passwords, tokens, cookies, or other credential values are recorded here. Browser artifacts are stored outside the repository at `D:\Users\MECHREUO\Documents\武夷福森报销助手\.tmp\smart-bamboo-auth-e2e-artifacts`.
