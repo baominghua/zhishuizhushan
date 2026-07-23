@@ -17,13 +17,29 @@ if [[ ! "${REPLICATION_USER}" =~ ^[A-Za-z0-9_]+$ ]] || [[ ! "${REPLICATION_PASSW
   exit 2
 fi
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${repo_root}/ops/compose.standby.yml")
+mysql_exec() {
+  local query="$1"
+  "${compose[@]}" exec -T db-replica sh -ceu '
+    export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+    exec mysql -uroot -e "$1"
+  ' sh "${query}"
+}
 "${compose[@]}" up -d db-replica
-until "${compose[@]}" exec -T db-replica mysqladmin ping -uroot -p"${MYSQL_ROOT_PASSWORD}" --silent; do sleep 2; done
-"${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "STOP REPLICA;" || true
-"${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "RESET REPLICA ALL;"
-"${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "RESET BINARY LOGS AND GTIDS;"
-gzip -dc "${dump_file}" | "${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}"
-"${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
+until "${compose[@]}" exec -T db-replica sh -ceu '
+  export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+  exec mysqladmin ping -uroot --silent
+'; do sleep 2; done
+mysql_exec "STOP REPLICA;" || true
+mysql_exec "RESET REPLICA ALL;"
+mysql_exec "RESET BINARY LOGS AND GTIDS;"
+gzip -dc "${dump_file}" | "${compose[@]}" exec -T db-replica sh -ceu '
+  export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+  exec mysql -uroot
+'
+cat <<SQL | "${compose[@]}" exec -T db-replica sh -ceu '
+export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+exec mysql -uroot
+'
 CHANGE REPLICATION SOURCE TO
   SOURCE_HOST='192.168.0.32',
   SOURCE_PORT=3306,
@@ -34,4 +50,4 @@ CHANGE REPLICATION SOURCE TO
 START REPLICA;
 SQL
 sleep 5
-"${compose[@]}" exec -T db-replica mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "SHOW REPLICA STATUS\G"
+mysql_exec "SHOW REPLICA STATUS\\G"

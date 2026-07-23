@@ -756,6 +756,7 @@ def test_login_endpoint_is_rate_limited_at_both_nginx_edges():
         assert "limit_req_status 429" in nginx
         assert "location = /api/auth/login" in nginx
         assert "limit_req zone=" in nginx
+        assert "client_max_body_size 16k" in nginx
 
 
 def test_standby_replication_health_and_restart_are_fail_closed():
@@ -798,10 +799,15 @@ def test_standby_promotion_requires_provider_fencing_replication_integrity_and_r
     assert "Replica_IO_Running" in promote
     assert "Last_IO_Error" in promote
     assert "Auto_Position" in promote
-    assert 'initial_io_running" == "Yes"' in promote
+    assert '"${initial_io_running}" == "Connecting"' in promote
+    assert '"${initial_io_running}" == "No"' in promote
     assert 'initial_auto_position" == "1"' in promote
     assert "CONFIRM_SOURCE_RPO_ACCEPTED" in promote
+    assert "CONFIRM_SOURCE_RPO_EVIDENCE_SHA256" in promote
+    assert "rpo-evidence" in promote
+    assert "rpo-review" in promote
     assert promote.index("run_fence_adapter") < promote.index('mysql_exec "STOP REPLICA IO_THREAD;"')
+    assert promote.index("write_rpo_evidence") < promote.index("require_source_rpo_acceptance")
     assert promote.index("require_source_rpo_acceptance") < promote.index("ensure_database_promoted")
     assert "移动云" in runbook
     assert "provider-backed" in runbook
@@ -863,3 +869,90 @@ def test_promotion_validates_break_glass_profile_without_exposing_mysql_password
     assert '-p"${mysql_root_password}"' not in promote
     assert "MYSQL_PWD" in promote
     assert "read -r MYSQL_PWD" in promote
+
+
+def test_promotion_binds_auth_environment_to_replicated_runtime_digest():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    make_standby = read_text("ops/scripts/make-standby-env.sh")
+    schema = read_text("server/modules/mysql_schema.py")
+    database = read_text("server/modules/database.py")
+
+    assert "platform_runtime_config" in schema
+    assert "publish_runtime_auth_config" in database
+    assert "auth_config_digest" in make_standby
+    assert "platform_runtime_config" in promote
+    assert "AUTH_CONFIG_DIGEST_VERIFIED" in promote
+
+
+def test_fence_adapter_requires_trusted_parent_chain_and_executes_a_snapshot():
+    promote = read_text("ops/scripts/promote-standby.sh")
+
+    assert "realpath -e" in promote
+    assert "getfacl" in promote
+    assert "fence adapter parent path" in promote
+    assert "fence_adapter_snapshot" in promote
+    assert '"${fence_adapter_snapshot}" --instance-id' in promote
+
+
+def test_disaster_recovery_scripts_never_put_mysql_password_in_process_argv():
+    for path in (
+        "ops/scripts/backup-mysql.sh",
+        "ops/scripts/initialize-replica.sh",
+        "ops/scripts/promote-standby.sh",
+        "ops/scripts/verify-cluster.sh",
+    ):
+        script = read_text(path)
+        assert '-p"${MYSQL_ROOT_PASSWORD}"' not in script
+        assert '-p"${mysql_root_password}"' not in script
+        assert "MYSQL_PWD" in script
+
+
+def test_primary_env_upgrade_rejects_role_names_that_only_contain_admin(tmp_path):
+    env_file = tmp_path / "primary.env"
+    handoff_file = tmp_path / "break-glass.token"
+    invalid_token = "invalid-break-glass"
+    env_file.write_text(
+        "\n".join(
+            [
+                "MYSQL_ROOT_PASSWORD=unchanged-root-password",
+                f"SMART_BAMBOO_BREAK_GLASS_TOKEN={invalid_token}",
+                "REMOTE_SENSING_API_TOKENS='"
+                + json.dumps(
+                    {
+                        invalid_token: {
+                            "user": "break_glass",
+                            "roles": "notadmin",
+                            "projects": ["*"],
+                            "areas": ["*"],
+                        }
+                    },
+                    separators=(",", ":"),
+                )
+                + "'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "ops/scripts/upgrade-primary-env.py"),
+            "--env-file",
+            str(env_file),
+            "--release-commit",
+            "a" * 40,
+            "--token-output-file",
+            str(handoff_file),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert handoff_file.exists()
+    assert f"SMART_BAMBOO_BREAK_GLASS_TOKEN={invalid_token}" not in env_file.read_text(
+        encoding="utf-8"
+    )

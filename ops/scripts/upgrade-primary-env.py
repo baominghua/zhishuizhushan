@@ -33,10 +33,13 @@ def set_value(lines: list[str], key: str, raw: str, *, quote: bool = False) -> N
 
 
 def valid_break_glass_profile(profile: object) -> bool:
+    if not isinstance(profile, dict):
+        return False
+    roles = profile.get("roles")
     return (
-        isinstance(profile, dict)
-        and profile.get("user") == "break_glass"
-        and "admin" in profile.get("roles", [])
+        profile.get("user") == "break_glass"
+        and isinstance(roles, list)
+        and "admin" in roles
         and profile.get("projects") == ["*"]
         and profile.get("areas") == ["*"]
     )

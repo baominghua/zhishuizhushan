@@ -1382,48 +1382,93 @@ def get_user(user_id: str, context: AuthContext = Depends(request_context)) -> A
     return AdminUserOut.model_validate(user)
 
 
+def patched_user(
+    user: dict[str, Any],
+    user_id: str,
+    payload: AdminUserPatch,
+    context: AuthContext,
+) -> dict[str, Any]:
+    changes = payload.model_dump(exclude_unset=True)
+    updated = normalize_user(
+        {
+            **user,
+            **changes,
+            "id": user_id,
+            "username": user.get("username"),
+            "createdAt": user.get("createdAt", now_iso()),
+            "deletedAt": user.get("deletedAt"),
+        }
+    )
+    changed_fields = user_changed_fields(user, updated)
+    return append_user_audit_event(
+        updated,
+        "update",
+        context,
+        before=user,
+        changed_fields=changed_fields,
+    )
+
+
 @router.patch("/users/{user_id}")
 def patch_user(user_id: str, payload: AdminUserPatch, context: AuthContext = Depends(request_context)) -> AdminUserOut:
     require_permission(context, "system.users.update")
-    if use_mysql() or use_postgis():
-        user = find_user(user_id)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        changes = payload.model_dump(exclude_unset=True)
-        updated = normalize_user(
-            {
-                **user,
-                **changes,
-                "id": user_id,
-                "username": user.get("username"),
-                "createdAt": user.get("createdAt", now_iso()),
-                "deletedAt": user.get("deletedAt"),
-            }
-        )
-        changed_fields = user_changed_fields(user, updated)
-        updated = append_user_audit_event(updated, "update", context, before=user, changed_fields=changed_fields)
-        save_users([updated])
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"{MYSQL_SELECT_SQL} WHERE au.id = %s AND au.deleted_at IS NULL FOR UPDATE",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        conn.rollback()
+                        raise HTTPException(status_code=404, detail="User not found")
+                    updated = patched_user(
+                        normalize_postgis_user_row(row),
+                        user_id,
+                        payload,
+                        context,
+                    )
+                    execute_upsert_user_mysql(cur, updated)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return AdminUserOut.model_validate(updated)
-    users = load_all_users()
-    for index, user in enumerate(users):
-        if str(user.get("id")) != str(user_id) or user.get("deletedAt"):
-            continue
-        changes = payload.model_dump(exclude_unset=True)
-        updated = normalize_user(
-            {
-                **user,
-                **changes,
-                "id": user_id,
-                "username": user.get("username"),
-                "createdAt": user.get("createdAt", now_iso()),
-                "deletedAt": user.get("deletedAt"),
-            }
-        )
-        changed_fields = user_changed_fields(user, updated)
-        updated = append_user_audit_event(updated, "update", context, before=user, changed_fields=changed_fields)
-        users[index] = updated
-        save_users(users)
+    if use_postgis():
+        with postgis_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"{POSTGIS_SELECT_SQL} WHERE id = %s AND deleted_at IS NULL FOR UPDATE",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        conn.rollback()
+                        raise HTTPException(status_code=404, detail="User not found")
+                    updated = patched_user(
+                        normalize_postgis_user_row(row),
+                        user_id,
+                        payload,
+                        context,
+                    )
+                    execute_upsert_user_postgis(cur, updated)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
         return AdminUserOut.model_validate(updated)
+    with database.JSON_STORE_LOCK:
+        users = load_json_records(admin_users_json_path())
+        for index, user in enumerate(users):
+            if str(user.get("id")) != str(user_id) or user.get("deletedAt"):
+                continue
+            updated = patched_user(user, user_id, payload, context)
+            users[index] = updated
+            save_json_records(admin_users_json_path(), users)
+            return AdminUserOut.model_validate(updated)
     raise HTTPException(status_code=404, detail="User not found")
 
 

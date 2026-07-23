@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .auth_config import auth_config_digest
 from .mysql_schema import PLATFORM_CORE_MYSQL_TABLES, apply_mysql_schema_upgrades, mysql_platform_schema_statements
 from .settings import get_settings
 
@@ -278,6 +279,24 @@ def save_json_records(path: Path, records: list[dict[str, Any]]) -> None:
         path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def publish_runtime_auth_config(cur: Any) -> None:
+    cur.execute(
+        """
+        INSERT INTO platform_runtime_config (
+            config_key, config_digest, release_commit, updated_at
+        ) VALUES ('authentication', %s, %s, UTC_TIMESTAMP(6))
+        ON DUPLICATE KEY UPDATE
+            config_digest = VALUES(config_digest),
+            release_commit = VALUES(release_commit),
+            updated_at = VALUES(updated_at)
+        """,
+        (
+            auth_config_digest(),
+            os.environ.get("SMART_BAMBOO_RELEASE_COMMIT") or None,
+        ),
+    )
+
+
 def init_platform_schema() -> None:
     get_data_dir()
     if use_mysql():
@@ -286,6 +305,7 @@ def init_platform_schema() -> None:
                 for statement in mysql_platform_schema_statements():
                     cur.execute(statement)
                 apply_mysql_schema_upgrades(cur)
+                publish_runtime_auth_config(cur)
             conn.commit()
         return
     if not use_postgis():

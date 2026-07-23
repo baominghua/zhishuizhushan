@@ -19,15 +19,17 @@ break_glass_verifier="${repo_root}/ops/scripts/verify-break-glass-env.py"
 state_file="/srv/smart-bamboo-dr/config/promotion-state"
 role_override="/srv/smart-bamboo-dr/config/role-override.cnf"
 fence_proof_file="/srv/smart-bamboo-dr/config/fence-proof.json"
+rpo_evidence_file="/srv/smart-bamboo-dr/config/rpo-evidence"
 fence_adapter="${SMART_BAMBOO_FENCE_ADAPTER:-}"
 primary_instance_id="${SMART_BAMBOO_PRIMARY_INSTANCE_ID:-}"
+fence_adapter_snapshot=""
 io_stopped=0
 
 read_env_value() { python3 "${env_reader}" "${env_file}" "$1"; }
 durable_write() { python3 "${durable_writer}" "$1" "$2"; }
 write_state() {
   local phase="$1"
-  case "${phase}" in preflight|draining|commit-intent|database-promoted|services-started|recovery-failed) ;; *)
+  case "${phase}" in preflight|draining|rpo-review|commit-intent|database-promoted|services-started|recovery-failed) ;; *)
     echo "ERROR: invalid promotion state: ${phase}" >&2; return 1 ;; esac
   printf 'phase=%s\nrelease_commit=%s\n' "${phase}" "${release_commit}" | durable_write "${state_file}" 0600
 }
@@ -38,7 +40,7 @@ read_state() {
   mapfile -t commits < <(sed -n 's/^release_commit=//p' "${state_file}")
   [[ "${#phases[@]}" == "1" && "${#commits[@]}" == "1" && "${commits[0]}" == "${release_commit}" ]] || {
     echo "ERROR: promotion state is missing, duplicated, or belongs to another release." >&2; return 1; }
-  case "${phases[0]}" in preflight|draining|commit-intent|database-promoted|services-started|recovery-failed) printf '%s' "${phases[0]}" ;; *)
+  case "${phases[0]}" in preflight|draining|rpo-review|commit-intent|database-promoted|services-started|recovery-failed) printf '%s' "${phases[0]}" ;; *)
     echo "ERROR: unsupported promotion state: ${phases[0]}" >&2; return 1 ;; esac
 }
 
@@ -106,13 +108,34 @@ validate_fence_adapter() {
     echo "ERROR: fence adapter must be an absolute executable regular file, not a symlink." >&2
     return 1
   }
-  local owner mode
-  read -r owner mode < <(stat -c '%u %a' -- "${fence_adapter}")
-  [[ "${owner}" == "0" ]] || { echo "ERROR: fence adapter must be owned by root." >&2; return 1; }
-  (( (8#${mode: -3} & 8#022) == 0 )) || {
-    echo "ERROR: fence adapter must not be group/world writable." >&2
+  command -v getfacl >/dev/null || {
+    echo "ERROR: getfacl is required to validate fence adapter ACLs." >&2
     return 1
   }
+  local resolved current owner mode
+  resolved="$(realpath -e -- "${fence_adapter}")"
+  [[ "${resolved}" == "${fence_adapter}" ]] || {
+    echo "ERROR: fence adapter path must be canonical and contain no symlink component." >&2
+    return 1
+  }
+  current="${fence_adapter}"
+  while :; do
+    read -r owner mode < <(stat -c '%u %a' -- "${current}")
+    [[ "${owner}" == "0" ]] || {
+      echo "ERROR: fence adapter must be owned by root, including every parent path: ${current}" >&2
+      return 1
+    }
+    (( (8#${mode: -3} & 8#022) == 0 )) || {
+      echo "ERROR: fence adapter parent path and file must not be group/world writable: ${current}" >&2
+      return 1
+    }
+    if getfacl -cp -- "${current}" | grep -Eq '^(default:|user:[^:]+:|group:[^:]+:)'; then
+      echo "ERROR: fence adapter parent path and file must not grant named/default ACL access: ${current}" >&2
+      return 1
+    fi
+    [[ "${current}" == "/" ]] && break
+    current="$(dirname -- "${current}")"
+  done
 }
 run_fence_adapter() {
   validate_fence_adapter
@@ -121,11 +144,18 @@ run_fence_adapter() {
     return 1
   }
   local nonce proof verification
+  fence_adapter_snapshot="$(mktemp /root/.smart-bamboo-fence-adapter.XXXXXX)"
+  install -o root -g root -m 0700 -- "${fence_adapter}" "${fence_adapter_snapshot}"
+  sync -f "${fence_adapter_snapshot}"
   nonce="$(openssl rand -hex 32)"
-  proof="$("${fence_adapter}" --instance-id "${primary_instance_id}" --nonce "${nonce}")" || {
+  proof="$("${fence_adapter_snapshot}" --instance-id "${primary_instance_id}" --nonce "${nonce}")" || {
+    rm -f -- "${fence_adapter_snapshot}"
+    fence_adapter_snapshot=""
     echo "ERROR: provider-backed fence adapter failed." >&2
     return 1
   }
+  rm -f -- "${fence_adapter_snapshot}"
+  fence_adapter_snapshot=""
   verification="$(
     printf '%s' "${proof}" |
       python3 "${fence_proof_verifier}" \
@@ -139,11 +169,93 @@ run_fence_adapter() {
   printf '%s\n' "${proof}" | durable_write "${fence_proof_file}" 0600
   echo "FENCE_PROOF_VERIFIED"
 }
-require_source_rpo_acceptance() {
-  [[ "${CONFIRM_SOURCE_RPO_ACCEPTED:-}" == "YES" ]] || {
-    echo "ERROR: set CONFIRM_SOURCE_RPO_ACCEPTED=YES only after reviewing provider and source-side RPO evidence." >&2
+verify_runtime_auth_config() {
+  local local_digest replicated runtime_digest runtime_commit
+  local_digest="$(
+    cd "${repo_root}"
+    python3 -m server.modules.auth_config --env-file "${env_file}"
+  )"
+  replicated="$(
+    mysql_exec \
+      "SELECT CONCAT(config_digest, '|', COALESCE(release_commit, '')) FROM platform_runtime_config WHERE config_key = 'authentication';"
+  )"
+  IFS='|' read -r runtime_digest runtime_commit <<<"${replicated}"
+  [[ "${local_digest}" =~ ^[a-f0-9]{64}$ &&
+     "${runtime_digest}" == "${local_digest}" &&
+     "${runtime_commit}" == "${release_commit}" ]] || {
+    echo "ERROR: standby authentication environment does not match the replicated primary runtime digest/commit." >&2
     return 1
   }
+  echo "AUTH_CONFIG_DIGEST_VERIFIED"
+}
+write_rpo_evidence() {
+  local retrieved_gtid_set="$1"
+  local executed_gtid_set="$2"
+  local io_state="$3"
+  local io_error="$4"
+  local sql_state="$5"
+  local fence_hash io_error_hash
+  fence_hash="$(sha256sum "${fence_proof_file}" | awk '{print $1}')"
+  io_error_hash="$(printf '%s' "${io_error}" | sha256sum | awk '{print $1}')"
+  printf \
+    'release_commit=%s\nprimary_instance_id=%s\nretrieved_gtid_set=%s\nexecuted_gtid_set=%s\nio_state=%s\nio_error_sha256=%s\nsql_state=%s\nfence_proof_sha256=%s\ncaptured_at=%s\n' \
+    "${release_commit}" \
+    "${primary_instance_id}" \
+    "${retrieved_gtid_set}" \
+    "${executed_gtid_set}" \
+    "${io_state}" \
+    "${io_error_hash}" \
+    "${sql_state}" \
+    "${fence_hash}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+    durable_write "${rpo_evidence_file}" 0600
+  sha256sum "${rpo_evidence_file}" | awk '{print $1}'
+}
+evidence_value() {
+  local key="$1"
+  local values
+  mapfile -t values < <(sed -n "s/^${key}=//p" "${rpo_evidence_file}")
+  [[ "${#values[@]}" == "1" ]] || {
+    echo "ERROR: RPO evidence field is missing or duplicated: ${key}" >&2
+    return 1
+  }
+  printf '%s' "${values[0]}"
+}
+require_source_rpo_acceptance() {
+  [[ "${CONFIRM_SOURCE_RPO_ACCEPTED:-}" == "YES" ]] || {
+    echo "ERROR: set CONFIRM_SOURCE_RPO_ACCEPTED=YES only after reviewing the final RPO evidence." >&2
+    return 1
+  }
+  local expected_digest actual_digest status current_retrieved current_executed
+  local evidence_retrieved evidence_executed evidence_commit evidence_instance
+  [[ -f "${rpo_evidence_file}" && ! -L "${rpo_evidence_file}" ]] || {
+    echo "ERROR: final RPO evidence is missing or unsafe." >&2
+    return 1
+  }
+  expected_digest="${CONFIRM_SOURCE_RPO_EVIDENCE_SHA256:-}"
+  actual_digest="$(sha256sum "${rpo_evidence_file}" | awk '{print $1}')"
+  [[ "${expected_digest}" =~ ^[a-f0-9]{64}$ && "${expected_digest}" == "${actual_digest}" ]] || {
+    echo "ERROR: CONFIRM_SOURCE_RPO_EVIDENCE_SHA256 does not match the final RPO evidence." >&2
+    return 1
+  }
+  evidence_commit="$(evidence_value release_commit)"
+  evidence_instance="$(evidence_value primary_instance_id)"
+  evidence_retrieved="$(evidence_value retrieved_gtid_set)"
+  evidence_executed="$(evidence_value executed_gtid_set)"
+  [[ "${evidence_commit}" == "${release_commit}" &&
+     "${evidence_instance}" == "${primary_instance_id}" ]] || {
+    echo "ERROR: RPO evidence belongs to a different release or primary instance." >&2
+    return 1
+  }
+  status="$(replica_status)"
+  current_retrieved="$(status_field Retrieved_Gtid_Set "${status}")"
+  current_executed="$(mysql_exec "SELECT @@GLOBAL.gtid_executed;")"
+  [[ "${current_retrieved}" == "${evidence_retrieved}" &&
+     "${current_executed}" == "${evidence_executed}" ]] || {
+    echo "ERROR: replica GTID state changed after RPO evidence capture." >&2
+    return 1
+  }
+  echo "RPO_EVIDENCE_VERIFIED"
 }
 install_role_override() {
   printf '[mysqld]\nread_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON\n' | durable_write "${role_override}" 0644
@@ -193,8 +305,8 @@ finish_services() {
   echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Provider fencing was verified and source-side RPO was explicitly accepted before opening public port 80/443."
 }
 
-require_source_rpo_acceptance
 run_fence_adapter
+verify_runtime_auth_config
 
 phase="$(read_state)"
 case "${phase}" in
@@ -208,6 +320,13 @@ case "${phase}" in
     finish_services
     ;;
   commit-intent)
+    ensure_database_promoted
+    finish_services
+    ;;
+  rpo-review)
+    require_source_rpo_acceptance
+    write_state commit-intent
+    trap - EXIT
     ensure_database_promoted
     finish_services
     ;;
@@ -226,9 +345,13 @@ case "${phase}" in
     initial_io_error="$(status_field Last_IO_Error "${initial_status}")" || { echo "ERROR: replication Last_IO_Error status is missing or ambiguous." >&2; exit 9; }
     initial_sql_error="$(status_field Last_SQL_Error "${initial_status}")" || { echo "ERROR: replication Last_SQL_Error status is missing or ambiguous." >&2; exit 9; }
     initial_auto_position="$(status_field Auto_Position "${initial_status}")" || { echo "ERROR: replication Auto_Position status is missing or ambiguous." >&2; exit 9; }
-    [[ "$initial_io_running" == "Yes" ]] || { echo "ERROR: replication IO thread must be running before promotion." >&2; exit 9; }
+    [[ "${initial_io_running}" == "Yes" ||
+       "${initial_io_running}" == "Connecting" ||
+       "${initial_io_running}" == "No" ]] || {
+      echo "ERROR: replication IO thread has an unsupported state: ${initial_io_running}" >&2
+      exit 9
+    }
     [[ "${initial_sql_running}" == "Yes" ]] || { echo "ERROR: replication SQL thread is not running." >&2; exit 9; }
-    [[ -z "${initial_io_error}" ]] || { echo "ERROR: replication has Last_IO_Error: ${initial_io_error}" >&2; exit 9; }
     [[ -z "${initial_sql_error}" ]] || { echo "ERROR: replication has Last_SQL_Error: ${initial_sql_error}" >&2; exit 9; }
     [[ "$initial_auto_position" == "1" ]] || { echo "ERROR: replication must use GTID Auto_Position=1 before promotion." >&2; exit 9; }
     mysql_exec "STOP REPLICA IO_THREAD;"
@@ -247,9 +370,36 @@ case "${phase}" in
     [[ "${wait_result}" == "0" ]] || { echo "ERROR: GTID convergence timed out before promotion." >&2; exit 10; }
     subset_result="$(mysql_exec "SELECT GTID_SUBSET('${retrieved_gtid_set}', @@GLOBAL.gtid_executed);")" || { echo "ERROR: GTID convergence verification failed." >&2; exit 10; }
     [[ "${subset_result}" == "1" ]] || { echo "ERROR: Retrieved_Gtid_Set is not fully applied to @@GLOBAL.gtid_executed." >&2; exit 10; }
-    write_state commit-intent
+
+    final_status="$(replica_status)" || { echo "ERROR: SHOW REPLICA STATUS failed after GTID convergence." >&2; exit 10; }
+    final_io_running="$(status_field Replica_IO_Running "${final_status}")" || { echo "ERROR: final replication IO-thread status is missing or ambiguous." >&2; exit 10; }
+    final_io_error="$(status_field Last_IO_Error "${final_status}")" || { echo "ERROR: final replication Last_IO_Error status is missing or ambiguous." >&2; exit 10; }
+    final_sql_running="$(status_field Replica_SQL_Running "${final_status}")" || { echo "ERROR: final replication SQL-thread status is missing or ambiguous." >&2; exit 10; }
+    final_sql_error="$(status_field Last_SQL_Error "${final_status}")" || { echo "ERROR: final replication Last_SQL_Error status is missing or ambiguous." >&2; exit 10; }
+    final_auto_position="$(status_field Auto_Position "${final_status}")" || { echo "ERROR: final replication Auto_Position status is missing or ambiguous." >&2; exit 10; }
+    final_retrieved_gtid_set="$(status_field Retrieved_Gtid_Set "${final_status}")" || { echo "ERROR: final replication Retrieved_Gtid_Set status is missing or ambiguous." >&2; exit 10; }
+    final_executed_gtid_set="$(mysql_exec "SELECT @@GLOBAL.gtid_executed;")" || { echo "ERROR: final executed GTID query failed." >&2; exit 10; }
+
+    [[ "${final_sql_running}" == "Yes" ]] || { echo "ERROR: replication SQL thread stopped after GTID convergence." >&2; exit 10; }
+    [[ -z "${final_sql_error}" ]] || { echo "ERROR: replication has a final Last_SQL_Error: ${final_sql_error}" >&2; exit 10; }
+    [[ "${final_auto_position}" == "1" ]] || { echo "ERROR: final replica status no longer uses GTID Auto_Position=1." >&2; exit 10; }
+    [[ "${final_retrieved_gtid_set}" == "${retrieved_gtid_set}" ]] || { echo "ERROR: Retrieved_Gtid_Set changed after the IO thread was stopped." >&2; exit 10; }
+
+    rpo_evidence_digest="$(
+      write_rpo_evidence \
+        "${final_retrieved_gtid_set}" \
+        "${final_executed_gtid_set}" \
+        "${final_io_running}" \
+        "${final_io_error:-${initial_io_error}}" \
+        "${final_sql_running}"
+    )"
+    [[ "${rpo_evidence_digest}" =~ ^[a-f0-9]{64}$ ]] || { echo "ERROR: final RPO evidence digest is invalid." >&2; exit 10; }
+    write_state rpo-review
     trap - EXIT
-    ensure_database_promoted
-    finish_services
+    io_stopped=0
+    printf 'RPO_EVIDENCE_READY_SHA256=%s\n' "${rpo_evidence_digest}"
+    printf '%s\n' \
+      "Review ${rpo_evidence_file}, then rerun with CONFIRM_SOURCE_RPO_ACCEPTED=YES and CONFIRM_SOURCE_RPO_EVIDENCE_SHA256=${rpo_evidence_digest}."
+    exit 12
     ;;
 esac

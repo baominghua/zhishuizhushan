@@ -9,7 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import admin_users
 from .auth import AuthContext, enforce_human_session_policy
@@ -40,15 +40,15 @@ _USERNAME_LOCKS: dict[str, tuple[threading.RLock, int]] = {}
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
 
     model_config = {"extra": "forbid"}
 
 
 class ChangePasswordRequest(BaseModel):
-    currentPassword: str
-    newPassword: str
+    currentPassword: str = Field(min_length=1, max_length=256)
+    newPassword: str = Field(min_length=1, max_length=256)
 
     model_config = {"extra": "forbid"}
 
@@ -103,14 +103,27 @@ def _save_user_audit(user: dict[str, Any], action: str, client_ip: str | None = 
     )
 
 
+class PasswordVerificationBusy(RuntimeError):
+    pass
+
+
 @contextmanager
-def _username_verification_guard(username: str):
+def _username_verification_guard(username: str, *, blocking: bool = True):
     canonical = admin_users.canonical_username(username)
     with _USERNAME_LOCKS_GUARD:
         current = _USERNAME_LOCKS.get(canonical)
         lock = current[0] if current else threading.RLock()
         _USERNAME_LOCKS[canonical] = (lock, (current[1] if current else 0) + 1)
-    lock.acquire()
+    acquired = lock.acquire(blocking=blocking)
+    if not acquired:
+        with _USERNAME_LOCKS_GUARD:
+            current = _USERNAME_LOCKS.get(canonical)
+            if current is not None and current[0] is lock:
+                if current[1] <= 1:
+                    _USERNAME_LOCKS.pop(canonical, None)
+                else:
+                    _USERNAME_LOCKS[canonical] = (lock, current[1] - 1)
+        raise PasswordVerificationBusy("Password verification capacity is busy")
     try:
         yield
     finally:
@@ -129,9 +142,13 @@ def _verify_password_bounded(
     password_hash: str,
     password: str,
 ) -> bool:
-    with _username_verification_guard(username):
-        with _PASSWORD_VERIFY_SLOTS:
+    with _username_verification_guard(username, blocking=False):
+        if not _PASSWORD_VERIFY_SLOTS.acquire(blocking=False):
+            raise PasswordVerificationBusy("Password verification capacity is busy")
+        try:
             return verify_password(password_hash, password)
+        finally:
+            _PASSWORD_VERIFY_SLOTS.release()
 
 
 def _profile(user: dict[str, Any], credential: dict[str, Any]) -> dict[str, Any]:
@@ -250,69 +267,75 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict[s
 
     client_ip = trusted_client_ip(request)
     username = admin_users.canonical_username(payload.username)
-    with _username_verification_guard(username):
-        user = admin_users.user_by_username(username)
-        if not _is_active_user(user):
-            if user is not None:
-                _save_user_audit(user, "login_failure", client_ip)
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-        credential = credential_for_user(user["id"])
-        if credential is None:
+    user = admin_users.user_by_username(username)
+    if not _is_active_user(user):
+        if user is not None:
             _save_user_audit(user, "login_failure", client_ip)
-            raise HTTPException(status_code=401, detail="Invalid username or password")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    credential = credential_for_user(user["id"])
+    if credential is None:
+        _save_user_audit(user, "login_failure", client_ip)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-        now = utc_now()
-        locked_until = parse_utc(credential["lockedUntil"])
-        if locked_until is not None and locked_until > now:
-            _save_user_audit(user, "login_locked", client_ip)
-            raise HTTPException(status_code=423, detail="Account temporarily locked")
-        if not _verify_password_bounded(
+    now = utc_now()
+    locked_until = parse_utc(credential["lockedUntil"])
+    if locked_until is not None and locked_until > now:
+        _save_user_audit(user, "login_locked", client_ip)
+        raise HTTPException(status_code=423, detail="Account temporarily locked")
+    try:
+        password_matches = _verify_password_bounded(
             username, credential["passwordHash"], payload.password
-        ):
-            try:
-                updated_credential = record_failed_login(
-                    user["id"],
-                    now,
-                    expected_version=credential["credentialVersion"],
-                    expected_password_hash=credential["passwordHash"],
-                )
-            except CredentialConflict as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Credential changed during login",
-                ) from exc
-            _save_user_audit(user, "login_failure", client_ip)
-            updated_locked_until = parse_utc(updated_credential["lockedUntil"])
-            if updated_locked_until is not None and updated_locked_until > now:
-                _save_user_audit(user, "login_locked", client_ip)
-                raise HTTPException(status_code=423, detail="Account temporarily locked")
-            raise HTTPException(status_code=401, detail="Invalid username or password")
-
-        current_user = admin_users.find_user(user["id"])
-        if not _is_active_user(current_user):
-            raise HTTPException(status_code=409, detail="Account changed during login")
-        rehashed_password = (
-            hash_password(payload.password)
-            if needs_rehash(credential["passwordHash"])
-            else None
         )
+    except PasswordVerificationBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Password verification is busy; retry shortly",
+        ) from exc
+    if not password_matches:
         try:
-            raw_token, csrf_token, _session, credential = complete_login(
+            updated_credential = record_failed_login(
                 user["id"],
-                credential["credentialVersion"],
-                credential["passwordHash"],
-                rehashed_password_hash=rehashed_password,
-                now=now,
-                ip_address=client_ip,
-                user_agent=request.headers.get("User-Agent", ""),
-                expires_at=_session_expiry(now, now, settings),
+                now,
+                expected_version=credential["credentialVersion"],
+                expected_password_hash=credential["passwordHash"],
             )
         except CredentialConflict as exc:
             raise HTTPException(
                 status_code=409,
                 detail="Credential changed during login",
             ) from exc
-        user = current_user
+        _save_user_audit(user, "login_failure", client_ip)
+        updated_locked_until = parse_utc(updated_credential["lockedUntil"])
+        if updated_locked_until is not None and updated_locked_until > now:
+            _save_user_audit(user, "login_locked", client_ip)
+            raise HTTPException(status_code=423, detail="Account temporarily locked")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    current_user = admin_users.find_user(user["id"])
+    if not _is_active_user(current_user):
+        raise HTTPException(status_code=409, detail="Account changed during login")
+    rehashed_password = (
+        hash_password(payload.password)
+        if needs_rehash(credential["passwordHash"])
+        else None
+    )
+    try:
+        raw_token, csrf_token, _session, credential = complete_login(
+            user["id"],
+            credential["credentialVersion"],
+            credential["passwordHash"],
+            rehashed_password_hash=rehashed_password,
+            now=now,
+            ip_address=client_ip,
+            user_agent=request.headers.get("User-Agent", ""),
+            expires_at=_session_expiry(now, now, settings),
+        )
+    except CredentialConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Credential changed during login",
+        ) from exc
+    user = current_user
     _save_user_audit(user, "login_success", client_ip)
     _set_session_cookies(response, raw_token, csrf_token)
     return {**_profile(user, credential), "csrfToken": csrf_token}
@@ -355,7 +378,7 @@ def logout(request: Request, response: Response) -> dict[str, bool]:
 def change_password(payload: ChangePasswordRequest, request: Request) -> dict[str, Any]:
     context, stored_session, _raw_token = _require_human_session(request)
     _require_csrf(request, stored_session)
-    if hmac.compare_digest(payload.currentPassword, payload.newPassword):
+    if payload.currentPassword == payload.newPassword:
         raise HTTPException(
             status_code=422,
             detail="New password must be different from the current password",
@@ -364,34 +387,40 @@ def change_password(payload: ChangePasswordRequest, request: Request) -> dict[st
     if errors:
         raise HTTPException(status_code=422, detail={"errors": errors})
 
-    with _username_verification_guard(context.user):
-        credential = credential_for_user(stored_session["userId"])
-        if credential is None:
-            raise HTTPException(status_code=401, detail="Authentication required")
-        if not _verify_password_bounded(
+    credential = credential_for_user(stored_session["userId"])
+    if credential is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        password_matches = _verify_password_bounded(
             context.user,
             credential["passwordHash"],
             payload.currentPassword,
-        ):
-            raise HTTPException(status_code=401, detail="Invalid current password")
-        now = utc_now()
-        issued_at = parse_utc(stored_session["issuedAt"]) or now
-        try:
-            credential = change_password_if_current(
-                stored_session["userId"],
-                stored_session,
-                credential["credentialVersion"],
-                credential["passwordHash"],
-                new_password_hash=hash_password(payload.newPassword),
-                now=now,
-                expires_at=_session_expiry(now, issued_at, get_settings()),
-            )
-        except CredentialConflict as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="Credential changed during password update",
-            ) from exc
-        stored_session["credentialVersion"] = credential["credentialVersion"]
+        )
+    except PasswordVerificationBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Password verification is busy; retry shortly",
+        ) from exc
+    if not password_matches:
+        raise HTTPException(status_code=401, detail="Invalid current password")
+    now = utc_now()
+    issued_at = parse_utc(stored_session["issuedAt"]) or now
+    try:
+        credential = change_password_if_current(
+            stored_session["userId"],
+            stored_session,
+            credential["credentialVersion"],
+            credential["passwordHash"],
+            new_password_hash=hash_password(payload.newPassword),
+            now=now,
+            expires_at=_session_expiry(now, issued_at, get_settings()),
+        )
+    except CredentialConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Credential changed during password update",
+        ) from exc
+    stored_session["credentialVersion"] = credential["credentialVersion"]
     user = admin_users.find_user(credential["userId"])
     if user is not None:
         _save_user_audit(user, "password_change")

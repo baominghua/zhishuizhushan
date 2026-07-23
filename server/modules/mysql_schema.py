@@ -24,6 +24,7 @@ PLATFORM_MYSQL_TABLES = [
     "admin_user_roles",
     "admin_user_credentials",
     "admin_sessions",
+    "platform_runtime_config",
     "import_batches",
     "import_batch_block_links",
     "import_batch_right_links",
@@ -454,6 +455,14 @@ def mysql_schema_statements() -> list[str]:
             KEY idx_admin_sessions_user (admin_user_id),
             KEY idx_admin_sessions_expiry (expires_at, revoked_at),
             CONSTRAINT fk_admin_sessions_user FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS platform_runtime_config (
+            config_key VARCHAR(64) PRIMARY KEY,
+            config_digest CHAR(64) NOT NULL,
+            release_commit CHAR(40),
+            updated_at DATETIME(6) NOT NULL
         ) {table_options}
         """,
         f"""

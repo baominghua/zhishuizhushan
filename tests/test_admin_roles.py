@@ -2887,14 +2887,13 @@ def test_postgis_patch_and_delete_admin_user_use_database_storage(
     monkeypatch.setenv("SMART_BAMBOO_DATABASE_URL", "postgresql://smart-bamboo")
     monkeypatch.setenv("SMART_BAMBOO_STORAGE_BACKEND", "postgis")
     admin_users_module = reload_admin_users_module(reload_platform_modules)
-    select_for_patch = FakeCursor(fetchall_result=[postgis_user_row("user_pg_patch")])
-    update_cursor = FakeCursor()
+    patch_cursor = FakeCursor(fetchone_result=postgis_user_row("user_pg_patch"))
     select_for_delete = FakeCursor(fetchall_result=[postgis_user_row("user_pg_patch")])
     delete_cursor = FakeCursor()
     connect_calls: list[str] = []
     install_fake_psycopg(
         monkeypatch,
-        [select_for_patch, update_cursor, select_for_delete, delete_cursor],
+        [patch_cursor, select_for_delete, delete_cursor],
         connect_calls,
     )
 
@@ -2911,8 +2910,9 @@ def test_postgis_patch_and_delete_admin_user_use_database_storage(
     assert patched.displayName == "Updated PG User"
     assert patched.roles == ["forest_user_role", "map_publisher"]
     assert deleted["ok"] is True
-    assert "FROM admin_users" in select_for_patch.executed[0][0]
-    assert "INSERT INTO admin_users" in update_cursor.executed[0][0]
+    assert "FROM admin_users" in patch_cursor.executed[0][0]
+    assert "FOR UPDATE" in patch_cursor.executed[0][0]
+    assert "INSERT INTO admin_users" in patch_cursor.executed[1][0]
     assert "INSERT INTO admin_users" in delete_cursor.executed[0][0]
 
 

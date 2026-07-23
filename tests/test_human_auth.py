@@ -9,6 +9,7 @@ import pytest
 
 from server.modules import admin_users
 from server.modules import human_auth
+from server.modules.auth import AuthContext
 from server.modules.auth_store import (
     create_session,
     credential_for_user,
@@ -39,10 +40,10 @@ def password_user_client(app_client):
     return app_client, user
 
 
-def login(client):
+def login(client, *, username: str = " field_worker ", password: str = "Bamboo-2026!"):
     return client.post(
         "/api/auth/login",
-        json={"username": " field_worker ", "password": "Bamboo-2026!"},
+        json={"username": username, "password": password},
         headers={"X-Forwarded-Proto": "https"},
     )
 
@@ -279,6 +280,55 @@ def test_login_audit_appends_to_current_user_without_restoring_stale_status_or_r
     assert stored["status"] == "inactive"
     assert stored["roles"] == ["viewer"]
     assert stored["properties"]["auditEvents"][-1]["action"] == "login_failure"
+
+
+def test_concurrent_user_patch_preserves_authentication_audit_events(
+    password_user_client, monkeypatch
+):
+    _client, user = password_user_client
+    entered_patch = threading.Event()
+    release_patch = threading.Event()
+    original_normalize = admin_users.normalize_user
+    errors: list[BaseException] = []
+
+    def paused_normalize(payload):
+        normalized = original_normalize(payload)
+        if payload.get("id") == user["id"] and payload.get("displayName") == "Updated Worker":
+            entered_patch.set()
+            release_patch.wait(timeout=2)
+        return normalized
+
+    monkeypatch.setattr(admin_users, "normalize_user", paused_normalize)
+
+    def run_patch():
+        try:
+            admin_users.patch_user(
+                user["id"],
+                admin_users.AdminUserPatch(displayName="Updated Worker"),
+                AuthContext(user="operator", roles={"admin"}, projects={"*"}, areas={"*"}),
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced by assertion
+            errors.append(exc)
+
+    patch_thread = threading.Thread(target=run_patch)
+    patch_thread.start()
+    assert entered_patch.wait(timeout=1)
+    audit_thread = threading.Thread(
+        target=admin_users.append_auth_audit_event,
+        args=(user["id"], "login_success", user["username"]),
+    )
+    audit_thread.start()
+    time.sleep(0.05)
+    release_patch.set()
+    patch_thread.join(timeout=1)
+    audit_thread.join(timeout=1)
+
+    stored = admin_users.find_user(user["id"])
+    assert errors == []
+    assert stored is not None
+    actions = [event["action"] for event in stored["properties"]["auditEvents"]]
+    assert "update" in actions
+    assert "login_success" in actions
 
 
 def test_session_returns_current_human_profile(password_user_client):
@@ -533,6 +583,49 @@ def test_change_password_rejects_reusing_the_current_password(password_user_clie
     assert "different" in str(response.json()["detail"]).lower()
 
 
+def test_change_password_accepts_non_ascii_passwords(password_user_client):
+    client, user = password_user_client
+    admin_users.set_temporary_password(user, "竹山-Bamboo-2026!")
+    login_response = login(client, password="竹山-Bamboo-2026!")
+
+    response = client.post(
+        "/api/auth/change-password",
+        json={
+            "currentPassword": "竹山-Bamboo-2026!",
+            "newPassword": "智慧-Bamboo-2027!",
+        },
+        headers=csrf_headers(login_response),
+    )
+
+    stored = credential_for_user(user["id"])
+    assert response.status_code == 200
+    assert stored is not None
+    assert verify_password(stored["passwordHash"], "智慧-Bamboo-2027!")
+
+
+def test_login_rejects_oversized_credentials_before_password_verification(
+    password_user_client, monkeypatch
+):
+    client, _user = password_user_client
+    monkeypatch.setattr(
+        human_auth,
+        "verify_password",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not verify")),
+    )
+
+    oversized_username = client.post(
+        "/api/auth/login",
+        json={"username": "u" * 129, "password": "Bamboo-2026!"},
+    )
+    oversized_password = client.post(
+        "/api/auth/login",
+        json={"username": "field_worker", "password": "p" * 257},
+    )
+
+    assert oversized_username.status_code == 422
+    assert oversized_password.status_code == 422
+
+
 def test_concurrent_password_reset_prevents_old_password_login_session(
     password_user_client, monkeypatch
 ):
@@ -592,35 +685,36 @@ def test_concurrent_password_reset_prevents_stale_change_password_overwrite(
     assert not verify_password(stored["passwordHash"], "New-Bamboo-2026!")
 
 
-def test_password_verification_is_serialized_per_username(monkeypatch):
-    active = 0
-    maximum = 0
-    state_lock = threading.Lock()
+def test_password_verification_rejects_same_username_queue_without_blocking_workers(
+    monkeypatch,
+):
+    entered = threading.Event()
+    release = threading.Event()
+    first_result: list[object] = []
 
-    def slow_verify(_password_hash, _password):
-        nonlocal active, maximum
-        with state_lock:
-            active += 1
-            maximum = max(maximum, active)
-        time.sleep(0.03)
-        with state_lock:
-            active -= 1
+    def held_verify(_password_hash, _password):
+        entered.set()
+        release.wait(timeout=2)
         return False
 
-    monkeypatch.setattr(human_auth, "verify_password", slow_verify)
-    threads = [
-        threading.Thread(
-            target=human_auth._verify_password_bounded,
-            args=("field_worker", "hash", "password"),
+    monkeypatch.setattr(human_auth, "verify_password", held_verify)
+    first = threading.Thread(
+        target=lambda: first_result.append(
+            human_auth._verify_password_bounded("field_worker", "hash", "password")
         )
-        for _ in range(6)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    )
+    first.start()
+    assert entered.wait(timeout=1)
 
-    assert maximum == 1
+    started = time.monotonic()
+    with pytest.raises(human_auth.PasswordVerificationBusy):
+        human_auth._verify_password_bounded("field_worker", "hash", "password")
+    elapsed = time.monotonic() - started
+
+    release.set()
+    first.join(timeout=1)
+    assert elapsed < 0.1
+    assert first_result == [False]
 
 
 def test_password_verification_has_a_global_concurrency_bound(monkeypatch):
@@ -648,13 +742,17 @@ def test_password_verification_has_a_global_concurrency_bound(monkeypatch):
             target=human_auth._verify_password_bounded,
             args=(f"user-{index}", "hash", "password"),
         )
-        for index in range(human_auth.PASSWORD_VERIFY_CONCURRENCY + 3)
+        for index in range(human_auth.PASSWORD_VERIFY_CONCURRENCY)
     ]
     for thread in threads:
         thread.start()
     assert reached_bound.wait(timeout=1)
-    time.sleep(0.05)
+    started = time.monotonic()
+    with pytest.raises(human_auth.PasswordVerificationBusy):
+        human_auth._verify_password_bounded("overflow-user", "hash", "password")
+    elapsed = time.monotonic() - started
     assert maximum == human_auth.PASSWORD_VERIFY_CONCURRENCY
+    assert elapsed < 0.1
     release.set()
     for thread in threads:
         thread.join()

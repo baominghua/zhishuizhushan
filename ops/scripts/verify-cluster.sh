@@ -36,6 +36,16 @@ set -a
 source "${env_file}"
 set +a
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${compose_file}")
+mysql_exec() {
+  local query="$1"
+  shift
+  "${compose[@]}" exec -T "${db_service}" sh -ceu '
+    query="$1"
+    shift
+    export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+    exec mysql -uroot "$@" -e "$query"
+  ' sh "${query}" "$@"
+}
 "${compose[@]}" ps
 
 if [[ "${role}" == "primary" ]]; then
@@ -58,14 +68,14 @@ if readiness["status"] != "ready" or readiness["blockingIssues"] or readiness["w
     raise SystemExit("expected ready deployment with no warnings")
 '
   fi
-  "${compose[@]}" exec -T "${db_service}" mysql -Nse "SELECT @@server_id, @@gtid_mode, @@binlog_format;" -uroot -p"${MYSQL_ROOT_PASSWORD}"
+  mysql_exec "SELECT @@server_id, @@gtid_mode, @@binlog_format;" -N -B
   exit 0
 fi
 
-status="$("${compose[@]}" exec -T "${db_service}" mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "SHOW REPLICA STATUS\G")"
+status="$(mysql_exec "SHOW REPLICA STATUS\\G")"
 grep -q "Replica_IO_Running: Yes" <<<"${status}"
 grep -q "Replica_SQL_Running: Yes" <<<"${status}"
-read_only="$("${compose[@]}" exec -T "${db_service}" mysql -Nse "SELECT @@read_only, @@super_read_only;" -uroot -p"${MYSQL_ROOT_PASSWORD}")"
+read_only="$(mysql_exec "SELECT @@read_only, @@super_read_only;" -N -B)"
 [[ "${read_only}" == $'1\t1' ]]
 echo "${status}" | grep -E "Replica_(IO|SQL)_Running|Seconds_Behind_Source|Last_(IO|SQL)_Error"
 echo "super_read_only=${read_only}"

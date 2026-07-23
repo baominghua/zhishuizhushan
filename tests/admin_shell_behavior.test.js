@@ -85,7 +85,7 @@ function storage(initial = {}) {
   };
 }
 
-function createHarness({ responses, href = "https://zhushan.example/admin-users.html?role=operator#ledger", script = source, session = {}, local = {} }) {
+function createHarness({ responses, href = "https://zhushan.example/admin-users.html?role=operator#ledger", script = source, session = {}, local = {}, cookie = "" }) {
   const elements = new Map();
   const documentRef = {
     elements,
@@ -100,6 +100,7 @@ function createHarness({ responses, href = "https://zhushan.example/admin-users.
     },
   };
   documentRef.body.dataset = { adminModule: "users", permission: "system.users.view" };
+  documentRef.cookie = cookie;
   for (const id of ["apiBase", "statusBadge", "statusText"]) {
     const element = new Element(id, documentRef);
     elements.set(`#${id}`, element);
@@ -196,9 +197,10 @@ test("a new tab recovers a CSRF token from the shared browser cookie before enab
   };
   const harness = createHarness({
     session: { smartBambooCsrfToken: "" },
+    cookie: "smart_bamboo_session_csrf=recovered-csrf",
     responses: [
-      jsonResponse(200, { ...profile, csrfToken: "recovered-csrf" }),
       jsonResponse(200, profile),
+      jsonResponse(200, { ...profile, csrfToken: "recovered-csrf" }),
       jsonResponse(200, { ok: true }),
     ],
   });
@@ -210,14 +212,121 @@ test("a new tab recovers a CSRF token from the shared browser cookie before enab
   assert.deepEqual(
     harness.calls.map((call) => call.url),
     [
-      "https://zhushan.example/api/auth/session",
       "https://zhushan.example/api/auth/me",
+      "https://zhushan.example/api/auth/session",
       "https://zhushan.example/api/auth/logout",
     ],
   );
   assert.equal(
     harness.calls[2].options.headers.get("X-CSRF-Token"),
     "recovered-csrf",
+  );
+});
+
+test("session refresh replaces a stale tab CSRF token after another tab logs in", async () => {
+  const profile = {
+    authenticated: true,
+    authType: "session",
+    user: "operator",
+    roles: ["operator"],
+    permissions: ["system.users.view"],
+    menuModules: [],
+    visibleMenuModules: [],
+    mustChangePassword: false,
+  };
+  const harness = createHarness({
+    session: { smartBambooCsrfToken: "stale-csrf" },
+    cookie: "smart_bamboo_session_csrf=current-csrf",
+    responses: [
+      jsonResponse(200, profile),
+      jsonResponse(200, { ...profile, csrfToken: "current-csrf" }),
+    ],
+  });
+
+  await harness.context.__AdminCommon.refreshSession();
+
+  assert.equal(
+    harness.sessionStorage.getItem("smartBambooCsrfToken"),
+    "current-csrf",
+  );
+  assert.deepEqual(
+    harness.calls.map((call) => call.url),
+    [
+      "https://zhushan.example/api/auth/me",
+      "https://zhushan.example/api/auth/session",
+    ],
+  );
+});
+
+test("service-token startup does not require a human session CSRF endpoint", async () => {
+  const profile = {
+    authenticated: true,
+    authType: "service-token",
+    user: "automation",
+    roles: ["admin"],
+    permissions: ["system.users.view"],
+    menuModules: [],
+    visibleMenuModules: [],
+    mustChangePassword: false,
+  };
+  const harness = createHarness({
+    session: { smartBambooCsrfToken: "" },
+    responses: [jsonResponse(200, profile)],
+  });
+
+  await harness.context.__AdminCommon.refreshSession();
+
+  assert.deepEqual(
+    harness.calls.map((call) => call.url),
+    ["https://zhushan.example/api/auth/me"],
+  );
+  assert.equal(harness.location.replacedWith, undefined);
+});
+
+test("a stale CSRF write recovers the current token and retries once", async () => {
+  const profile = {
+    authenticated: true,
+    authType: "session",
+    user: "operator",
+    roles: ["operator"],
+    permissions: ["system.users.update"],
+    menuModules: [],
+    visibleMenuModules: [],
+    mustChangePassword: false,
+  };
+  const harness = createHarness({
+    session: { smartBambooCsrfToken: "stale-csrf" },
+    cookie: "smart_bamboo_session_csrf=current-csrf",
+    responses: [
+      jsonResponse(200, profile),
+      jsonResponse(200, { ...profile, csrfToken: "current-csrf" }),
+      jsonResponse(403, { detail: "CSRF validation failed" }),
+      jsonResponse(200, { ...profile, csrfToken: "new-csrf" }),
+      jsonResponse(200, { ok: true }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+  await common.refreshSession();
+
+  const result = await common.api("/api/admin/users/user-1", {
+    method: "PATCH",
+    body: JSON.stringify({ displayName: "Updated" }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    harness.calls.map((call) => call.url),
+    [
+      "https://zhushan.example/api/auth/me",
+      "https://zhushan.example/api/auth/session",
+      "https://zhushan.example/api/admin/users/user-1",
+      "https://zhushan.example/api/auth/session",
+      "https://zhushan.example/api/admin/users/user-1",
+    ],
+  );
+  assert.equal(
+    harness.calls[4].options.headers.get("X-CSRF-Token"),
+    "new-csrf",
   );
 });
 

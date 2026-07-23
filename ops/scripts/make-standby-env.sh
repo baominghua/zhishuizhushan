@@ -51,6 +51,14 @@ for key in SMART_BAMBOO_RELEASE_COMMIT SMART_BAMBOO_RELEASE_TAG SMART_BAMBOO_HUM
   grep -q "^${key}=" "${source_env}"
   grep -q "^${key}=" "${tmp_env}"
 done
+auth_config_digest="$(
+  cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+  python3 -m server.modules.auth_config --env-file "${tmp_env}"
+)"
+[[ "${auth_config_digest}" =~ ^[a-f0-9]{64}$ ]] || {
+  echo "ERROR: standby authentication configuration digest is invalid." >&2
+  exit 2
+}
 dashboard_token="$(sed -n 's/^SMART_BAMBOO_DASHBOARD_TOKEN=//p' "${source_env}" | tail -n 1)"
 if [[ ! "${dashboard_token}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
   echo "ERROR: source environment has no valid dashboard token." >&2
@@ -75,3 +83,4 @@ grep -q '^SMART_BAMBOO_RELEASE_COMMIT=' "${target}" || rollback_pair
 trap - EXIT
 cleanup
 echo "Created ${target}."
+echo "Authentication config digest: ${auth_config_digest}"

@@ -301,7 +301,24 @@ const AdminCommon = (() => {
     }
     requestOptions.headers = headers;
     const requestGeneration = authBypass ? null : sessionGeneration;
-    return parseResponse(await fetch(`${apiBase()}${path}`, requestOptions), requestGeneration);
+    let response = await fetch(`${apiBase()}${path}`, requestOptions);
+    const canRecoverCsrf =
+      ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+      path !== "/api/auth/login" &&
+      currentProfile?.authType === "session" &&
+      response.status === 403;
+    if (canRecoverCsrf && response.clone) {
+      const rejected = await response.clone().json().catch(() => null);
+      if (rejected?.detail === "CSRF validation failed") {
+        await recoverCsrfToken({ force: true });
+        requestOptions.headers = buildHeaders(requestOptions.headers, method);
+        response = await fetch(`${apiBase()}${path}`, {
+          ...requestOptions,
+          credentials: "include",
+        });
+      }
+    }
+    return parseResponse(response, requestGeneration);
   }
 
   function authApi(path, options = {}) {
@@ -633,17 +650,34 @@ const AdminCommon = (() => {
     if (currentProfile) sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(currentProfile));
   }
 
-  async function recoverCsrfToken() {
-    if (csrfToken()) return;
+  function sharedCsrfCookie() {
+    const cookieName = "smart_bamboo_session_csrf=";
+    return String(document.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(cookieName))
+      ?.slice(cookieName.length) || "";
+  }
+
+  async function recoverCsrfToken({ force = false } = {}) {
+    const cached = csrfToken();
+    const shared = sharedCsrfCookie();
+    if (!force && cached && (!shared || shared === cached)) return cached;
     const session = await authApi("/api/auth/session");
-    if (session?.csrfToken) sessionStorage.setItem(CSRF_TOKEN_KEY, session.csrfToken);
+    if (!session?.csrfToken) throw new Error("Human session CSRF token is unavailable");
+    sessionStorage.setItem(CSRF_TOKEN_KEY, session.csrfToken);
+    return session.csrfToken;
   }
 
   async function refreshSession({ afterPasswordChange = false } = {}) {
     try {
-      await recoverCsrfToken();
       const payload = await authApi("/api/auth/me");
       cacheProfile(payload);
+      if (payload.authType === "session") {
+        await recoverCsrfToken();
+      } else {
+        sessionStorage.removeItem(CSRF_TOKEN_KEY);
+      }
       applyMenuAndPermissions(payload);
       renderEffectivePermissionStatus(payload);
       ensureSessionControl();

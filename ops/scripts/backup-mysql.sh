@@ -13,8 +13,10 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 name="smart-bamboo-${stamp}.sql.gz"
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${repo_root}/ops/compose.primary.yml")
 
-"${compose[@]}" exec -T db-primary mysqldump \
-  -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+"${compose[@]}" exec -T db-primary sh -ceu '
+  export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+  exec mysqldump -uroot "$@"
+' sh \
   --databases "${MYSQL_DATABASE}" \
   --single-transaction --routines --events --triggers \
   --set-gtid-purged=ON --source-data=2 | gzip -9 > "${backup_dir}/${name}"
