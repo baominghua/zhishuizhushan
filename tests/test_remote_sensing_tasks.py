@@ -126,6 +126,121 @@ def test_public_scene_exposes_thumbnail_url(isolated_env):
     )
 
 
+def test_public_scene_never_echoes_service_token_in_human_auth_mode(
+    isolated_env, monkeypatch
+):
+    from starlette.requests import Request
+    import server.modules.settings as settings
+
+    app_module = reload_app_module()
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "1")
+    settings.get_settings.cache_clear()
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/scenes/scene-human",
+            "raw_path": b"/api/scenes/scene-human",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer exposed-token")],
+            "server": ("example.test", 443),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+        }
+    )
+    try:
+        payload = app_module.public_scene({"id": "scene-human"}, request)
+    finally:
+        settings.get_settings.cache_clear()
+
+    assert "exposed-token" not in str(payload)
+    assert "?token=" not in payload["tileUrl"]
+
+
+def test_task_public_never_echoes_service_token_in_human_auth_mode(
+    isolated_env, monkeypatch
+):
+    from starlette.requests import Request
+    import server.modules.settings as settings
+
+    app_module = reload_app_module()
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "1")
+    settings.get_settings.cache_clear()
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/tasks/task-human",
+            "raw_path": b"/api/tasks/task-human",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer exposed-task-token")],
+            "server": ("example.test", 443),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+        }
+    )
+    try:
+        payload = app_module.task_public(
+            {
+                "id": "task-human",
+                "sceneId": "scene-human",
+                "status": "failed",
+            },
+            request,
+        )
+    finally:
+        settings.get_settings.cache_clear()
+
+    assert "exposed-task-token" not in str(payload)
+    assert "?token=" not in payload["sceneUrl"]
+    assert "?token=" not in payload["retryUrl"]
+
+
+def test_task_public_preserves_token_query_in_service_token_mode(
+    isolated_env, monkeypatch
+):
+    from starlette.requests import Request
+    import server.modules.settings as settings
+
+    app_module = reload_app_module()
+    monkeypatch.setenv("REMOTE_SENSING_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("SMART_BAMBOO_HUMAN_AUTH_ENABLED", "0")
+    settings.get_settings.cache_clear()
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/tasks/task-service",
+            "raw_path": b"/api/tasks/task-service",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer service-task-token")],
+            "server": ("example.test", 443),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+        }
+    )
+    try:
+        payload = app_module.task_public(
+            {
+                "id": "task-service",
+                "sceneId": "scene-service",
+                "status": "failed",
+            },
+            request,
+        )
+    finally:
+        settings.get_settings.cache_clear()
+
+    assert payload["sceneUrl"].endswith("?token=service-task-token")
+    assert payload["retryUrl"].endswith("?token=service-task-token")
+
+
 def test_scene_thumbnail_renders_and_uses_file_cache(isolated_env, monkeypatch):
     app_module = reload_app_module()
     cog_path = app_module.COG_DIR / "thumbnail-source.tif"

@@ -57,14 +57,15 @@ const MOBILE_REMOTE_API_BASE =
     : window.location.port === "8010"
       ? window.location.origin
       : `${window.location.protocol}//${window.location.hostname}:8010`);
-const MOBILE_API_TOKEN = String(
-  window.SATELLITE_CONFIG?.apiToken || localStorage.getItem("remoteSensingApiToken") || "",
-).trim();
+const MOBILE_API_TOKEN =
+  window.SATELLITE_CONFIG?.humanLoginEnabled === false
+    ? String(window.SATELLITE_CONFIG?.apiToken || "").trim()
+    : "";
 
 function mobileApiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (MOBILE_API_TOKEN) headers.set("Authorization", `Bearer ${MOBILE_API_TOKEN}`);
-  return fetch(url, { ...options, headers });
+  return fetch(url, { credentials: "include", ...options, headers });
 }
 const MOBILE_FOREST_BLOCK_MAX_FEATURES = 800;
 

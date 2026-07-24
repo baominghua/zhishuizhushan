@@ -10,6 +10,7 @@ node_modules/
 .worktrees/
 .codex-ui-audit/
 .pytest_cache/
+.tmp/
 test-results/
 .server-5177*.log
 server-*.log

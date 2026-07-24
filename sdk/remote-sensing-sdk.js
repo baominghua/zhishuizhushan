@@ -140,6 +140,8 @@
       this.token = options.token || "";
       this.context = options.context || {};
       this.headers = { ...(options.headers || {}) };
+      this.csrfToken = options.csrfToken || "";
+      this.credentials = options.credentials || "include";
     }
 
     setBaseUrl(baseUrl) {
@@ -179,7 +181,13 @@
     async request(path, options = {}) {
       const { params, headers, ...fetchOptions } = options;
       const requestHeaders = { ...this.authHeaders(), ...(headers || {}) };
+      const method = String(fetchOptions.method || "GET").toUpperCase();
+      const csrfToken = typeof this.csrfToken === "function" ? this.csrfToken() : this.csrfToken;
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && csrfToken) {
+        requestHeaders["X-CSRF-Token"] = csrfToken;
+      }
       if (Object.keys(requestHeaders).length) fetchOptions.headers = requestHeaders;
+      fetchOptions.credentials ||= this.credentials;
       const response = await fetch(this.url(path, params), fetchOptions);
       if (!response.ok) {
         let detail = response.statusText;
@@ -743,6 +751,8 @@
           token: options.token,
           context: options.context,
           headers: options.headers,
+          csrfToken: options.csrfToken,
+          credentials: options.credentials,
         });
       this.catalog = options.catalog || null;
       this.layers = options.layers || (this.map ? new LayerManager(this.map, options.layerOptions) : null);

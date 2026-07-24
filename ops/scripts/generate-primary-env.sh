@@ -70,8 +70,8 @@ EOF
 chmod 0600 "${target}"
 cat > "$(dirname "${target}")/satellite-config.local.js" <<EOF
 window.SATELLITE_CONFIG = {
+  humanLoginEnabled: null,
   remoteApiBase: "",
-  apiToken: "${dashboard_token}",
   tiandituProxy: true,
   tiandituProxyBaseUrl: "",
 };

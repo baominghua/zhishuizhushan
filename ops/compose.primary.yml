@@ -19,7 +19,7 @@ services:
       - /srv/smart-bamboo/mysql:/var/lib/mysql
       - ./ops/mysql/primary.cnf:/etc/mysql/conf.d/replication.cnf:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -uroot --silent"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -58,6 +58,7 @@ services:
       SMART_BAMBOO_MYSQL_WRITE_BATCH_SIZE: "${SMART_BAMBOO_MYSQL_WRITE_BATCH_SIZE:-1000}"
       SMART_BAMBOO_IDENTITY_LOOKUP_BATCH_SIZE: "${SMART_BAMBOO_IDENTITY_LOOKUP_BATCH_SIZE:-1000}"
       SMART_BAMBOO_HUMAN_AUTH_ENABLED: "${SMART_BAMBOO_HUMAN_AUTH_ENABLED:-0}"
+      SMART_BAMBOO_DASHBOARD_TOKEN: "${SMART_BAMBOO_DASHBOARD_TOKEN:?Set SMART_BAMBOO_DASHBOARD_TOKEN}"
       SMART_BAMBOO_AUTH_REQUIRE_HTTPS: "${SMART_BAMBOO_AUTH_REQUIRE_HTTPS:-1}"
       SMART_BAMBOO_TRUST_PROXY_HEADERS: "${SMART_BAMBOO_TRUST_PROXY_HEADERS:-1}"
       SMART_BAMBOO_SESSION_COOKIE_SECURE: "${SMART_BAMBOO_SESSION_COOKIE_SECURE:-1}"

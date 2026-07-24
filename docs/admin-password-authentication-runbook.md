@@ -204,11 +204,11 @@ docker compose --project-directory /opt/smart-bamboo \
 
 provider 已完成 fencing 后，复制 IO 线程可能为 `Yes`、`Connecting` 或 `No`，`Last_IO_Error` 也可能记录主节点失联；这不应与数据损坏混为一谈。脚本仍强制要求 `Replica_SQL_Running=Yes`、`Last_SQL_Error` 为空且 `Auto_Position=1`，随后停止 IO 线程、冻结 `Retrieved_Gtid_Set`，等待并验证该集合全部包含于 `@@GLOBAL.gtid_executed`。它不执行 `RESET REPLICA ALL`，会保留复制元数据供取证和重建。
 
-提升改为两阶段。第一阶段只生成 `/srv/smart-bamboo-dr/config/rpo-evidence`，其中绑定最终 Retrieved/Executed GTID、主实例、发布 commit 和 fencing proof 摘要；状态停在 `rpo-review`，数据库继续只读，备用应用不会启动。值班负责人核对源端可能未传输事务并明确接受 source-side RPO 后，第二阶段必须同时提供 `CONFIRM_SOURCE_RPO_ACCEPTED=YES` 和第一阶段输出的 `CONFIRM_SOURCE_RPO_EVIDENCE_SHA256`。脚本会再次取得 provider proof，并确认当前 GTID 与证据完全一致，才写入 `commit-intent`、解除只读并启动服务。
+提升改为两阶段。第一阶段先取得并持久化本次提升的最终 provider fencing proof，再生成 `/srv/smart-bamboo-dr/config/rpo-evidence`，其中绑定最终 Retrieved/Executed GTID、主实例、发布 commit 和该 fencing proof 摘要；状态停在 `rpo-review`，数据库继续只读，备用应用不会启动。值班负责人核对源端可能未传输事务并明确接受 source-side RPO 后，第二阶段必须同时提供 `CONFIRM_SOURCE_RPO_ACCEPTED=YES` 和第一阶段输出的 `CONFIRM_SOURCE_RPO_EVIDENCE_SHA256`。第二阶段不会重新调用 adapter 或覆盖 proof，而是通过 `verify-rpo-acceptance.py` 验证 promotion state、RPO evidence、最终 proof 哈希及当前 GTID 完全一致，才写入 `commit-intent`、解除只读并启动服务。任何一份文件被替换或 GTID 发生变化都会拒绝提升。
 
 脚本还会把热备环境中的令牌、break-glass、密码认证、Cookie/代理和 TLS 启用状态计算为摘要，与主库复制过来的 `platform_runtime_config` 记录及发布 commit 比较。旧环境文件、撤销前令牌或认证开关不一致时一律禁止提升。主热备证书路径本来不同，不参与字面摘要；证书、私钥、公钥匹配和有效期由提升脚本单独校验。若 `SMART_BAMBOO_HUMAN_AUTH_ENABLED=1`，还必须显式设置 `CONFIRM_HUMAN_AUTH_ENABLED=1`，且 TLS 未启用时拒绝提升。
 
-提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，阶段依次为 `preflight`、`draining`、`rpo-review`、`commit-intent`、`database-promoted` 与 `services-started`。`promotion-state`、`rpo-evidence` 与 `role-override.cnf` 均按临时文件写入、flush/fsync、原子 rename、fsync 父目录的顺序持久化。`draining` 失败时脚本 best-effort 恢复 IO；若失败则标记 `recovery-failed`。`commit-intent` 之后只允许 fail-forward：重跑仍需新的 provider proof并核对数据库角色，任何混合读写状态都拒绝执行。
+提升状态保存在受保护的 `/srv/smart-bamboo-dr/config/promotion-state`，阶段依次为 `preflight`、`draining`、`rpo-review`、`commit-intent`、`database-promoted` 与 `services-started`。`promotion-state`、`rpo-evidence` 与 `role-override.cnf` 均按临时文件写入、flush/fsync、原子 rename、fsync 父目录的顺序持久化。`draining` 失败时脚本 best-effort 恢复 IO；若失败则标记 `recovery-failed`。`commit-intent` 之后只允许 fail-forward：重跑必须继续使用 promotion state 已绑定且经过 RPO 接受的最终 provider proof，并核对数据库角色；不会生成新 proof，任何证明摘要变化或混合读写状态都拒绝执行。
 
 ```bash
 cd /opt/smart-bamboo

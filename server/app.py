@@ -35,6 +35,7 @@ from server.modules.admin_roles import (
     safe_download_stem,
 )
 from server.modules.admin_roles import router as admin_roles_router
+from server.modules.admin_roles import effective_permissions_for_context
 from server.modules.admin_users import router as admin_users_router
 from server.modules.auth import (
     AuthContext,
@@ -406,6 +407,7 @@ def request_context(request: Request) -> dict[str, Any]:
         "roles": set(context.roles),
         "projects": set(context.projects),
         "areas": set(context.areas),
+        "principalType": context.principal_type,
         "token": unified_bearer_token(request),
     })
 
@@ -416,6 +418,7 @@ def platform_auth_context(context: dict[str, Any]) -> AuthContext:
         roles=set(context.get("roles") or set()),
         projects=set(context.get("projects") or set()),
         areas=set(context.get("areas") or set()),
+        principal_type=str(context.get("principalType") or "user"),
     )
 
 
@@ -1736,11 +1739,20 @@ def apply_scene_update(
     return updated, event
 
 
+def public_service_token_query(request: Request) -> str:
+    settings = get_settings()
+    token = (
+        unified_bearer_token(request)
+        if settings.auth_required and not settings.human_auth_enabled
+        else ""
+    )
+    return f"?token={urllib.parse.quote(token)}" if token else ""
+
+
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     base_url = str(request.base_url).rstrip("/")
     scene_id = scene["id"]
-    token = unified_bearer_token(request)
-    token_query = f"?token={urllib.parse.quote(token)}" if token else ""
+    token_query = public_service_token_query(request)
     tile_url = f"{base_url}/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
     return {
         **scene,
@@ -2908,8 +2920,7 @@ def task_public(task: dict[str, Any], request: Request | None = None) -> dict[st
     if not request or not task.get("sceneId"):
         return task
     base_url = str(request.base_url).rstrip("/")
-    token = unified_bearer_token(request)
-    token_query = f"?token={urllib.parse.quote(token)}" if token else ""
+    token_query = public_service_token_query(request)
     payload = {
         **task,
         "sceneUrl": f"{base_url}/api/scenes/{task['sceneId']}{token_query}",
@@ -4216,6 +4227,45 @@ def deployment_health_payload() -> dict[str, Any]:
     return payload
 
 
+@app.get("/satellite-config.local.js", include_in_schema=False)
+def public_browser_runtime_config() -> Response:
+    settings = get_settings()
+    service_token_enabled = settings.auth_required and not settings.human_auth_enabled
+    dashboard_token = os.environ.get("SMART_BAMBOO_DASHBOARD_TOKEN", "").strip()
+    dashboard_profile = token_profiles().get(dashboard_token)
+    dashboard_permissions = (
+        set(effective_permissions_for_context(dashboard_profile))
+        if dashboard_profile is not None
+        else set()
+    )
+    if (
+        not service_token_enabled
+        or dashboard_profile is None
+        or dashboard_profile.user != "dashboard"
+        or dashboard_profile.roles != {"viewer"}
+        or not dashboard_permissions
+        or any(not code.endswith(".view") for code in dashboard_permissions)
+    ):
+        dashboard_token = ""
+    token_line = (
+        f"  apiToken: {json.dumps(dashboard_token)},\n" if dashboard_token else ""
+    )
+    body = (
+        "window.SATELLITE_CONFIG = {\n"
+        f"  humanLoginEnabled: {str(settings.human_auth_enabled).lower()},\n"
+        '  remoteApiBase: "",\n'
+        f"{token_line}"
+        "  tiandituProxy: true,\n"
+        '  tiandituProxyBaseUrl: "",\n'
+        "};\n"
+    )
+    return Response(
+        content=body,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
+    )
+
+
 @app.get("/api/health")
 def health() -> Any:
     payload = deployment_health_payload()
@@ -4949,7 +4999,8 @@ def tile_cache_status(request: Request) -> dict[str, Any]:
 
 @app.delete("/api/cache/tiles")
 def delete_tile_cache(request: Request, sceneId: str | None = Query(default=None)) -> dict[str, Any]:
-    request_context(request)
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "imagery.cache.manage")
     return clear_tile_cache(sceneId)
 
 
@@ -4959,7 +5010,8 @@ def prune_tile_cache(
     maxBytes: int = Query(default=0, ge=0),
     maxAgeDays: float = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    request_context(request)
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "imagery.cache.manage")
     result = prune_cache_dir(
         CACHE_DIR,
         max_bytes=maxBytes or TILE_CACHE_MAX_BYTES,
@@ -5007,7 +5059,8 @@ def tianditu_cache_status(request: Request) -> dict[str, Any]:
 
 @app.delete("/api/cache/tianditu")
 def delete_tianditu_cache(request: Request, layer: str | None = Query(default=None)) -> dict[str, Any]:
-    request_context(request)
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "imagery.cache.manage")
     if layer and layer not in TIANDITU_LAYERS:
         raise HTTPException(status_code=400, detail=f"Unsupported Tianditu layer: {layer}")
     return clear_tianditu_cache(layer)
@@ -5019,7 +5072,8 @@ def prune_tianditu_cache(
     maxBytes: int = Query(default=0, ge=0),
     maxAgeDays: float = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    request_context(request)
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "imagery.cache.manage")
     result = prune_cache_dir(
         TIANDITU_CACHE_DIR,
         max_bytes=maxBytes or BASEMAP_CACHE_MAX_BYTES,

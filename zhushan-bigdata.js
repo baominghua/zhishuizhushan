@@ -177,14 +177,15 @@ const LIVE_FOREST_BLOCK_MAX_FEATURES = Number(ZHUSHAN_SDK_CONFIG.liveForestBlock
 const FOREST_VECTOR_TILE_MAX_FEATURES = Number(ZHUSHAN_SDK_CONFIG.forestVectorTileMaxFeatures || 5000);
 const FOREST_VECTOR_TILE_RETRY_MS = 60_000;
 const MAP_ZOOM_PER_SCALE_UNIT = 7.5;
-const ZHUSHAN_API_TOKEN = String(
-  ZHUSHAN_SDK_CONFIG.apiToken || localStorage.getItem("remoteSensingApiToken") || "",
-).trim();
+const ZHUSHAN_API_TOKEN =
+  ZHUSHAN_SDK_CONFIG.humanLoginEnabled === false
+    ? String(ZHUSHAN_SDK_CONFIG.apiToken || "").trim()
+    : "";
 
 function zhushanApiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (ZHUSHAN_API_TOKEN) headers.set("Authorization", `Bearer ${ZHUSHAN_API_TOKEN}`);
-  return fetch(url, { ...options, headers });
+  return fetch(url, { credentials: "include", ...options, headers });
 }
 const SMART_BAMBOO_MAP_STATE_KEY = "smartBambooBigDataMapStateV1";
 const restoredDashboardMapState = readDashboardMapState();

@@ -40,6 +40,9 @@ def password_user_client(app_client):
     return app_client, user
 
 
+pytestmark = pytest.mark.human_auth_enabled
+
+
 def login(client, *, username: str = " field_worker ", password: str = "Bamboo-2026!"):
     return client.post(
         "/api/auth/login",
@@ -624,6 +627,69 @@ def test_login_rejects_oversized_credentials_before_password_verification(
 
     assert oversized_username.status_code == 422
     assert oversized_password.status_code == 422
+
+
+def test_login_rejects_oversized_utf8_password_before_user_lookup(
+    password_user_client, monkeypatch
+):
+    client, _user = password_user_client
+    monkeypatch.setattr(
+        admin_users,
+        "user_by_username",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not read user")),
+    )
+
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "field_worker", "password": "竹" * 200},
+    )
+
+    assert response.status_code == 422
+
+
+def test_change_password_returns_429_when_hash_capacity_is_busy(
+    password_user_client, monkeypatch
+):
+    client, _user = password_user_client
+    login_response = login(client)
+    monkeypatch.setattr(
+        human_auth,
+        "hash_password_bounded",
+        lambda *_args: (_ for _ in ()).throw(
+            human_auth.PasswordOperationBusy("busy")
+        ),
+    )
+
+    response = client.post(
+        "/api/auth/change-password",
+        json={
+            "currentPassword": "Bamboo-2026!",
+            "newPassword": "New-Bamboo-2026!",
+        },
+        headers=csrf_headers(login_response),
+    )
+
+    assert response.status_code == 429
+    assert "busy" in response.json()["detail"].lower()
+
+
+def test_login_rehash_returns_429_when_hash_capacity_is_busy(
+    password_user_client, monkeypatch
+):
+    client, _user = password_user_client
+    monkeypatch.setattr(human_auth, "needs_rehash", lambda *_args: True)
+    monkeypatch.setattr(
+        human_auth,
+        "hash_password_bounded",
+        lambda *_args: (_ for _ in ()).throw(
+            human_auth.PasswordOperationBusy("busy")
+        ),
+    )
+
+    response = login(client)
+
+    assert response.status_code == 429
+    assert client.cookies.get("smart_bamboo_session") is None
 
 
 def test_concurrent_password_reset_prevents_old_password_login_session(

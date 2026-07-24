@@ -109,6 +109,22 @@ function splitInput(value) {
     .filter(Boolean);
 }
 
+function cookieValue(name) {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const part = document.cookie
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(prefix));
+  return part ? decodeURIComponent(part.slice(prefix.length)) : "";
+}
+
+function clearLegacyPersistedAuth() {
+  localStorage.removeItem("remoteSensingAuthToken");
+  localStorage.removeItem("remoteSensingAuthUser");
+  localStorage.removeItem("remoteSensingAuthRoles");
+  localStorage.removeItem("remoteSensingAuthScope");
+}
+
 function applyAuthSettings() {
   const scope = splitInput(els.authScope?.value || "");
   state.client.setAuthToken(els.authToken?.value?.trim() || "");
@@ -118,10 +134,6 @@ function applyAuthSettings() {
     projects: scope[0] ? [scope[0]] : [],
     areas: scope[1] ? [scope[1]] : [],
   });
-  localStorage.setItem("remoteSensingAuthToken", els.authToken?.value?.trim() || "");
-  localStorage.setItem("remoteSensingAuthUser", els.authUser?.value?.trim() || "");
-  localStorage.setItem("remoteSensingAuthRoles", els.authRoles?.value || "");
-  localStorage.setItem("remoteSensingAuthScope", els.authScope?.value || "");
 }
 
 function serverSearchParams() {
@@ -794,10 +806,11 @@ async function init() {
     els.apiBase.value = apiBase;
     els.tiandituTk.value = DEFAULT_TIANDITU_TK || localStorage.getItem("tiandituTk") || "";
     els.tiandituType.value = localStorage.getItem("tiandituType") || DEFAULT_TIANDITU_TYPE;
-    els.authToken.value = localStorage.getItem("remoteSensingAuthToken") || "";
-    els.authUser.value = localStorage.getItem("remoteSensingAuthUser") || "";
-    els.authRoles.value = localStorage.getItem("remoteSensingAuthRoles") || "";
-    els.authScope.value = localStorage.getItem("remoteSensingAuthScope") || "";
+    clearLegacyPersistedAuth();
+    els.authToken.value = "";
+    els.authUser.value = "";
+    els.authRoles.value = "";
+    els.authScope.value = "";
     state.catalog = new SDK.RasterCatalog();
     await state.catalog.open();
     state.map = SDK.createMap({
@@ -810,6 +823,7 @@ async function init() {
       apiBase,
       map: state.map,
       layers: state.layers,
+      csrfToken: () => cookieValue("smart_bamboo_session_csrf"),
     });
     state.remote = state.client.remote;
 

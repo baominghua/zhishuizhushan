@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import json
 import os
 import re
@@ -503,7 +504,7 @@ def test_fifth_review_makes_power_loss_boundaries_durable_and_recovery_role_awar
     recovery = promote[promote.index("draining|recovery-failed)") : promote.index("preflight)")]
     assert 'case "$(database_role)" in' in recovery
     assert "1,1) resume_io_or_fail" in recovery
-    assert "0,0) install_role_override; write_state database-promoted; finish_services" in recovery
+    assert "database became writable before RPO acceptance" in recovery
     assert "START REPLICA IO_THREAD" not in recovery
     database_promoted = promote[promote.index("database-promoted)") : promote.index("commit-intent)")]
     assert "ensure_database_promoted" in database_promoted
@@ -894,9 +895,138 @@ def test_fence_adapter_requires_trusted_parent_chain_and_executes_a_snapshot():
     assert '"${fence_adapter_snapshot}" --instance-id' in promote
 
 
+def test_rpo_acceptance_is_bound_to_the_final_fence_proof_without_refencing_after_acceptance():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    flow = promote[promote.rindex('phase="${promotion_phase}"') :]
+
+    assert "verify-rpo-acceptance.py" in promote
+    assert '--fence-proof "${fence_proof_file}"' in promote
+    assert '--expected-evidence-sha256 "${expected_digest}"' in promote
+    assert 'read_state\nphase="${promotion_phase}"' in promote
+    assert flow.index("run_fence_adapter") < flow.index("require_source_rpo_acceptance")
+    assert flow.count("run_fence_adapter") == 1
+    assert flow.index("require_source_rpo_acceptance") < flow.index("write_state commit-intent")
+
+
+def test_rpo_acceptance_verifier_rejects_replaced_final_fence_proof(tmp_path):
+    verifier = ROOT / "ops/scripts/verify-rpo-acceptance.py"
+    release_commit = "a" * 40
+    instance_id = "ECS-98299861"
+    retrieved = "source-uuid:1-12"
+    executed = "source-uuid:1-12"
+    proof_path = tmp_path / "fence-proof.json"
+    evidence_path = tmp_path / "rpo-evidence"
+    state_path = tmp_path / "promotion-state"
+
+    proof_path.write_text(
+        json.dumps(
+            {
+                "fenced": True,
+                "provider": "mobile-cloud",
+                "instanceId": instance_id,
+                "state": "stopped",
+                "nonce": "final-fence-nonce",
+                "proofId": "provider-request-final",
+            }
+        ),
+        encoding="utf-8",
+    )
+    proof_digest = hashlib.sha256(proof_path.read_bytes()).hexdigest()
+    evidence_path.write_text(
+        "\n".join(
+            [
+                f"release_commit={release_commit}",
+                f"primary_instance_id={instance_id}",
+                f"retrieved_gtid_set={retrieved}",
+                f"executed_gtid_set={executed}",
+                "io_state=No",
+                f"io_error_sha256={'0' * 64}",
+                "sql_state=Yes",
+                f"fence_proof_sha256={proof_digest}",
+                "captured_at=2026-07-24T00:00:00Z",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    evidence_digest = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    state_path.write_text(
+        "\n".join(
+            [
+                "phase=rpo-review",
+                f"release_commit={release_commit}",
+                f"primary_instance_id={instance_id}",
+                f"fence_adapter_sha256={'1' * 64}",
+                f"fence_proof_sha256={proof_digest}",
+                f"rpo_evidence_sha256={evidence_digest}",
+                "accepted_rpo_evidence_sha256=",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    command = [
+        sys.executable,
+        str(verifier),
+        "--state",
+        str(state_path),
+        "--evidence",
+        str(evidence_path),
+        "--fence-proof",
+        str(proof_path),
+        "--release-commit",
+        release_commit,
+        "--primary-instance-id",
+        instance_id,
+        "--expected-evidence-sha256",
+        evidence_digest,
+        "--current-retrieved-gtid-set",
+        retrieved,
+        "--current-executed-gtid-set",
+        executed,
+    ]
+
+    accepted = subprocess.run(command, capture_output=True, text=True, check=False)
+    proof_path.write_text('{"fenced": false}\n', encoding="utf-8")
+    rejected = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert accepted.stdout.strip() == "RPO_EVIDENCE_VERIFIED"
+    assert rejected.returncode != 0
+    assert "final fence proof digest" in rejected.stderr
+
+
+def test_promotion_state_binds_primary_adapter_fence_and_accepted_rpo_identity():
+    promote = read_text("ops/scripts/promote-standby.sh")
+
+    for field in (
+        "primary_instance_id",
+        "fence_adapter_sha256",
+        "fence_proof_sha256",
+        "rpo_evidence_sha256",
+        "accepted_rpo_evidence_sha256",
+    ):
+        assert f"{field}=" in promote
+    assert "promotion state primary instance does not match" in promote
+    assert "promotion state fence adapter does not match" in promote
+    assert "promotion state fence proof does not match" in promote
+    assert "accepted RPO evidence digest is missing or changed" in promote
+
+
+def test_pre_acceptance_recovery_phases_never_resume_from_a_writable_database():
+    promote = read_text("ops/scripts/promote-standby.sh")
+    recovery_flow = promote[
+        promote.index('draining|recovery-failed)') : promote.index("  preflight)")
+    ]
+
+    assert '0,0) install_role_override' not in recovery_flow
+    assert "database became writable before RPO acceptance" in recovery_flow
+
+
 def test_disaster_recovery_scripts_never_put_mysql_password_in_process_argv():
     for path in (
         "ops/scripts/backup-mysql.sh",
+        "ops/scripts/configure-primary-replication.sh",
         "ops/scripts/initialize-replica.sh",
         "ops/scripts/promote-standby.sh",
         "ops/scripts/verify-cluster.sh",
@@ -905,6 +1035,13 @@ def test_disaster_recovery_scripts_never_put_mysql_password_in_process_argv():
         assert '-p"${MYSQL_ROOT_PASSWORD}"' not in script
         assert '-p"${mysql_root_password}"' not in script
         assert "MYSQL_PWD" in script
+
+
+def test_primary_mysql_healthcheck_never_puts_root_password_in_process_argv():
+    compose = read_text("ops/compose.primary.yml")
+
+    assert "-p$$MYSQL_ROOT_PASSWORD" not in compose
+    assert "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping" in compose
 
 
 def test_primary_env_upgrade_rejects_role_names_that_only_contain_admin(tmp_path):

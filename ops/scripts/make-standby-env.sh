@@ -59,15 +59,10 @@ auth_config_digest="$(
   echo "ERROR: standby authentication configuration digest is invalid." >&2
   exit 2
 }
-dashboard_token="$(sed -n 's/^SMART_BAMBOO_DASHBOARD_TOKEN=//p' "${source_env}" | tail -n 1)"
-if [[ ! "${dashboard_token}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
-  echo "ERROR: source environment has no valid dashboard token." >&2
-  exit 2
-fi
 cat > "${tmp_satellite}" <<EOF
 window.SATELLITE_CONFIG = {
+  humanLoginEnabled: null,
   remoteApiBase: "",
-  apiToken: "${dashboard_token}",
   tiandituProxy: true,
   tiandituProxyBaseUrl: "",
 };

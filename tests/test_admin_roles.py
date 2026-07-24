@@ -805,6 +805,63 @@ def test_password_reset_requires_independent_permission_and_revokes_sessions(app
     assert token not in serialized_audit
 
 
+def test_temporary_password_rejects_character_and_utf8_byte_overflow(app_client):
+    user = app_client.post(
+        "/api/admin/users",
+        json=sample_user("password_limit_user"),
+        headers={"X-RS-Roles": "system.users.create"},
+    ).json()
+    headers = {"X-RS-Roles": "system.users.setPassword"}
+
+    character_overflow = app_client.post(
+        f"/api/admin/users/{user['id']}/set-password",
+        json={"temporaryPassword": ("A" * 253) + "a1!X"},
+        headers=headers,
+    )
+    byte_overflow = app_client.post(
+        f"/api/admin/users/{user['id']}/set-password",
+        json={"temporaryPassword": ("竹" * 200) + "Aa1!"},
+        headers=headers,
+    )
+
+    assert character_overflow.status_code == 422
+    assert byte_overflow.status_code == 422
+
+
+def test_temporary_password_returns_429_before_storage_transaction_when_hash_busy(
+    app_client, monkeypatch
+):
+    from server.modules import admin_users
+
+    user = app_client.post(
+        "/api/admin/users",
+        json=sample_user("password_busy_user"),
+        headers={"X-RS-Roles": "system.users.create"},
+    ).json()
+    monkeypatch.setattr(
+        admin_users,
+        "hash_password_bounded",
+        lambda *_args: (_ for _ in ()).throw(
+            admin_users.PasswordOperationBusy("busy")
+        ),
+    )
+    monkeypatch.setattr(
+        admin_users,
+        "json_transaction",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("must not open storage transaction")
+        ),
+    )
+
+    response = app_client.post(
+        f"/api/admin/users/{user['id']}/set-password",
+        json={"temporaryPassword": "Temporary-Bamboo-2026!"},
+        headers={"X-RS-Roles": "system.users.setPassword"},
+    )
+
+    assert response.status_code == 429
+
+
 def test_session_revocation_requires_independent_permission(app_client):
     created = app_client.post(
         "/api/admin/users",
@@ -830,6 +887,63 @@ def test_session_revocation_requires_independent_permission(app_client):
     assert allowed.json() == {"ok": True, "revoked": 2}
     assert session_for_token(first_token, utc_now()) is None
     assert session_for_token(second_token, utc_now()) is None
+
+
+def test_json_security_action_reloads_current_user_in_transaction(app_client):
+    from server.modules import admin_users
+
+    created = app_client.post(
+        "/api/admin/users",
+        json=sample_user("security_refresh_user"),
+        headers={"X-RS-Roles": "admin"},
+    ).json()
+    stale = admin_users.find_user(created["id"])
+    assert stale is not None
+    current = {
+        **stale,
+        "status": "disabled",
+        "roles": ["imagery.scenes.view"],
+        "displayName": "Updated while reset was waiting",
+    }
+    admin_users.save_user(current)
+
+    admin_users.apply_account_security_action(
+        created["id"],
+        AuthContext(user="security_admin", roles={"admin"}, projects=set(), areas=set()),
+    )
+
+    stored = admin_users.find_user(created["id"])
+    assert stored is not None
+    assert stored["status"] == "disabled"
+    assert stored["roles"] == ["imagery.scenes.view"]
+    assert stored["displayName"] == "Updated while reset was waiting"
+    assert stored["properties"]["auditEvents"][-1]["action"] == "revoke_sessions"
+
+
+def test_json_security_action_cannot_resurrect_a_deleted_user(app_client):
+    from fastapi import HTTPException
+    from server.modules import admin_users
+
+    created = app_client.post(
+        "/api/admin/users",
+        json=sample_user("security_deleted_user"),
+        headers={"X-RS-Roles": "admin"},
+    ).json()
+    deleted = admin_users.find_user(created["id"])
+    assert deleted is not None
+    deleted["deletedAt"] = "2026-07-24T00:00:00+00:00"
+    admin_users.save_user(deleted)
+
+    with pytest.raises(HTTPException) as raised:
+        admin_users.apply_account_security_action(
+            created["id"],
+            AuthContext(user="security_admin", roles={"admin"}, projects=set(), areas=set()),
+        )
+
+    assert raised.value.status_code == 404
+    assert next(
+        user for user in admin_users.load_all_users() if user["id"] == created["id"]
+    )["deletedAt"] == "2026-07-24T00:00:00+00:00"
 
 
 @pytest.mark.parametrize("path,payload", [
@@ -925,13 +1039,18 @@ def test_mysql_password_reset_rolls_back_when_audit_fails(monkeypatch):
     original = new_credential(user["id"], hash_password("Original-Bamboo-2026!"))
     monkeypatch.setattr(admin_users, "use_mysql", lambda: True)
     monkeypatch.setattr(admin_users, "mysql_connect", lambda: connection)
+    monkeypatch.setattr(admin_users, "mysql_user_for_update", lambda *_args: user)
     monkeypatch.setattr(admin_users, "mysql_credential_for_user", lambda *_args, **_kwargs: original)
     monkeypatch.setattr(admin_users, "write_mysql_credential", lambda *_args: None)
     monkeypatch.setattr(admin_users, "revoke_user_sessions_mysql", lambda *_args: 1)
     monkeypatch.setattr(admin_users, "append_user_audit_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("audit failed")))
 
     with pytest.raises(RuntimeError, match="audit failed"):
-        admin_users.apply_account_security_action(user, AuthContext(user="admin", roles={"admin"}, projects=set(), areas=set()), temporary_password="Temporary-Bamboo-2026!")
+        admin_users.apply_account_security_action(
+            user["id"],
+            AuthContext(user="admin", roles={"admin"}, projects=set(), areas=set()),
+            temporary_password_hash=hash_password("Temporary-Bamboo-2026!"),
+        )
 
     assert connection.rolled_back is True
     assert connection.committed is False
@@ -2097,6 +2216,7 @@ def test_admin_permission_catalog_matrix_returns_permission_entry_kinds(app_clie
         "action",
         "action",
         "action",
+        "action",
     ]
     assert [entry["code"] for entry in imagery_entries] == [
         "imagery.scenes.view",
@@ -2109,6 +2229,7 @@ def test_admin_permission_catalog_matrix_returns_permission_entry_kinds(app_clie
         "imagery.scenes.quality",
         "imagery.scenes.delivery",
         "imagery.scenes.export",
+        "imagery.cache.manage",
         "imagery.tasks.retry",
         "imagery.tasks.cancel",
         "imagery.tasks.archive",

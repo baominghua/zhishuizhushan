@@ -12,7 +12,7 @@ if [[ ! "${REPLICATION_USER}" =~ ^[A-Za-z0-9_]+$ ]] || [[ ! "${REPLICATION_PASSW
   exit 1
 fi
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${repo_root}/ops/compose.primary.yml")
-"${compose[@]}" exec -T db-primary mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
+MYSQL_PWD="${MYSQL_ROOT_PASSWORD}" "${compose[@]}" exec -T -e MYSQL_PWD db-primary mysql -uroot <<SQL
 CREATE USER IF NOT EXISTS '${REPLICATION_USER}'@'192.168.0.104' IDENTIFIED WITH caching_sha2_password BY '${REPLICATION_PASSWORD}';
 ALTER USER '${REPLICATION_USER}'@'192.168.0.104' IDENTIFIED WITH caching_sha2_password BY '${REPLICATION_PASSWORD}';
 GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '${REPLICATION_USER}'@'192.168.0.104';

@@ -19,6 +19,7 @@ class AuthContext:
     roles: set[str]
     projects: set[str]
     areas: set[str]
+    principal_type: str = "user"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ def parse_token_profile(raw_profile: Any, token: str) -> AuthContext | None:
             roles={"admin"},
             projects={"*"},
             areas={"*"},
+            principal_type="service-token",
         )
     if not isinstance(raw_profile, dict):
         return None
@@ -66,6 +68,7 @@ def parse_token_profile(raw_profile: Any, token: str) -> AuthContext | None:
         roles=split_token_profile_values(raw_profile.get("roles")),
         projects=split_token_profile_values(raw_profile.get("projects")),
         areas=split_token_profile_values(raw_profile.get("areas") or raw_profile.get("areaCodes")),
+        principal_type="service-token",
     )
 
 
@@ -116,6 +119,7 @@ def token_profiles() -> dict[str, AuthContext]:
                 roles={"admin"},
                 projects={"*"},
                 areas={"*"},
+                principal_type="service-token",
             )
         return profiles
 
@@ -132,6 +136,7 @@ def token_profiles() -> dict[str, AuthContext]:
                 roles=split_token_profile_values(parts[1] if len(parts) > 1 else ""),
                 projects=split_token_profile_values(parts[2] if len(parts) > 2 else ""),
                 areas=split_token_profile_values(parts[3] if len(parts) > 3 else ""),
+                principal_type="service-token",
             )
     return profiles
 
@@ -199,7 +204,10 @@ def request_context(request: Request) -> AuthContext:
         request.state.auth_type = "session"
         return human_session.context
 
-    if platform_settings.get_settings().auth_required:
+    settings = platform_settings.get_settings()
+    if settings.human_auth_enabled:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if settings.auth_required:
         token = bearer_token(request)
         profile = token_profiles().get(token)
         if not token or profile is None:
@@ -213,6 +221,7 @@ def request_context(request: Request) -> AuthContext:
         roles=split_header(request.headers.get("X-RS-Roles")),
         projects=split_header(request.headers.get("X-RS-Projects")),
         areas=split_header(request.headers.get("X-RS-Areas")),
+        principal_type="development-header",
     )
 
 
@@ -221,6 +230,8 @@ def has_admin_role(context: AuthContext) -> bool:
 
 
 def role_data_scope_values(context: AuthContext, key: str) -> set[str]:
+    if context.principal_type == "service-token":
+        return set()
     try:
         from .admin_roles import data_scopes_for_roles, role_codes_for_context
     except Exception:
@@ -308,11 +319,15 @@ def auth_config(request: Request) -> dict[str, Any]:
     enforce_human_session_policy(request)
     settings = platform_settings.get_settings()
     return {
-        "required": settings.auth_required,
+        "required": settings.auth_required or settings.human_auth_enabled,
         "scheme": "session-or-bearer",
         "humanLoginEnabled": settings.human_auth_enabled,
         "httpsRequired": settings.auth_require_https,
-        "serviceTokenEnabled": bool(token_profiles()),
+        "serviceTokenEnabled": (
+            settings.auth_required
+            and bool(token_profiles())
+            and not settings.human_auth_enabled
+        ),
     }
 
 

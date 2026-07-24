@@ -42,7 +42,14 @@ from .database import (
     use_postgis,
 )
 from .settings import get_settings
-from .passwords import hash_password, password_errors
+from .passwords import (
+    MAX_PASSWORD_CHARACTERS,
+    PasswordOperationBusy,
+    hash_password,
+    hash_password_bounded,
+    password_errors,
+    validate_password_input,
+)
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin-users"])
@@ -241,7 +248,12 @@ class AdminUserPatch(BaseModel):
 
 
 class TemporaryPasswordIn(BaseModel):
-    temporaryPassword: str = Field(min_length=1)
+    temporaryPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_CHARACTERS)
+
+    @field_validator("temporaryPassword", mode="after")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        return validate_password_input(value)
 
     model_config = {"extra": "forbid"}
 
@@ -1473,21 +1485,27 @@ def patch_user(user_id: str, payload: AdminUserPatch, context: AuthContext = Dep
 
 
 def set_temporary_password(user: dict[str, Any], temporary_password: str) -> None:
-    credential = temporary_password_credential(user, temporary_password, credential_for_user(str(user["id"])))
+    errors = password_errors(temporary_password)
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
+    credential = temporary_password_credential(
+        user,
+        hash_password(temporary_password),
+        credential_for_user(str(user["id"])),
+    )
     save_credential(credential)
 
 
 def temporary_password_credential(
-    user: dict[str, Any], temporary_password: str, credential: dict[str, Any] | None
+    user: dict[str, Any],
+    temporary_password_hash: str,
+    credential: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    errors = password_errors(temporary_password)
-    if errors:
-        raise HTTPException(status_code=422, detail={"errors": errors})
     now = utc_now()
     if credential is None:
-        credential = new_credential(str(user["id"]), hash_password(temporary_password))
+        credential = new_credential(str(user["id"]), temporary_password_hash)
     else:
-        credential["passwordHash"] = hash_password(temporary_password)
+        credential["passwordHash"] = temporary_password_hash
         credential["credentialVersion"] += 1
     credential["passwordChangedAt"] = iso_utc(now)
     credential["mustChangePassword"] = True
@@ -1507,19 +1525,39 @@ def security_audit_fields(include_password: bool) -> list[str]:
     return fields
 
 
+def mysql_user_for_update(cur: Any, user_id: str) -> dict[str, Any] | None:
+    cur.execute(
+        f"{MYSQL_SELECT_SQL} WHERE au.id = %s AND au.deleted_at IS NULL FOR UPDATE",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    return normalize_postgis_user_row(row) if row is not None else None
+
+
 def apply_account_security_action(
-    user: dict[str, Any], context: AuthContext, *, temporary_password: str | None = None
+    user_id: str,
+    context: AuthContext,
+    *,
+    temporary_password_hash: str | None = None,
 ) -> int:
-    include_password = temporary_password is not None
+    include_password = temporary_password_hash is not None
     action = "set_password" if include_password else "revoke_sessions"
     if use_mysql():
         with mysql_connect() as conn:
             try:
                 with conn.cursor() as cur:
+                    user = mysql_user_for_update(cur, user_id)
+                    if user is None:
+                        raise HTTPException(status_code=404, detail="User not found")
                     if include_password:
-                        credential = mysql_credential_for_user(cur, str(user["id"]), lock=True)
-                        write_mysql_credential(cur, temporary_password_credential(user, temporary_password, credential))
-                    revoked = revoke_user_sessions_mysql(cur, str(user["id"]))
+                        credential = mysql_credential_for_user(cur, user_id, lock=True)
+                        write_mysql_credential(
+                            cur,
+                            temporary_password_credential(
+                                user, temporary_password_hash, credential
+                            ),
+                        )
+                    revoked = revoke_user_sessions_mysql(cur, user_id)
                     audited = append_user_audit_event(
                         user, action, context, changed_fields=security_audit_fields(include_password)
                     )
@@ -1529,22 +1567,45 @@ def apply_account_security_action(
             except Exception:
                 conn.rollback()
                 raise
-    if not use_postgis():
-        with json_transaction([admin_users_json_path(), admin_credentials_json_path(), admin_sessions_json_path()]):
-            if include_password:
-                set_temporary_password(user, temporary_password)
-            revoked = revoke_user_sessions(str(user["id"]))
-            audited = append_user_audit_event(
-                user, action, context, changed_fields=security_audit_fields(include_password)
+    if use_postgis():
+        raise HTTPException(
+            status_code=501,
+            detail="Human credential administration requires MySQL or JSON development storage",
+        )
+    with json_transaction([admin_users_json_path(), admin_credentials_json_path(), admin_sessions_json_path()]):
+        users = load_json_records(admin_users_json_path())
+        user_index = next(
+            (
+                index
+                for index, candidate in enumerate(users)
+                if str(candidate.get("id")) == user_id and not candidate.get("deletedAt")
+            ),
+            None,
+        )
+        if user_index is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        user = users[user_index]
+        if include_password:
+            credential = next(
+                (
+                    item
+                    for item in load_json_records(admin_credentials_json_path())
+                    if str(item.get("userId")) == user_id
+                ),
+                None,
             )
-            save_user(audited)
-            return revoked
-    if include_password:
-        set_temporary_password(user, temporary_password)
-    revoked = revoke_user_sessions(str(user["id"]))
-    audited = append_user_audit_event(user, action, context, changed_fields=security_audit_fields(include_password))
-    save_user(audited)
-    return revoked
+            save_credential(
+                temporary_password_credential(
+                    user, temporary_password_hash, credential
+                )
+            )
+        revoked = revoke_user_sessions(user_id)
+        audited = append_user_audit_event(
+            user, action, context, changed_fields=security_audit_fields(include_password)
+        )
+        users[user_index] = audited
+        save_json_records(admin_users_json_path(), users)
+        return revoked
 
 
 @router.post("/users/{user_id}/set-password")
@@ -1556,10 +1617,21 @@ def set_user_password(
     require_permission(context, "system.users.setPassword")
     if use_postgis():
         raise HTTPException(status_code=501, detail="Human credential administration requires MySQL or JSON development storage")
-    user = find_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    apply_account_security_action(user, context, temporary_password=payload.temporaryPassword)
+    errors = password_errors(payload.temporaryPassword)
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
+    try:
+        temporary_password_hash = hash_password_bounded(payload.temporaryPassword)
+    except PasswordOperationBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Password processing is busy; retry shortly",
+        ) from exc
+    apply_account_security_action(
+        user_id,
+        context,
+        temporary_password_hash=temporary_password_hash,
+    )
     return {"ok": True, "mustChangePassword": True}
 
 
@@ -1568,10 +1640,7 @@ def revoke_sessions(user_id: str, context: AuthContext = Depends(request_context
     require_permission(context, "system.users.revokeSessions")
     if use_postgis():
         raise HTTPException(status_code=501, detail="Human credential administration requires MySQL or JSON development storage")
-    user = find_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    revoked = apply_account_security_action(user, context)
+    revoked = apply_account_security_action(user_id, context)
     return {"ok": True, "revoked": revoked}
 
 

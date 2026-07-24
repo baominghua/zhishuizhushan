@@ -59,6 +59,33 @@ def test_application_scripts_and_styles_are_never_served_from_a_stale_browser_ca
         assert response.headers["pragma"] == "no-cache"
 
 
+def test_browser_clients_use_session_cookies_without_persisting_service_tokens():
+    dashboard = read_text("zhushan-bigdata.js")
+    mobile = read_text("zhushan-mobile.js")
+    manager = read_text("satellite-manager.js")
+    sdk = read_text("sdk/remote-sensing-sdk.js")
+
+    assert 'localStorage.getItem("remoteSensingApiToken")' not in dashboard
+    assert 'localStorage.getItem("remoteSensingApiToken")' not in mobile
+    assert 'credentials: "include"' in dashboard
+    assert 'credentials: "include"' in mobile
+
+    for key in (
+        "remoteSensingAuthToken",
+        "remoteSensingAuthUser",
+        "remoteSensingAuthRoles",
+        "remoteSensingAuthScope",
+    ):
+        assert f'localStorage.getItem("{key}")' not in manager
+        assert f'localStorage.setItem("{key}"' not in manager
+        assert f'localStorage.removeItem("{key}")' in manager
+
+    assert 'csrfToken: () => cookieValue("smart_bamboo_session_csrf")' in manager
+    assert 'fetchOptions.credentials ||= this.credentials' in sdk
+    assert 'requestHeaders["X-CSRF-Token"] = csrfToken' in sdk
+    assert "csrfToken: options.csrfToken" in sdk
+
+
 def test_docker_compose_uses_mysql_for_platform_data():
     compose = read_text("docker-compose.yml")
 
@@ -92,6 +119,26 @@ def test_docker_build_context_excludes_local_secrets_and_ui_audit_artifacts():
         "tests/",
     ]:
         assert pattern in dockerignore
+
+
+def test_browser_service_tokens_are_explicitly_disabled_for_human_login_mode():
+    dashboard = read_text("zhushan-bigdata.js")
+    mobile = read_text("zhushan-mobile.js")
+    primary_env = read_text("ops/scripts/generate-primary-env.sh")
+    standby_env = read_text("ops/scripts/make-standby-env.sh")
+    app_source = read_text("server/app.py")
+
+    assert "ZHUSHAN_SDK_CONFIG.humanLoginEnabled === false" in dashboard
+    assert "window.SATELLITE_CONFIG?.humanLoginEnabled === false" in mobile
+    assert 'apiToken: "${dashboard_token}"' not in primary_env
+    assert 'apiToken: "${dashboard_token}"' not in standby_env
+    assert (
+        "service_token_enabled = settings.auth_required and not settings.human_auth_enabled"
+        in app_source
+    )
+    assert "dashboard_profile = token_profiles().get(dashboard_token)" in app_source
+    assert 'dashboard_profile.user != "dashboard"' in app_source
+    assert 'dashboard_profile.roles != {"viewer"}' in app_source
 
 
 def test_production_python_dependencies_exclude_test_only_packages():

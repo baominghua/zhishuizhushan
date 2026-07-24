@@ -9,7 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import admin_users
 from .auth import AuthContext, enforce_human_session_policy
@@ -27,28 +27,47 @@ from .auth_store import (
     touch_session,
     utc_now,
 )
-from .passwords import hash_password, needs_rehash, password_errors, verify_password
+from .passwords import (
+    MAX_PASSWORD_CHARACTERS,
+    PASSWORD_OPERATION_CONCURRENCY,
+    PasswordOperationBusy,
+    hash_password_bounded,
+    needs_rehash,
+    password_errors,
+    run_password_operation_bounded,
+    validate_password_input,
+    verify_password,
+)
 from .settings import PRODUCTION_MODES, get_settings
 
 
 router = APIRouter(prefix="/api/auth", tags=["human-authentication"])
 
-PASSWORD_VERIFY_CONCURRENCY = 4
-_PASSWORD_VERIFY_SLOTS = threading.BoundedSemaphore(PASSWORD_VERIFY_CONCURRENCY)
+PASSWORD_VERIFY_CONCURRENCY = PASSWORD_OPERATION_CONCURRENCY
 _USERNAME_LOCKS_GUARD = threading.Lock()
 _USERNAME_LOCKS: dict[str, tuple[threading.RLock, int]] = {}
 
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=MAX_PASSWORD_CHARACTERS)
+
+    @field_validator("password", mode="after")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        return validate_password_input(value)
 
     model_config = {"extra": "forbid"}
 
 
 class ChangePasswordRequest(BaseModel):
-    currentPassword: str = Field(min_length=1, max_length=256)
-    newPassword: str = Field(min_length=1, max_length=256)
+    currentPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_CHARACTERS)
+    newPassword: str = Field(min_length=1, max_length=MAX_PASSWORD_CHARACTERS)
+
+    @field_validator("currentPassword", "newPassword", mode="after")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        return validate_password_input(value)
 
     model_config = {"extra": "forbid"}
 
@@ -91,6 +110,7 @@ def _context_for_user(user: dict[str, Any]) -> AuthContext:
         roles=set(admin_users.roles_for_user(username)),
         projects=set(scopes.get("projects") or []),
         areas=set(scopes.get("areas") or []),
+        principal_type="human-session",
     )
 
 
@@ -103,8 +123,7 @@ def _save_user_audit(user: dict[str, Any], action: str, client_ip: str | None = 
     )
 
 
-class PasswordVerificationBusy(RuntimeError):
-    pass
+PasswordVerificationBusy = PasswordOperationBusy
 
 
 @contextmanager
@@ -143,12 +162,17 @@ def _verify_password_bounded(
     password: str,
 ) -> bool:
     with _username_verification_guard(username, blocking=False):
-        if not _PASSWORD_VERIFY_SLOTS.acquire(blocking=False):
-            raise PasswordVerificationBusy("Password verification capacity is busy")
-        try:
-            return verify_password(password_hash, password)
-        finally:
-            _PASSWORD_VERIFY_SLOTS.release()
+        return run_password_operation_bounded(verify_password, password_hash, password)
+
+
+def _hash_password_for_request(password: str) -> str:
+    try:
+        return hash_password_bounded(password)
+    except PasswordOperationBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Password processing is busy; retry shortly",
+        ) from exc
 
 
 def _profile(user: dict[str, Any], credential: dict[str, Any]) -> dict[str, Any]:
@@ -315,7 +339,7 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict[s
     if not _is_active_user(current_user):
         raise HTTPException(status_code=409, detail="Account changed during login")
     rehashed_password = (
-        hash_password(payload.password)
+        _hash_password_for_request(payload.password)
         if needs_rehash(credential["passwordHash"])
         else None
     )
@@ -403,6 +427,7 @@ def change_password(payload: ChangePasswordRequest, request: Request) -> dict[st
         ) from exc
     if not password_matches:
         raise HTTPException(status_code=401, detail="Invalid current password")
+    new_password_hash = _hash_password_for_request(payload.newPassword)
     now = utc_now()
     issued_at = parse_utc(stored_session["issuedAt"]) or now
     try:
@@ -411,7 +436,7 @@ def change_password(payload: ChangePasswordRequest, request: Request) -> dict[st
             stored_session,
             credential["credentialVersion"],
             credential["passwordHash"],
-            new_password_hash=hash_password(payload.newPassword),
+            new_password_hash=new_password_hash,
             now=now,
             expires_at=_session_expiry(now, issued_at, get_settings()),
         )

@@ -354,6 +354,12 @@ PERMISSION_API_SCOPES = {
         "/api/scenes/{scene_id}/delivery-receipt.json",
         "/api/scenes/{scene_id}/publication-receipt.json",
     ],
+    "imagery.cache.manage": [
+        "/api/cache/tiles",
+        "/api/cache/tiles/prune",
+        "/api/cache/tianditu",
+        "/api/cache/tianditu/prune",
+    ],
     "imagery.tasks.retry": ["/api/tasks/{task_id}/retry"],
     "imagery.tasks.cancel": ["/api/tasks/{task_id}/cancel"],
     "imagery.tasks.archive": ["/api/tasks/{task_id}/archive"],
@@ -524,6 +530,7 @@ EXTRA_PERMISSIONS = [
     {"code": "imagery.scenes.quality", "label": "影像质检处理", "module": "imagery"},
     {"code": "imagery.scenes.delivery", "label": "影像交付确认", "module": "imagery"},
     {"code": "imagery.scenes.export", "label": "影像交付材料导出", "module": "imagery"},
+    {"code": "imagery.cache.manage", "label": "影像瓦片缓存维护", "module": "imagery"},
     {"code": "imagery.tasks.retry", "label": "影像任务重试", "module": "imagery"},
     {"code": "imagery.tasks.cancel", "label": "影像任务取消", "module": "imagery"},
     {"code": "imagery.tasks.archive", "label": "影像任务归档", "module": "imagery"},
@@ -620,6 +627,7 @@ MANAGE_PERMISSION_IMPLICATIONS = {
         "imagery.scenes.quality",
         "imagery.scenes.delivery",
         "imagery.scenes.export",
+        "imagery.cache.manage",
         "imagery.tasks.retry",
         "imagery.tasks.cancel",
         "imagery.tasks.archive",
@@ -1818,6 +1826,8 @@ def permission_satisfied_by(permission_set: set[str], permission: str) -> bool:
 
 def role_codes_for_context(context: AuthContext) -> list[str]:
     roles = sorted(str(role) for role in context.roles if str(role).strip())
+    if context.principal_type == "service-token":
+        return roles
     try:
         from .admin_users import roles_for_user
 
@@ -1827,7 +1837,41 @@ def role_codes_for_context(context: AuthContext) -> list[str]:
     return roles
 
 
+def immutable_service_token_permissions(context: AuthContext) -> list[str] | None:
+    if context.principal_type != "service-token":
+        return None
+    if has_admin_role(context):
+        return [item["code"] for item in permission_catalog()]
+
+    known_permissions = {item["code"] for item in permission_catalog()}
+    permissions: list[str] = []
+    if "viewer" in context.roles:
+        dashboard_view_permissions = {
+            "forest.blocks.view",
+            "imagery.scenes.view",
+            "imports.forestBlocks.view",
+            "map.layers.view",
+        }
+        union_ordered(
+            permissions,
+            sorted(
+                code
+                for code in known_permissions
+                if code in dashboard_view_permissions
+                or (code.startswith("business.") and code.endswith(".view"))
+            ),
+        )
+    union_ordered(
+        permissions,
+        sorted(str(role) for role in context.roles if str(role) in known_permissions),
+    )
+    return expand_permission_codes(permissions)
+
+
 def effective_permissions_for_context(context: AuthContext) -> list[str]:
+    service_permissions = immutable_service_token_permissions(context)
+    if service_permissions is not None:
+        return service_permissions
     if has_admin_role(context):
         return [item["code"] for item in permission_catalog()]
     role_codes = role_codes_for_context(context)
@@ -1839,6 +1883,16 @@ def effective_permissions_for_context(context: AuthContext) -> list[str]:
 
 
 def effective_menu_modules_for_context(context: AuthContext) -> list[str]:
+    service_permissions = immutable_service_token_permissions(context)
+    if service_permissions is not None:
+        permission_set = set(service_permissions)
+        return [
+            module["key"]
+            for module in ADMIN_MENU_MODULES
+            if permission_satisfied_by(
+                permission_set, str(module.get("permission") or "")
+            )
+        ]
     if has_admin_role(context):
         return [module["key"] for module in ADMIN_MENU_MODULES]
     role_codes = role_codes_for_context(context)
@@ -1865,6 +1919,13 @@ def effective_menu_modules_for_context(context: AuthContext) -> list[str]:
 
 
 def effective_data_scopes_for_context(context: AuthContext) -> dict[str, list[str]]:
+    if context.principal_type == "service-token":
+        scopes: dict[str, list[str]] = {}
+        if context.areas:
+            scopes["areas"] = sorted(context.areas)
+        if context.projects:
+            scopes["projects"] = sorted(context.projects)
+        return scopes
     scopes = data_scopes_for_roles(role_codes_for_context(context))
     try:
         from .admin_users import data_scopes_for_user
@@ -1888,6 +1949,9 @@ def effective_data_scopes_for_context(context: AuthContext) -> dict[str, list[st
 
 
 def has_permission(context: AuthContext, permission: str) -> bool:
+    service_permissions = immutable_service_token_permissions(context)
+    if service_permissions is not None:
+        return permission_satisfied_by(set(service_permissions), permission)
     if has_admin_role(context):
         return True
     role_codes = role_codes_for_context(context)

@@ -15,6 +15,7 @@ env_file="${1:-/srv/smart-bamboo-dr/config/standby.env}"
 env_reader="${repo_root}/ops/scripts/read-protected-env.py"
 durable_writer="${repo_root}/ops/scripts/durable-atomic-write.py"
 fence_proof_verifier="${repo_root}/ops/scripts/verify-fence-proof.py"
+rpo_acceptance_verifier="${repo_root}/ops/scripts/verify-rpo-acceptance.py"
 break_glass_verifier="${repo_root}/ops/scripts/verify-break-glass-env.py"
 state_file="/srv/smart-bamboo-dr/config/promotion-state"
 role_override="/srv/smart-bamboo-dr/config/role-override.cnf"
@@ -23,25 +24,126 @@ rpo_evidence_file="/srv/smart-bamboo-dr/config/rpo-evidence"
 fence_adapter="${SMART_BAMBOO_FENCE_ADAPTER:-}"
 primary_instance_id="${SMART_BAMBOO_PRIMARY_INSTANCE_ID:-}"
 fence_adapter_snapshot=""
+fence_adapter_digest=""
+current_fence_proof_digest=""
+state_rpo_evidence_digest=""
+state_accepted_rpo_evidence_digest=""
+promotion_phase="preflight"
 io_stopped=0
 
 read_env_value() { python3 "${env_reader}" "${env_file}" "$1"; }
 durable_write() { python3 "${durable_writer}" "$1" "$2"; }
+state_value() {
+  local key="$1"
+  local values
+  mapfile -t values < <(sed -n "s/^${key}=//p" "${state_file}")
+  [[ "${#values[@]}" == "1" ]] || {
+    echo "ERROR: promotion state field is missing or duplicated: ${key}" >&2
+    return 1
+  }
+  printf '%s' "${values[0]}"
+}
 write_state() {
   local phase="$1"
   case "${phase}" in preflight|draining|rpo-review|commit-intent|database-promoted|services-started|recovery-failed) ;; *)
     echo "ERROR: invalid promotion state: ${phase}" >&2; return 1 ;; esac
-  printf 'phase=%s\nrelease_commit=%s\n' "${phase}" "${release_commit}" | durable_write "${state_file}" 0600
+  [[ -n "${primary_instance_id}" &&
+     "${fence_adapter_digest}" =~ ^[a-f0-9]{64}$ &&
+     "${current_fence_proof_digest}" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "ERROR: promotion identity is incomplete; refusing to persist state." >&2
+    return 1
+  }
+  printf \
+    'phase=%s\nrelease_commit=%s\nprimary_instance_id=%s\nfence_adapter_sha256=%s\nfence_proof_sha256=%s\nrpo_evidence_sha256=%s\naccepted_rpo_evidence_sha256=%s\n' \
+    "${phase}" \
+    "${release_commit}" \
+    "${primary_instance_id}" \
+    "${fence_adapter_digest}" \
+    "${current_fence_proof_digest}" \
+    "${state_rpo_evidence_digest}" \
+    "${state_accepted_rpo_evidence_digest}" |
+    durable_write "${state_file}" 0600
 }
 read_state() {
-  local phases commits
-  [[ -e "${state_file}" ]] || { printf 'preflight'; return 0; }
-  mapfile -t phases < <(sed -n 's/^phase=//p' "${state_file}")
-  mapfile -t commits < <(sed -n 's/^release_commit=//p' "${state_file}")
-  [[ "${#phases[@]}" == "1" && "${#commits[@]}" == "1" && "${commits[0]}" == "${release_commit}" ]] || {
-    echo "ERROR: promotion state is missing, duplicated, or belongs to another release." >&2; return 1; }
-  case "${phases[0]}" in preflight|draining|rpo-review|commit-intent|database-promoted|services-started|recovery-failed) printf '%s' "${phases[0]}" ;; *)
-    echo "ERROR: unsupported promotion state: ${phases[0]}" >&2; return 1 ;; esac
+  local phase stored_commit stored_instance stored_adapter stored_proof
+  local stored_rpo stored_accepted actual_proof actual_rpo
+  [[ -e "${state_file}" ]] || {
+    promotion_phase="preflight"
+    return 0
+  }
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || {
+    echo "ERROR: promotion state is not a safe regular file." >&2
+    return 1
+  }
+  phase="$(state_value phase)"
+  stored_commit="$(state_value release_commit)"
+  stored_instance="$(state_value primary_instance_id)"
+  stored_adapter="$(state_value fence_adapter_sha256)"
+  stored_proof="$(state_value fence_proof_sha256)"
+  stored_rpo="$(state_value rpo_evidence_sha256)"
+  stored_accepted="$(state_value accepted_rpo_evidence_sha256)"
+  [[ "${stored_commit}" == "${release_commit}" ]] || {
+    echo "ERROR: promotion state belongs to another release." >&2
+    return 1
+  }
+  [[ "${stored_instance}" == "${primary_instance_id}" ]] || {
+    echo "ERROR: promotion state primary instance does not match the requested instance." >&2
+    return 1
+  }
+  [[ "${stored_adapter}" == "${fence_adapter_digest}" ]] || {
+    echo "ERROR: promotion state fence adapter does not match the validated adapter." >&2
+    return 1
+  }
+  [[ "${stored_proof}" =~ ^[a-f0-9]{64}$ &&
+     -f "${fence_proof_file}" && ! -L "${fence_proof_file}" ]] || {
+    echo "ERROR: promotion state fence proof is missing or invalid." >&2
+    return 1
+  }
+  actual_proof="$(sha256sum "${fence_proof_file}" | awk '{print $1}')"
+  [[ "${actual_proof}" == "${stored_proof}" ]] || {
+    echo "ERROR: promotion state fence proof does not match the durable provider proof." >&2
+    return 1
+  }
+  case "${phase}" in
+    recovery-failed|preflight|draining)
+      [[ -z "${stored_rpo}" && -z "${stored_accepted}" ]] || {
+        echo "ERROR: pre-acceptance promotion state contains unexpected RPO evidence." >&2
+        return 1
+      }
+      ;;
+    rpo-review)
+      [[ "${stored_rpo}" =~ ^[a-f0-9]{64}$ && -z "${stored_accepted}" ]] || {
+        echo "ERROR: rpo-review state has invalid acceptance fields." >&2
+        return 1
+      }
+      ;;
+    commit-intent|database-promoted|services-started)
+      [[ "${stored_rpo}" =~ ^[a-f0-9]{64}$ &&
+         "${stored_accepted}" == "${stored_rpo}" ]] || {
+        echo "ERROR: accepted RPO evidence digest is missing or changed." >&2
+        return 1
+      }
+      ;;
+    *)
+      echo "ERROR: unsupported promotion state: ${phase}" >&2
+      return 1
+      ;;
+  esac
+  if [[ -n "${stored_rpo}" ]]; then
+    [[ -f "${rpo_evidence_file}" && ! -L "${rpo_evidence_file}" ]] || {
+      echo "ERROR: durable RPO evidence is missing." >&2
+      return 1
+    }
+    actual_rpo="$(sha256sum "${rpo_evidence_file}" | awk '{print $1}')"
+    [[ "${actual_rpo}" == "${stored_rpo}" ]] || {
+      echo "ERROR: durable RPO evidence does not match promotion state." >&2
+      return 1
+    }
+  fi
+  current_fence_proof_digest="${stored_proof}"
+  state_rpo_evidence_digest="${stored_rpo}"
+  state_accepted_rpo_evidence_digest="${stored_accepted}"
+  promotion_phase="${phase}"
 }
 
 human_auth_enabled="$(read_env_value SMART_BAMBOO_HUMAN_AUTH_ENABLED)"
@@ -136,6 +238,11 @@ validate_fence_adapter() {
     [[ "${current}" == "/" ]] && break
     current="$(dirname -- "${current}")"
   done
+  fence_adapter_digest="$(sha256sum "${fence_adapter}" | awk '{print $1}')"
+  [[ "${fence_adapter_digest}" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "ERROR: fence adapter digest is invalid." >&2
+    return 1
+  }
 }
 run_fence_adapter() {
   validate_fence_adapter
@@ -143,10 +250,17 @@ run_fence_adapter() {
     echo "ERROR: SMART_BAMBOO_PRIMARY_INSTANCE_ID is required for provider fencing." >&2
     return 1
   }
-  local nonce proof verification
+  local nonce proof verification snapshot_digest
   fence_adapter_snapshot="$(mktemp /root/.smart-bamboo-fence-adapter.XXXXXX)"
   install -o root -g root -m 0700 -- "${fence_adapter}" "${fence_adapter_snapshot}"
   sync -f "${fence_adapter_snapshot}"
+  snapshot_digest="$(sha256sum "${fence_adapter_snapshot}" | awk '{print $1}')"
+  [[ "${snapshot_digest}" == "${fence_adapter_digest}" ]] || {
+    rm -f -- "${fence_adapter_snapshot}"
+    fence_adapter_snapshot=""
+    echo "ERROR: fence adapter changed while creating the trusted snapshot." >&2
+    return 1
+  }
   nonce="$(openssl rand -hex 32)"
   proof="$("${fence_adapter_snapshot}" --instance-id "${primary_instance_id}" --nonce "${nonce}")" || {
     rm -f -- "${fence_adapter_snapshot}"
@@ -167,6 +281,11 @@ run_fence_adapter() {
     return 1
   }
   printf '%s\n' "${proof}" | durable_write "${fence_proof_file}" 0600
+  current_fence_proof_digest="$(sha256sum "${fence_proof_file}" | awk '{print $1}')"
+  [[ "${current_fence_proof_digest}" =~ ^[a-f0-9]{64}$ ]] || {
+    echo "ERROR: provider fence proof digest is invalid." >&2
+    return 1
+  }
   echo "FENCE_PROOF_VERIFIED"
 }
 verify_runtime_auth_config() {
@@ -211,50 +330,32 @@ write_rpo_evidence() {
     durable_write "${rpo_evidence_file}" 0600
   sha256sum "${rpo_evidence_file}" | awk '{print $1}'
 }
-evidence_value() {
-  local key="$1"
-  local values
-  mapfile -t values < <(sed -n "s/^${key}=//p" "${rpo_evidence_file}")
-  [[ "${#values[@]}" == "1" ]] || {
-    echo "ERROR: RPO evidence field is missing or duplicated: ${key}" >&2
-    return 1
-  }
-  printf '%s' "${values[0]}"
-}
 require_source_rpo_acceptance() {
   [[ "${CONFIRM_SOURCE_RPO_ACCEPTED:-}" == "YES" ]] || {
     echo "ERROR: set CONFIRM_SOURCE_RPO_ACCEPTED=YES only after reviewing the final RPO evidence." >&2
     return 1
   }
-  local expected_digest actual_digest status current_retrieved current_executed
-  local evidence_retrieved evidence_executed evidence_commit evidence_instance
-  [[ -f "${rpo_evidence_file}" && ! -L "${rpo_evidence_file}" ]] || {
-    echo "ERROR: final RPO evidence is missing or unsafe." >&2
-    return 1
-  }
+  local expected_digest status current_retrieved current_executed verification
   expected_digest="${CONFIRM_SOURCE_RPO_EVIDENCE_SHA256:-}"
-  actual_digest="$(sha256sum "${rpo_evidence_file}" | awk '{print $1}')"
-  [[ "${expected_digest}" =~ ^[a-f0-9]{64}$ && "${expected_digest}" == "${actual_digest}" ]] || {
-    echo "ERROR: CONFIRM_SOURCE_RPO_EVIDENCE_SHA256 does not match the final RPO evidence." >&2
-    return 1
-  }
-  evidence_commit="$(evidence_value release_commit)"
-  evidence_instance="$(evidence_value primary_instance_id)"
-  evidence_retrieved="$(evidence_value retrieved_gtid_set)"
-  evidence_executed="$(evidence_value executed_gtid_set)"
-  [[ "${evidence_commit}" == "${release_commit}" &&
-     "${evidence_instance}" == "${primary_instance_id}" ]] || {
-    echo "ERROR: RPO evidence belongs to a different release or primary instance." >&2
-    return 1
-  }
   status="$(replica_status)"
   current_retrieved="$(status_field Retrieved_Gtid_Set "${status}")"
   current_executed="$(mysql_exec "SELECT @@GLOBAL.gtid_executed;")"
-  [[ "${current_retrieved}" == "${evidence_retrieved}" &&
-     "${current_executed}" == "${evidence_executed}" ]] || {
-    echo "ERROR: replica GTID state changed after RPO evidence capture." >&2
+  verification="$(
+    python3 "${rpo_acceptance_verifier}" \
+      --state "${state_file}" \
+      --evidence "${rpo_evidence_file}" \
+      --fence-proof "${fence_proof_file}" \
+      --release-commit "${release_commit}" \
+      --primary-instance-id "${primary_instance_id}" \
+      --expected-evidence-sha256 "${expected_digest}" \
+      --current-retrieved-gtid-set "${current_retrieved}" \
+      --current-executed-gtid-set "${current_executed}"
+  )"
+  [[ "${verification}" == "RPO_EVIDENCE_VERIFIED" ]] || {
+    echo "ERROR: final RPO evidence verification failed." >&2
     return 1
   }
+  state_accepted_rpo_evidence_digest="${state_rpo_evidence_digest}"
   echo "RPO_EVIDENCE_VERIFIED"
 }
 install_role_override() {
@@ -305,10 +406,26 @@ finish_services() {
   echo "Standby promoted with SMART_BAMBOO_HUMAN_AUTH_ENABLED=${human_auth_enabled}. Provider fencing was verified and source-side RPO was explicitly accepted before opening public port 80/443."
 }
 
-run_fence_adapter
+validate_fence_adapter
+[[ -n "${primary_instance_id}" ]] || {
+  echo "ERROR: SMART_BAMBOO_PRIMARY_INSTANCE_ID is required for provider fencing." >&2
+  exit 8
+}
+read_state
+phase="${promotion_phase}"
+case "${phase}" in
+  preflight|draining|recovery-failed)
+    run_fence_adapter
+    ;;
+  rpo-review|commit-intent|database-promoted|services-started)
+    # read_state already binds these phases to the durable final fence proof.
+    ;;
+esac
+if [[ "${phase}" == "rpo-review" ]]; then
+  require_source_rpo_acceptance
+fi
 verify_runtime_auth_config
 
-phase="$(read_state)"
 case "${phase}" in
   services-started)
     [[ "$(database_role)" == "0,0" ]] || { echo "ERROR: services-started marker conflicts with database read-only state." >&2; exit 11; }
@@ -324,7 +441,6 @@ case "${phase}" in
     finish_services
     ;;
   rpo-review)
-    require_source_rpo_acceptance
     write_state commit-intent
     trap - EXIT
     ensure_database_promoted
@@ -333,7 +449,7 @@ case "${phase}" in
   draining|recovery-failed)
     case "$(database_role)" in
       1,1) resume_io_or_fail || exit 11 ;;
-      0,0) install_role_override; write_state database-promoted; finish_services; exit 0 ;;
+      0,0) echo "ERROR: ${phase} marker is unsafe because the database became writable before RPO acceptance." >&2; exit 11 ;;
       *) echo "ERROR: ${phase} marker has an unsafe, indeterminate database read-only state." >&2; exit 11 ;;
     esac
     ;&
@@ -394,6 +510,8 @@ case "${phase}" in
         "${final_sql_running}"
     )"
     [[ "${rpo_evidence_digest}" =~ ^[a-f0-9]{64}$ ]] || { echo "ERROR: final RPO evidence digest is invalid." >&2; exit 10; }
+    state_rpo_evidence_digest="${rpo_evidence_digest}"
+    state_accepted_rpo_evidence_digest=""
     write_state rpo-review
     trap - EXIT
     io_stopped=0
