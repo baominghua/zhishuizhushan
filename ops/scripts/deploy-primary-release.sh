@@ -44,27 +44,56 @@ cd "${REPOSITORY}"
 [[ -z "$(git status --porcelain)" ]] ||
   fail "Repository has uncommitted changes."
 
-current_commit="$(git rev-parse HEAD)"
-old_release_tag_line="$(grep -m1 '^SMART_BAMBOO_RELEASE_TAG=' "${ENV_FILE}" || true)"
-old_release_tag="${old_release_tag_line#*=}"
-[[ "${old_release_tag}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] ||
-  fail "The current SMART_BAMBOO_RELEASE_TAG is missing or invalid."
-docker image inspect "smart-bamboo-app:${old_release_tag}" >/dev/null ||
-  fail "The current application image is unavailable for rollback."
-
-env_backup="$(mktemp "${ENV_FILE}.rollback.XXXXXX")"
-cp -p "${ENV_FILE}" "${env_backup}"
-env_tmp=""
-env_updated=0
-app_recreated=0
-rollback_succeeded=0
-
 compose=(
   docker compose
   --project-directory "${REPOSITORY}"
   --env-file "${ENV_FILE}"
   -f "${REPOSITORY}/ops/compose.primary.yml"
 )
+"${compose[@]}" config --quiet
+
+current_commit="$(git rev-parse HEAD)"
+current_app_container="$("${compose[@]}" ps -q app)"
+[[ -n "${current_app_container}" ]] ||
+  fail "The primary application container is not running."
+current_app_health="$(
+  docker inspect \
+    --format='{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+    "${current_app_container}"
+)"
+[[ "${current_app_health}" == "running healthy" ]] ||
+  fail "The running application is not healthy: ${current_app_health}."
+old_app_image="$(
+  docker inspect --format='{{.Config.Image}}' "${current_app_container}"
+)"
+[[ "${old_app_image}" == smart-bamboo-app:* ]] ||
+  fail "The running application does not use a versioned smart-bamboo-app image."
+old_release_tag="${old_app_image#smart-bamboo-app:}"
+[[ "${old_release_tag}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] ||
+  fail "The running application image tag is invalid."
+docker image inspect "${old_app_image}" >/dev/null ||
+  fail "The current application image is unavailable for rollback."
+
+env_backup="$(mktemp "${ENV_FILE}.rollback.XXXXXX")"
+awk \
+  -v rollback_tag="${old_release_tag}" '
+  BEGIN { tag_seen=0 }
+  /^SMART_BAMBOO_RELEASE_TAG=/ {
+    print "SMART_BAMBOO_RELEASE_TAG=" rollback_tag
+    tag_seen=1
+    next
+  }
+  { print }
+  END {
+    if (!tag_seen) print "SMART_BAMBOO_RELEASE_TAG=" rollback_tag
+  }
+' "${ENV_FILE}" >"${env_backup}"
+chown root:root "${env_backup}"
+chmod 600 "${env_backup}"
+env_tmp=""
+env_updated=0
+app_recreated=0
+rollback_succeeded=0
 
 wait_for_app_health() {
   local container_id=""

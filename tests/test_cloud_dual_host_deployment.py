@@ -1114,7 +1114,13 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "up -d --no-deps --no-build app" in script
     assert "rollback_application" in script
     assert 'rm -f "${env_backup}" "${env_tmp:-}"' in script
-    assert 'docker image inspect "smart-bamboo-app:${old_release_tag}"' in script
+    assert 'current_app_container="$("${compose[@]}" ps -q app)"' in script
+    assert "--format='{{.Config.Image}}'" in script
+    assert 'old_release_tag="${old_app_image#smart-bamboo-app:}"' in script
+    assert 'docker image inspect "${old_app_image}"' in script
+    assert "The running application is not healthy" in script
+    assert "old_release_tag_line=" not in script
+    assert 'print "SMART_BAMBOO_RELEASE_TAG=" rollback_tag' in script
     assert "satellite-config.local.js" in script
     assert "humanLoginEnabled: false" in script
     assert "nginx" not in "\n".join(
