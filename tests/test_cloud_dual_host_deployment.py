@@ -1121,6 +1121,8 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "The running application is not healthy" in script
     assert "old_release_tag_line=" not in script
     assert 'print "SMART_BAMBOO_RELEASE_TAG=" rollback_tag' in script
+    assert "verify-deployment-readiness.py" in script
+    assert "--allow-human-auth-pending" in script
     assert "satellite-config.local.js" in script
     assert "humanLoginEnabled: false" in script
     assert "nginx" not in "\n".join(
@@ -1130,6 +1132,53 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "TARGET_COMMIT=" in runbook
     assert "RELEASE_TAG=" in runbook
     assert "不会重建 Nginx" in runbook
+
+
+def test_primary_release_readiness_accepts_only_the_http_rollout_warning():
+    validator = ROOT / "ops/scripts/verify-deployment-readiness.py"
+    readiness = {
+        "ok": True,
+        "deployment": {
+            "readiness": {
+                "status": "warning",
+                "blockingIssues": [],
+                "warnings": [{"key": "human_auth_pending_https"}],
+            }
+        },
+    }
+
+    accepted = subprocess.run(
+        [sys.executable, str(validator), "--allow-human-auth-pending"],
+        input=json.dumps(readiness),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    readiness["deployment"]["readiness"]["warnings"] = [{"key": "auth_disabled"}]
+    unexpected_warning = subprocess.run(
+        [sys.executable, str(validator), "--allow-human-auth-pending"],
+        input=json.dumps(readiness),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert unexpected_warning.returncode != 0
+
+    readiness["deployment"]["readiness"] = {
+        "status": "blocked",
+        "blockingIssues": [{"key": "platform_database"}],
+        "warnings": [{"key": "human_auth_pending_https"}],
+    }
+    blocked = subprocess.run(
+        [sys.executable, str(validator), "--allow-human-auth-pending"],
+        input=json.dumps(readiness),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blocked.returncode != 0
 
 
 def test_protected_environment_mutators_do_not_require_python_312_f_strings():

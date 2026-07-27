@@ -233,19 +233,9 @@ wait_for_app_health || fail "New application did not become healthy."
 echo "=== VERIFY APPLICATION READINESS ==="
 health_payload="$(curl -fsS http://127.0.0.1:8010/api/health)"
 printf '%s' "${health_payload}" |
-  "${compose[@]}" exec -T app python -c '
-import json
-import sys
-
-payload = json.load(sys.stdin)
-readiness = payload.get("deployment", {}).get("readiness", {})
-if payload.get("ok") is not True:
-    raise SystemExit("health payload is not ready")
-if readiness.get("status") != "ready":
-    raise SystemExit("deployment readiness is not ready")
-if readiness.get("blockingIssues") or readiness.get("warnings"):
-    raise SystemExit("deployment readiness contains issues")
-'
+  "${compose[@]}" exec -T app \
+    python /app/ops/scripts/verify-deployment-readiness.py \
+      --allow-human-auth-pending
 
 runtime_config="$(curl -fsS http://127.0.0.1:8010/satellite-config.local.js)"
 grep -Fq "humanLoginEnabled: false" <<<"${runtime_config}" ||
