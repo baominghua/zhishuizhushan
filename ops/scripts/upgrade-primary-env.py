@@ -24,7 +24,8 @@ def value(line: str) -> str:
 
 
 def set_value(lines: list[str], key: str, raw: str, *, quote: bool = False) -> None:
-    rendered = f"{key}={'\'' + raw + '\'' if quote else raw}\n"
+    rendered_value = f"'{raw}'" if quote else raw
+    rendered = f"{key}={rendered_value}\n"
     for index, line in enumerate(lines):
         if line.startswith(f"{key}="):
             lines[index] = rendered

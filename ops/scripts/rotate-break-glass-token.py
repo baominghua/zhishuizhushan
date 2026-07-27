@@ -24,7 +24,8 @@ def env_value(line: str) -> str:
 
 
 def replace_env(lines: list[str], key: str, value: str, *, quote: bool = False) -> list[str]:
-    rendered = f"{key}={'\'' + value + '\'' if quote else value}\n"
+    rendered_value = f"'{value}'" if quote else value
+    rendered = f"{key}={rendered_value}\n"
     for index, line in enumerate(lines):
         if line.startswith(f"{key}="):
             lines[index] = rendered

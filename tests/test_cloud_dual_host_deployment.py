@@ -1130,3 +1130,14 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "TARGET_COMMIT=" in runbook
     assert "RELEASE_TAG=" in runbook
     assert "不会重建 Nginx" in runbook
+
+
+def test_protected_environment_mutators_do_not_require_python_312_f_strings():
+    for path in (
+        "ops/scripts/upgrade-primary-env.py",
+        "ops/scripts/rotate-break-glass-token.py",
+    ):
+        script = read_text(path)
+
+        assert r"={'\''" not in script
+        assert "rendered_value =" in script
