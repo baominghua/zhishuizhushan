@@ -1093,3 +1093,34 @@ def test_primary_env_upgrade_rejects_role_names_that_only_contain_admin(tmp_path
     assert f"SMART_BAMBOO_BREAK_GLASS_TOKEN={invalid_token}" not in env_file.read_text(
         encoding="utf-8"
     )
+
+
+def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy():
+    script = read_text("ops/scripts/deploy-primary-release.sh")
+    runbook = read_text("ops/README.md")
+
+    assert 'EXPECTED_HOST="${EXPECTED_HOST:-ecs-98299861}"' in script
+    assert 'EXPECTED_IP="${EXPECTED_IP:-192.168.0.32}"' in script
+    assert "TARGET_COMMIT must be a full 40-character Git commit" in script
+    assert "git merge --ff-only" in script
+    assert "git merge-base --is-ancestor" in script
+    assert "flock -n 9" in script
+    assert "another primary release is already running" in script
+    assert "SMART_BAMBOO_HUMAN_AUTH_ENABLED=0" in script
+    assert "REMOTE_SENSING_API_TOKENS" in script
+    assert "SMART_BAMBOO_DASHBOARD_TOKEN" in script
+    assert "config --quiet" in script
+    assert "build app" in script
+    assert "up -d --no-deps --no-build app" in script
+    assert "rollback_application" in script
+    assert 'rm -f "${env_backup}" "${env_tmp:-}"' in script
+    assert 'docker image inspect "smart-bamboo-app:${old_release_tag}"' in script
+    assert "satellite-config.local.js" in script
+    assert "humanLoginEnabled: false" in script
+    assert "nginx" not in "\n".join(
+        line for line in script.splitlines() if "up -d" in line
+    )
+    assert "deploy-primary-release.sh" in runbook
+    assert "TARGET_COMMIT=" in runbook
+    assert "RELEASE_TAG=" in runbook
+    assert "不会重建 Nginx" in runbook

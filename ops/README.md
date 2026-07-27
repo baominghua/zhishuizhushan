@@ -93,6 +93,17 @@ ls -lh /srv/smart-bamboo/backups
 
 回传：`docker compose ps`、`verify-cluster.sh primary`、健康接口和备份文件列表；不要回传 `.env` 或管理员 Token。
 
+后续版本升级统一使用精确发布脚本。先从已审核的生产分支取得完整 40 位提交号，并让发布标签包含提交号前 12 位：
+
+```bash
+cd /opt/smart-bamboo
+TARGET_COMMIT=<40位生产提交号> \
+RELEASE_TAG=<日期-提交号前12位> \
+  bash ops/scripts/deploy-primary-release.sh
+```
+
+脚本只在主节点 `ecs-98299861 / 192.168.0.32` 运行，先验证 Fast-forward、受保护环境文件和旧应用镜像，再构建并只替换 `app` 容器。失败时自动恢复旧环境和旧应用镜像；它不会重建 Nginx，因此不会删除服务器上附加的 `18080` 验收端口映射。输出中不得包含 `.env`、数据库密码或 Token。
+
 ## 检查点 3：低配热备节点
 
 将高配机 `primary.env` 通过 OpenSSL 加密后走内网传到低配机。先在高配机执行，口令只在控制台人工输入：
