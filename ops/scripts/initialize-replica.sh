@@ -13,8 +13,12 @@ fi
 set -a
 source "${env_file}"
 set +a
-if [[ ! "${REPLICATION_USER}" =~ ^[A-Za-z0-9_]+$ ]] || [[ ! "${REPLICATION_PASSWORD}" =~ ^[A-Fa-f0-9]+$ ]]; then
-  echo "ERROR: invalid replication credentials format." >&2
+if [[ ! "${REPLICATION_USER}" =~ ^[A-Za-z0-9_]+$ ]]; then
+  echo "ERROR: invalid replication user format." >&2
+  exit 2
+fi
+if [[ ! "${REPLICATION_PASSWORD}" =~ ^[A-Fa-f0-9]{1,32}$ ]]; then
+  echo "ERROR: replication password must contain 1-32 hexadecimal characters." >&2
   exit 2
 fi
 compose=(docker compose --project-directory "${repo_root}" --env-file "${env_file}" -f "${repo_root}/ops/compose.standby.yml")

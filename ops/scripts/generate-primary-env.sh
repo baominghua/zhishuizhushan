@@ -27,7 +27,7 @@ umask 077
 
 mysql_password="$(openssl rand -hex 24)"
 mysql_root_password="$(openssl rand -hex 24)"
-replication_password="$(openssl rand -hex 24)"
+replication_password="$(openssl rand -hex 16)"
 geoserver_password="$(openssl rand -hex 24)"
 dashboard_token="$(openssl rand -hex 32)"
 break_glass_token="$(openssl rand -hex 32)"
