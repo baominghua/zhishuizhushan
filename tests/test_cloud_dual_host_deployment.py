@@ -190,6 +190,23 @@ def test_cluster_operations_cover_replication_backup_monitoring_and_failover():
     assert "migrate_json_to_mysql.py" in migrate
 
 
+def test_replica_initialization_bootstraps_writable_then_restores_read_only():
+    initialize = read_text("ops/scripts/initialize-replica.sh")
+
+    assert 'role_override="/srv/smart-bamboo-dr/config/role-override.cnf"' in initialize
+    assert "read_only=OFF\nsuper_read_only=OFF\nskip_replica_start=ON" in initialize
+    assert "read_only=ON\nsuper_read_only=ON\nskip_replica_start=OFF" in initialize
+    assert "trap restore_read_only EXIT" in initialize
+    assert 'exec mysql -uroot -N -B -e "SELECT 1;"' in initialize
+    assert "mysqladmin ping" not in initialize
+    assert initialize.index("install_bootstrap_override") < initialize.index(
+        '"${compose[@]}" up -d db-replica'
+    )
+    assert initialize.index("START REPLICA;") < initialize.index(
+        "SET GLOBAL read_only=ON;"
+    )
+
+
 def test_cloud_runbook_is_checkpointed_for_console_execution():
     runbook = read_text("ops/README.md")
 
