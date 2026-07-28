@@ -221,6 +221,13 @@ def test_replication_password_generation_and_validation_respect_mysql_limit():
         assert "replication password must contain 1-32 hexadecimal characters" in script
 
 
+def test_primary_replication_uses_mysql_84_binary_log_status_command():
+    primary = read_text("ops/scripts/configure-primary-replication.sh")
+
+    assert "SHOW BINARY LOG STATUS;" in primary
+    assert "SHOW MASTER STATUS;" not in primary
+
+
 def test_cloud_runbook_is_checkpointed_for_console_execution():
     runbook = read_text("ops/README.md")
 
