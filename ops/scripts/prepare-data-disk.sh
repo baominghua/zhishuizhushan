@@ -93,6 +93,7 @@ read_only=ON
 super_read_only=ON
 skip_replica_start=OFF
 EOF
+  chmod 0644 "${mount_point}/config/role-override.cnf"
 fi
 chown -R 1000:1000 "${mount_point}/geoserver"
 chmod 0750 "${mount_point}" "${mount_point}/config" "${mount_point}/backups"

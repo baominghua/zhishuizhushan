@@ -29,7 +29,7 @@ install_role_override() {
   local temporary
   temporary="$(mktemp "${role_override}.tmp.XXXXXX")"
   cat >"${temporary}"
-  chmod 640 "${temporary}"
+  chmod 644 "${temporary}"
   chown root:root "${temporary}"
   mv -f "${temporary}" "${role_override}"
 }
