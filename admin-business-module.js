@@ -18,6 +18,10 @@
     bindDictionarySelect,
     bindReferencePicker,
   } = AdminSmartFields;
+  const {
+    computeFieldValue,
+    validateRelationRequirements,
+  } = AdminBusinessComputations;
 
   const body = document.body;
   const endpoint = body.dataset.businessEndpoint;
@@ -32,6 +36,8 @@
   const state = {
     records: [],
     businessEvents: [],
+    moduleSchema: null,
+    formVersion: 1,
     fieldSchema: [],
     activeId: "",
     coreSmartControls: {},
@@ -320,16 +326,35 @@
     if ($("#businessCoreFields")) return;
     const fields = editableCoreFields();
     const propertiesLabel = $("#businessProperties")?.closest("label");
+    if (propertiesLabel) {
+      propertiesLabel.hidden = state.formVersion >= 2;
+      propertiesLabel.setAttribute("aria-hidden", String(state.formVersion >= 2));
+    }
     if (!fields.length || !propertiesLabel?.parentElement) return;
     const heading = document.createElement("div");
     heading.id = "businessCoreFields";
     heading.className = "business-core-form-heading field-span-2";
-    heading.innerHTML = "<strong>模块核心字段</strong>";
+    heading.innerHTML = "<strong>业务信息</strong><small>按业务规则填写，带 * 的项目为必填项。</small>";
     propertiesLabel.parentElement.insertBefore(heading, propertiesLabel);
+    let activeSection = "";
     fields.forEach((field) => {
+      const section = field.section || "业务信息";
+      if (section !== activeSection) {
+        activeSection = section;
+        const sectionHeading = document.createElement("div");
+        sectionHeading.className = "business-core-form-section field-span-2";
+        sectionHeading.textContent = section;
+        propertiesLabel.parentElement.insertBefore(sectionHeading, propertiesLabel);
+      }
       const label = document.createElement("label");
       label.className = "business-core-field-input";
+      if (field.inputType === "business-relation" || field.inputType === "textarea") {
+        label.classList.add("field-span-2");
+      }
       const labelText = field.unit ? `${field.label}（${field.unit}）` : field.label;
+      const groupHint = field.relationGroup && Number(field.minGroupTargets || 0) > 0
+        ? `<small class="field-rule-hint">同组至少选择 ${escapeHtml(field.minGroupTargets)} 项</small>`
+        : "";
       const required = field.required ? " required" : "";
       const readOnly = field.readOnly ? " readonly" : "";
       let control = "";
@@ -340,7 +365,11 @@
           .join("")}</select>`;
       } else if (field.inputType === "dictionary") {
         control = `<select id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}"${required}><option value="">正在加载...</option></select>`;
-      } else if (field.inputType === "reference" || field.inputType === "multi-reference") {
+      } else if (
+        field.inputType === "reference"
+        || field.inputType === "multi-reference"
+        || field.inputType === "business-relation"
+      ) {
         control = `<input id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" type="text"${required} />`;
       } else if (field.inputType === "textarea") {
         control = `<textarea id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" rows="3"${required}${readOnly}></textarea>`;
@@ -349,13 +378,19 @@
           ? "number"
           : field.inputType === "date" || field.inputType === "datetime-local" || field.inputType === "month"
             ? field.inputType
-            : "text";
+            : ["tel", "email", "url"].includes(field.inputType)
+              ? field.inputType
+              : "text";
         const step = field.step !== undefined ? ` step="${escapeHtml(field.step)}"` : field.inputType === "integer" ? ' step="1"' : "";
         const min = field.min !== undefined ? ` min="${escapeHtml(field.min)}"` : "";
         const max = field.max !== undefined ? ` max="${escapeHtml(field.max)}"` : "";
-        control = `<input id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" type="${inputType}"${step}${min}${max}${required}${readOnly} />`;
+        const pattern = field.pattern ? ` pattern="${escapeHtml(field.pattern)}"` : "";
+        const minLength = field.minLength !== undefined ? ` minlength="${escapeHtml(field.minLength)}"` : "";
+        const maxLength = field.maxLength !== undefined ? ` maxlength="${escapeHtml(field.maxLength)}"` : "";
+        const autocomplete = field.autocomplete ? ` autocomplete="${escapeHtml(field.autocomplete)}"` : "";
+        control = `<input id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" type="${inputType}"${step}${min}${max}${pattern}${minLength}${maxLength}${autocomplete}${required}${readOnly} />`;
       }
-      label.innerHTML = `<span>${escapeHtml(labelText)}</span>${control}`;
+      label.innerHTML = `<span>${escapeHtml(labelText)}${groupHint}</span>${control}`;
       propertiesLabel.parentElement.insertBefore(label, propertiesLabel);
     });
   }
@@ -363,6 +398,60 @@
   function businessCoreInput(key) {
     return Array.from(document.querySelectorAll("[data-business-core-field]"))
       .find((input) => input.dataset.businessCoreField === key) || null;
+  }
+
+  function applyComputedBusinessFields() {
+    editableCoreFields()
+      .filter((field) => field.computed)
+      .forEach((field) => {
+        const sourceValues = {};
+        (field.computed.fields || []).forEach((sourceKey) => {
+          const sourceControl = state.coreSmartControls[sourceKey];
+          const sourceInput = businessCoreInput(sourceKey);
+          sourceValues[sourceKey] = sourceControl?.getValue
+            ? sourceControl.getValue()
+            : sourceInput?.value ?? "";
+        });
+        const value = computeFieldValue(field.computed, sourceValues);
+        const control = state.coreSmartControls[field.key];
+        const input = businessCoreInput(field.key);
+        if (control?.setValue) control.setValue(value);
+        if (input) input.value = value;
+      });
+  }
+
+  function bindComputedBusinessFields() {
+    const computedFields = editableCoreFields().filter((field) => field.computed);
+    const dependencyKeys = new Set(
+      computedFields.flatMap((field) => field.computed.fields || []),
+    );
+    dependencyKeys.forEach((key) => {
+      const input = businessCoreInput(key);
+      if (!input || input.dataset.computationBound === "true") return;
+      input.dataset.computationBound = "true";
+      input.addEventListener("input", applyComputedBusinessFields);
+      input.addEventListener("change", applyComputedBusinessFields);
+    });
+    computedFields.forEach((field) => {
+      const input = businessCoreInput(field.key);
+      if (!input || !field.readOnly) return;
+      input.readOnly = true;
+      input.setAttribute("aria-readonly", "true");
+      if (input.tagName === "SELECT") input.disabled = true;
+    });
+    applyComputedBusinessFields();
+  }
+
+  function clearDependentReferenceFields(parentKey) {
+    editableCoreFields()
+      .filter((field) => field.parentField === parentKey)
+      .forEach((field) => {
+        const control = state.coreSmartControls[field.key];
+        if (control?.setValues) control.setValues([]);
+        const input = businessCoreInput(field.key);
+        if (input) input.value = "";
+        clearDependentReferenceFields(field.key);
+      });
   }
 
   async function setupSmartFields() {
@@ -399,18 +488,24 @@
           api,
           blankLabel: "请选择",
         });
-      } else if (
-        (field.inputType === "reference" || field.inputType === "multi-reference")
-        && field.referenceEndpoint
-      ) {
+      } else if (["reference", "multi-reference", "business-relation"].includes(field.inputType) && field.referenceEndpoint) {
         state.coreSmartControls[field.key] = bindReferencePicker({
           input,
           endpoint: field.referenceEndpoint,
           valueKey: field.referenceValueKey || "recordCode",
           labelKey: field.referenceLabelKey || "name",
           api,
-          multiple: field.inputType === "multi-reference",
+          multiple: field.inputType === "multi-reference" || Boolean(field.multiple),
           placeholder: `搜索${field.label}`,
+          queryProvider: field.parentField
+            ? () => {
+                const parentControl = state.coreSmartControls[field.parentField];
+                const parentInput = businessCoreInput(field.parentField);
+                const parentValues = parentControl?.getValues ? parentControl.getValues() : splitValues(parentInput?.value || "");
+                return { parentCode: parentValues[0] || "" };
+              }
+            : null,
+          onChange: () => clearDependentReferenceFields(field.key),
         });
       }
     });
@@ -420,6 +515,34 @@
         .filter((control) => control.ready)
         .map((control) => control.ready),
     ]);
+    bindComputedBusinessFields();
+  }
+
+  function businessRelationValues(record, field) {
+    const valueKey = field.referenceValueKey || "id";
+    const labelKey = field.referenceLabelKey || "name";
+    return (Array.isArray(record.linkedRecords) ? record.linkedRecords : [])
+      .filter((link) => (
+        link.relationType === field.relationType
+        && link.targetModuleKey === field.targetModuleKey
+      ))
+      .map((link) => ({
+        [valueKey]: link.targetRecordId,
+        [labelKey]: link.targetName || link.targetRecordCode || link.targetRecordId,
+      }));
+  }
+
+  function referenceValues(record, field) {
+    if (field.inputType === "business-relation") return businessRelationValues(record, field);
+    const raw = recordValueByPath(record, field.key);
+    const values = Array.isArray(raw) ? raw : splitValues(raw ?? coreFieldValue(record, field));
+    const displayValue = field.displayProperty ? recordValueByPath(record, field.displayProperty) : "";
+    const valueKey = field.referenceValueKey || "recordCode";
+    const labelKey = field.referenceLabelKey || "name";
+    return values.map((value) => ({
+      [valueKey]: value,
+      [labelKey]: displayValue || value,
+    }));
   }
 
   function fillBusinessCoreFields(record = {}) {
@@ -431,15 +554,17 @@
       const control = state.coreSmartControls[field.key];
       if (field.inputType === "dictionary" && control) {
         control.setValue(value);
-      } else if ((field.inputType === "reference" || field.inputType === "multi-reference") && control) {
-        control.setValues(field.inputType === "multi-reference" ? splitValues(value) : value ? [value] : []);
+      } else if (["reference", "multi-reference", "business-relation"].includes(field.inputType) && control) {
+        control.setValues(referenceValues(record, field));
       } else {
         input.value = value;
       }
     });
+    applyComputedBusinessFields();
   }
 
   function businessCoreFieldsFromForm() {
+    applyComputedBusinessFields();
     return editableCoreFields().map((field) => {
       const input = businessCoreInput(field.key);
       return { ...field, value: parseBusinessCoreFieldValue(field, input?.value.trim() || "") };
@@ -451,7 +576,7 @@
     if (field.inputType === "integer") return Number.parseInt(rawValue, 10);
     if (field.inputType === "number") return Number(rawValue);
     if (field.inputType === "boolean") return rawValue === "true";
-    if (field.inputType === "multi-reference") return splitValues(rawValue);
+    if (field.inputType === "multi-reference" || field.inputType === "business-relation") return splitValues(rawValue);
     return rawValue;
   }
 
@@ -459,10 +584,42 @@
     const merged = { ...(properties || {}) };
     const coreKeys = businessCorePropertyKeys();
     coreKeys.forEach((key) => delete merged[key]);
-    businessCoreFieldsFromForm().forEach((field) => {
+    businessCoreFieldsFromForm()
+      .filter((field) => field.inputType !== "business-relation")
+      .forEach((field) => {
       if (field.value !== "" && field.value !== null && field.value !== undefined) merged[field.key] = field.value;
     });
     return merged;
+  }
+
+  function businessLinksFromForm() {
+    return editableCoreFields()
+      .filter((field) => field.inputType === "business-relation")
+      .flatMap((field) => {
+        const control = state.coreSmartControls[field.key];
+        const values = control?.getValues ? control.getValues() : splitValues(businessCoreInput(field.key)?.value || "");
+        return values.map((targetRecordId, sortOrder) => ({
+          relationType: field.relationType,
+          targetModuleKey: field.targetModuleKey,
+          targetRecordId,
+          sortOrder,
+        }));
+      });
+  }
+
+  function validateBusinessLinks(links) {
+    Object.values(state.coreSmartControls).forEach((control) => {
+      control.searchInput?.removeAttribute("aria-invalid");
+      control.container?.classList.remove("field-invalid");
+    });
+    const result = validateRelationRequirements(editableCoreFields(), links);
+    if (result.valid) return true;
+    const control = state.coreSmartControls[result.fieldKey];
+    control?.searchInput?.setAttribute("aria-invalid", "true");
+    control?.container?.classList.add("field-invalid");
+    control?.searchInput?.focus();
+    setStatus("offline", result.message);
+    return false;
   }
 
   async function loadModuleFieldSchema() {
@@ -470,8 +627,12 @@
       const payload = await api("/api/business/modules");
       const modules = Array.isArray(payload.items) ? payload.items : [];
       const current = modules.find((item) => item.key === endpointModuleKey);
+      state.moduleSchema = current || null;
+      state.formVersion = Number(current?.formVersion || 1);
       state.fieldSchema = Array.isArray(current?.fieldSchema) ? current.fieldSchema : [];
     } catch (_error) {
+      state.moduleSchema = null;
+      state.formVersion = 1;
       state.fieldSchema = [];
     }
   }
@@ -833,11 +994,13 @@
   function payloadFromForm() {
     const code = $("#businessRecordCode").value.trim();
     const payload = {
+      formVersion: state.formVersion,
       recordCode: code || undefined,
       name: $("#businessRecordName").value.trim(),
       status: $("#businessRecordStatus").value.trim() || "active",
       linkedBlockCodes: splitValues($("#businessLinkedBlockCodes").value),
       linkedRightArchiveCodes: splitValues($("#businessLinkedRightArchiveCodes").value),
+      linkedRecords: businessLinksFromForm(),
       properties: mergeBusinessCoreFieldsIntoProperties(parseJson("扩展 JSON", $("#businessProperties").value, {})),
     };
     if ($("#businessLinkedBlockCodes").dataset.preserveRelations === "true") delete payload.linkedBlockCodes;
@@ -980,7 +1143,9 @@
     event.preventDefault();
     let bodyText;
     try {
-      bodyText = JSON.stringify(payloadFromForm());
+      const payload = payloadFromForm();
+      if (!validateBusinessLinks(payload.linkedRecords)) return;
+      bodyText = JSON.stringify(payload);
     } catch (error) {
       setStatus("offline", error.message);
       return;

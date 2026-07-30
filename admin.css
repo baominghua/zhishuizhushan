@@ -1650,8 +1650,24 @@ input[readonly] {
   line-height: 1.45;
 }
 
+.business-core-form-section {
+  margin-top: 8px;
+  padding: 10px 0 5px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .business-core-field-input input {
   background: var(--panel-strong);
+}
+
+.field-rule-hint {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .smart-reference-picker {
@@ -1659,6 +1675,11 @@ input[readonly] {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.smart-reference-picker.field-invalid .smart-reference-search {
+  border-color: #d96b62;
+  box-shadow: 0 0 0 2px rgba(217, 107, 98, 0.14);
 }
 
 .smart-reference-picker.is-disabled {

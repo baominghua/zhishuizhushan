@@ -20,6 +20,7 @@ from .admin_roles import (
     safe_download_stem,
 )
 from .auth import AuthContext, request_context
+from .business_forms import FORMAL_BUSINESS_FIELD_SCHEMAS
 from .database import (
     business_json_path,
     load_json_records,
@@ -251,7 +252,26 @@ MYSQL_BUSINESS_SELECT_SQL = """
             WHERE brl.business_record_id = br.id
         ), JSON_ARRAY()),
         COALESCE(br.properties, JSON_OBJECT()),
-        COALESCE(br.payload, JSON_OBJECT()),
+        JSON_SET(
+            COALESCE(br.payload, JSON_OBJECT()),
+            '$.linkedRecords',
+            COALESCE((
+                SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                    'relationType', links.relation_type,
+                    'targetModuleKey', links.target_module_key,
+                    'targetRecordId', links.target_record_id,
+                    'targetRecordCode', targets.record_code,
+                    'targetName', targets.name,
+                    'targetStatus', targets.status,
+                    'sortOrder', links.sort_order,
+                    'properties', COALESCE(links.properties, JSON_OBJECT())
+                ))
+                FROM business_record_links links
+                JOIN business_records targets ON targets.id = links.target_record_id
+                WHERE links.source_record_id = br.id
+                  AND targets.deleted_at IS NULL
+            ), JSON_ARRAY())
+        ),
         br.created_at,
         br.updated_at,
         br.deleted_at
@@ -318,6 +338,7 @@ BUSINESS_CANONICAL_FIELDS = {
 
 BUSINESS_MODULES = {
     "farmers": {
+        "formVersion": 2,
         "title": "竹农信息卡",
         "subtitle": "主体档案、承包林班与作业记录",
         "totalLabel": "竹农总数",
@@ -577,26 +598,141 @@ def field_option(value: str, label: str) -> dict[str, str]:
 BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     "farmers": [
         {
-            "key": "townVillage",
+            "key": "identityType",
+            "label": "证件类型",
+            "section": "身份信息",
+            "inputType": "select",
+            "required": True,
+            "options": [
+                field_option("resident-id", "居民身份证"),
+                field_option("unified-social-credit", "统一社会信用代码"),
+                field_option("other", "其他证件"),
+            ],
+        },
+        {
+            "key": "identityNumber",
+            "label": "证件号码",
+            "section": "身份信息",
+            "inputType": "text",
+            "required": True,
+            "minLength": 6,
+            "maxLength": 30,
+            "pattern": r"^[0-9A-Za-z()（）-]{6,30}$",
+        },
+        {
+            "key": "phone",
+            "label": "联系电话",
+            "section": "身份信息",
+            "inputType": "tel",
+            "required": True,
+            "pattern": r"^1[3-9]\d{9}$",
+            "maxLength": 11,
+        },
+        {
+            "key": "provinceCode",
+            "label": "所属省份",
+            "section": "行政区划",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=province",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+            "referenceDictionaryCode": "administrative-divisions",
+            "referenceLevel": "province",
+            "displayProperty": "provinceName",
+        },
+        {
+            "key": "cityCode",
+            "label": "所属地市",
+            "section": "行政区划",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=city",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+            "referenceDictionaryCode": "administrative-divisions",
+            "referenceLevel": "city",
+            "parentField": "provinceCode",
+            "displayProperty": "cityName",
+        },
+        {
+            "key": "countyCode",
+            "label": "所属区县",
+            "section": "行政区划",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=county",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+            "referenceDictionaryCode": "administrative-divisions",
+            "referenceLevel": "county",
+            "parentField": "cityCode",
+            "displayProperty": "countyName",
+        },
+        {
+            "key": "townCode",
             "label": "所属乡镇",
+            "section": "行政区划",
             "inputType": "reference",
             "required": True,
             "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=town",
-            "referenceValueKey": "label",
+            "referenceValueKey": "value",
             "referenceLabelKey": "fullName",
             "multiple": False,
+            "referenceDictionaryCode": "administrative-divisions",
+            "referenceLevel": "town",
+            "parentField": "countyCode",
+            "displayProperty": "townName",
         },
         {
-            "key": "villageName",
+            "key": "villageCode",
             "label": "所属村",
+            "section": "行政区划",
             "inputType": "reference",
+            "required": True,
             "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=village",
-            "referenceValueKey": "label",
+            "referenceValueKey": "value",
             "referenceLabelKey": "fullName",
             "multiple": False,
+            "referenceDictionaryCode": "administrative-divisions",
+            "referenceLevel": "village",
+            "parentField": "townCode",
+            "displayProperty": "villageName",
         },
-        {"key": "phone", "label": "联系电话", "inputType": "tel"},
-        {"key": "managedAreaMu", "label": "经营面积", "inputType": "number", "unit": "亩", "min": 0, "step": 0.01},
+        {
+            "key": "address",
+            "label": "详细地址",
+            "section": "经营档案",
+            "inputType": "textarea",
+            "required": True,
+            "maxLength": 300,
+        },
+        {
+            "key": "operationAreaMu",
+            "label": "经营面积",
+            "section": "经营档案",
+            "inputType": "number",
+            "required": True,
+            "unit": "亩",
+            "min": 0,
+            "step": 0.01,
+        },
+        {
+            "key": "cooperativeIds",
+            "label": "所属合作社",
+            "section": "业务关联",
+            "inputType": "business-relation",
+            "referenceEndpoint": "/api/references/business/cooperatives",
+            "referenceValueKey": "id",
+            "referenceLabelKey": "name",
+            "relationType": "member-of",
+            "targetModuleKey": "cooperatives",
+            "multiple": True,
+            "allowedTargetStatuses": ["active"],
+        },
     ],
     "cooperatives": [
         {
@@ -1362,6 +1498,10 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
+BUSINESS_FIELD_SCHEMAS.update(FORMAL_BUSINESS_FIELD_SCHEMAS)
+for formal_module_key in FORMAL_BUSINESS_FIELD_SCHEMAS:
+    BUSINESS_MODULES[formal_module_key]["formVersion"] = 2
+
 
 def business_dictionary_code(module_key: str, field_key: str) -> str:
     kebab_field = re.sub(r"(?<!^)(?=[A-Z])", "-", field_key).lower().replace("_", "-")
@@ -1593,7 +1733,7 @@ def business_dictionary_catalog() -> dict[str, dict[str, Any]]:
         type_id = str(dictionary_type.get("id") or "")
         if not type_code or not type_id:
             continue
-        entry = {"type": dictionary_type, "items": {}}
+        entry = {"type": dictionary_type, "items": {}, "itemsByLevel": {}}
         catalog[type_code] = entry
         types_by_id[type_id] = entry
     for item in load_all_items():
@@ -1601,6 +1741,8 @@ def business_dictionary_catalog() -> dict[str, dict[str, Any]]:
         item_code = str(item.get("itemCode") or "")
         if entry is not None and item_code:
             entry["items"][item_code] = item
+            level_code = str(item.get("levelCode") or "")
+            entry["itemsByLevel"][(level_code, item_code)] = item
     return catalog
 
 
@@ -1620,24 +1762,121 @@ def dictionary_field_items(
     return entry["items"]
 
 
+def business_value_is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return not value
+    return False
+
+
+def administrative_division_item(
+    field: dict[str, Any],
+    value: Any,
+    catalog: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    type_code = str(field.get("referenceDictionaryCode") or "")
+    if not type_code:
+        return None
+    entry = catalog.get(type_code)
+    if entry is None:
+        return {}
+    expected_level = str(field.get("referenceLevel") or "")
+    item = entry.get("itemsByLevel", {}).get((expected_level, str(value)))
+    if item is None and not expected_level:
+        item = entry.get("items", {}).get(str(value))
+    if not item or item.get("deletedAt") or item.get("status") != "active":
+        return {}
+    if expected_level and str(item.get("levelCode") or "") != expected_level:
+        return {}
+    return item
+
+
+def apply_computed_business_properties(
+    module_key: str,
+    properties: dict[str, Any],
+) -> None:
+    for field in business_field_schema(module_key):
+        computed = field.get("computed")
+        if not isinstance(computed, dict):
+            continue
+        key = str(field.get("key") or "")
+        source_fields = [str(value) for value in computed.get("fields") or []]
+        operation = str(computed.get("operation") or "")
+        if not key or not source_fields:
+            continue
+        try:
+            values = [Decimal(str(properties.get(source_key) or 0)) for source_key in source_fields]
+        except (ArithmeticError, ValueError):
+            continue
+        if operation == "subtract" and len(values) >= 2:
+            precision = int(computed.get("precision") or 2)
+            properties[key] = round(float(values[0] - values[1]), precision)
+        elif operation == "stock-status" and len(values) >= 2:
+            stock, warning_threshold = values[:2]
+            properties[key] = (
+                "out"
+                if stock <= 0
+                else "warning"
+                if warning_threshold > 0 and stock <= warning_threshold
+                else "normal"
+            )
+
+
+def validate_business_chronology(
+    module_key: str,
+    properties: dict[str, Any],
+) -> None:
+    chronology_pairs = {
+        "policies": [("publishDate", "effectiveDate")],
+        "stewardship-agreements": [("startDate", "endDate")],
+        "maintenance-tasks": [("plannedStartAt", "plannedEndAt")],
+        "drone-tasks": [("actualStartAt", "actualEndAt")],
+        "harvest-plans": [("plannedStartDate", "plannedEndDate")],
+        "carbon-estimates": [("accountingStartDate", "accountingEndDate")],
+        "trade-matches": [("deliveryStartDate", "deliveryEndDate")],
+        "logistics-traces": [("departureAt", "arrivalAt")],
+    }
+    for start_key, end_key in chronology_pairs.get(module_key, []):
+        start_value = str(properties.get(start_key) or "")
+        end_value = str(properties.get(end_key) or "")
+        if start_value and end_value and end_value < start_value:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {end_key}: must not be earlier than {start_key}",
+            )
+
+
 def normalize_business_properties(
     module_key: str,
     properties: dict[str, Any] | None,
     *,
     previous_properties: dict[str, Any] | None = None,
+    enforce_required: bool = False,
 ) -> dict[str, Any]:
     normalized = dict(properties or {})
     previous = dict(previous_properties or {})
+    if module_key == "farmers":
+        if "operationAreaMu" not in normalized and "managedAreaMu" in normalized:
+            normalized["operationAreaMu"] = normalized["managedAreaMu"]
+    apply_computed_business_properties(module_key, normalized)
     dictionary_catalog: dict[str, dict[str, Any]] | None = None
     for field in business_field_schema(module_key):
         key = str(field.get("key") or "")
-        if not key or key not in normalized:
-            continue
-        value = normalized.get(key)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            normalized.pop(key, None)
+        if not key:
             continue
         input_type = str(field.get("inputType") or "text")
+        value = normalized.get(key)
+        if key not in normalized or business_value_is_blank(value):
+            normalized.pop(key, None)
+            if enforce_required and field.get("required") and input_type != "business-relation":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid business field {key}: field is required",
+                )
+            continue
         try:
             if input_type == "integer":
                 numeric = Decimal(str(value))
@@ -1664,7 +1903,7 @@ def normalize_business_properties(
                     normalized[key] = False
                 else:
                     raise ValueError("must be a boolean")
-            elif input_type == "multi-reference":
+            elif input_type in {"multi-reference", "business-relation"}:
                 source_values = value if isinstance(value, list) else str(value).split(",")
                 normalized[key] = [
                     str(item).strip()
@@ -1676,12 +1915,28 @@ def normalize_business_properties(
         except (ValueError, ArithmeticError) as exc:
             raise HTTPException(status_code=422, detail=f"Invalid business field {key}: {exc}") from exc
 
-        if field.get("inputType") == "dictionary":
+        if field.get("inputType") == "dictionary" and not field.get("computed"):
             if dictionary_catalog is None:
                 dictionary_catalog = business_dictionary_catalog()
             dictionary_items = dictionary_field_items(field, dictionary_catalog)
         else:
             dictionary_items = None
+        reference_item = None
+        if field.get("referenceDictionaryCode"):
+            if dictionary_catalog is None:
+                dictionary_catalog = business_dictionary_catalog()
+            reference_item = administrative_division_item(field, normalized[key], dictionary_catalog)
+            if not reference_item:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid business field {key}: reference code or level is invalid",
+                )
+            parent_field = str(field.get("parentField") or "")
+            if parent_field and str(reference_item.get("parentCode") or "") != str(normalized.get(parent_field) or ""):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid business field {key}: parent division does not match {parent_field}",
+                )
         if dictionary_items is None:
             options = field.get("options") or []
             allowed = {str(option.get("value")) for option in options if isinstance(option, dict)}
@@ -1704,11 +1959,171 @@ def normalize_business_properties(
             raise HTTPException(status_code=422, detail=f"Invalid business field {key}: minimum is {minimum}")
         if maximum is not None and isinstance(normalized[key], (int, float)) and normalized[key] > maximum:
             raise HTTPException(status_code=422, detail=f"Invalid business field {key}: maximum is {maximum}")
-    if module_key == "income-estimates":
-        expected_income = Decimal(str(normalized.get("expectedIncome") or 0))
-        cost = Decimal(str(normalized.get("cost") or 0))
-        normalized["netIncome"] = float(expected_income - cost)
+        text_value = str(normalized[key])
+        minimum_length = field.get("minLength")
+        maximum_length = field.get("maxLength")
+        if minimum_length is not None and len(text_value) < int(minimum_length):
+            raise HTTPException(status_code=422, detail=f"Invalid business field {key}: minimum length is {minimum_length}")
+        if maximum_length is not None and len(text_value) > int(maximum_length):
+            raise HTTPException(status_code=422, detail=f"Invalid business field {key}: maximum length is {maximum_length}")
+        pattern = str(field.get("pattern") or "")
+        if pattern and not re.fullmatch(pattern, text_value):
+            raise HTTPException(status_code=422, detail=f"Invalid business field {key}: value format is invalid")
+        display_property = str(field.get("displayProperty") or "")
+        if display_property and reference_item:
+            normalized[display_property] = str(reference_item.get("label") or reference_item.get("itemCode") or "")
+    apply_computed_business_properties(module_key, normalized)
+    validate_business_chronology(module_key, normalized)
+    if module_key == "farmers":
+        if "operationAreaMu" in normalized:
+            normalized["managedAreaMu"] = normalized["operationAreaMu"]
+        town_name = str(normalized.get("townName") or "").strip()
+        village_name = str(normalized.get("villageName") or "").strip()
+        standardized_location = " / ".join(item for item in (town_name, village_name) if item)
+        if standardized_location:
+            normalized["townVillage"] = standardized_location
     return normalized
+
+
+def business_relation_fields(module_key: str) -> list[dict[str, Any]]:
+    return [
+        field
+        for field in business_field_schema(module_key)
+        if field.get("inputType") == "business-relation"
+    ]
+
+
+def relation_links_from_properties(
+    module_key: str,
+    properties: dict[str, Any],
+) -> list[dict[str, Any]]:
+    links: list[dict[str, Any]] = []
+    for field in business_relation_fields(module_key):
+        key = str(field.get("key") or "")
+        values = properties.get(key)
+        if business_value_is_blank(values):
+            continue
+        source_values = values if isinstance(values, list) else [values]
+        for index, target_id in enumerate(source_values):
+            links.append(
+                {
+                    "relationType": str(field.get("relationType") or key),
+                    "targetModuleKey": str(field.get("targetModuleKey") or ""),
+                    "targetRecordId": str(target_id).strip(),
+                    "sortOrder": index,
+                    "properties": {},
+                }
+            )
+    return links
+
+
+def normalize_business_record_links(
+    module_key: str,
+    linked_records: Any,
+    properties: dict[str, Any],
+    *,
+    context: AuthContext,
+    enforce_required: bool = False,
+) -> list[dict[str, Any]]:
+    relation_fields = business_relation_fields(module_key)
+    field_by_contract = {
+        (
+            str(field.get("relationType") or field.get("key") or ""),
+            str(field.get("targetModuleKey") or ""),
+        ): field
+        for field in relation_fields
+    }
+    raw_links = linked_records
+    if raw_links is None:
+        raw_links = relation_links_from_properties(module_key, properties)
+    if not isinstance(raw_links, list):
+        raise HTTPException(status_code=422, detail="Invalid business field linkedRecords: expected a list")
+
+    normalized_links: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    values_by_field: dict[str, list[str]] = {}
+    for index, raw_link in enumerate(raw_links):
+        if not isinstance(raw_link, dict):
+            raise HTTPException(status_code=422, detail="Invalid business field linkedRecords: invalid relation")
+        relation_type = str(raw_link.get("relationType") or "").strip()
+        target_module_key = str(raw_link.get("targetModuleKey") or "").strip()
+        target_record_id = str(raw_link.get("targetRecordId") or "").strip()
+        field = field_by_contract.get((relation_type, target_module_key))
+        field_key = str(field.get("key") if field else "linkedRecords")
+        if field is None or not target_record_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {field_key}: relation contract is invalid",
+            )
+        require_permission(context, permission_for_business_module(target_module_key, "view"))
+        target = find_business_record_for_upsert(target_module_key, target_record_id)
+        if not target or target.get("deletedAt"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {field_key}: target record does not exist",
+            )
+        allowed_statuses = {str(value) for value in field.get("allowedTargetStatuses") or []}
+        if allowed_statuses and str(target.get("status") or "") not in allowed_statuses:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {field_key}: target status is not allowed",
+            )
+        identity = (relation_type, target_module_key, target_record_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        values_by_field.setdefault(field_key, []).append(target_record_id)
+        normalized_links.append(
+            {
+                "relationType": relation_type,
+                "targetModuleKey": target_module_key,
+                "targetRecordId": target_record_id,
+                "targetRecordCode": str(target.get("recordCode") or ""),
+                "targetName": str(target.get("name") or ""),
+                "targetStatus": str(target.get("status") or ""),
+                "sortOrder": int(raw_link.get("sortOrder") or index),
+                "properties": dict(raw_link.get("properties") or {}),
+            }
+        )
+
+    relation_groups: dict[str, dict[str, Any]] = {}
+    for field in relation_fields:
+        key = str(field.get("key") or "")
+        values = values_by_field.get(key, [])
+        if not field.get("multiple", False) and len(values) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {key}: only one target is allowed",
+            )
+        if enforce_required and field.get("required") and not values:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid business field {key}: relation is required",
+            )
+        relation_group = str(field.get("relationGroup") or "").strip()
+        minimum_group_targets = int(field.get("minGroupTargets") or 0)
+        if relation_group:
+            group = relation_groups.setdefault(
+                relation_group,
+                {"fields": [], "targets": set(), "minimum": 0},
+            )
+            group["fields"].append(key)
+            group["targets"].update(values)
+            group["minimum"] = max(int(group["minimum"]), minimum_group_targets)
+        properties[key] = values
+    if enforce_required:
+        for relation_group, group in relation_groups.items():
+            if len(group["targets"]) >= int(group["minimum"]):
+                continue
+            field_names = ", ".join(group["fields"])
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid business relation group {relation_group}: "
+                    f"select at least {group['minimum']} target from {field_names}"
+                ),
+            )
+    return normalized_links
 
 
 def mysql_datetime(value: Any) -> Any:
@@ -1886,6 +2301,7 @@ def normalize_record(payload: dict[str, Any], *, default_status: str = "active")
     record["status"] = str(record.get("status") or default_status).strip()
     record["linkedBlockCodes"] = compact_list(record.get("linkedBlockCodes"))
     record["linkedRightArchiveCodes"] = compact_list(record.get("linkedRightArchiveCodes"))
+    record["linkedRecords"] = list(record.get("linkedRecords") or [])
     record.setdefault("properties", {})
     if not record["name"]:
         raise HTTPException(status_code=400, detail="name is required")
@@ -2248,6 +2664,7 @@ def business_audit_snapshot(record: dict[str, Any]) -> dict[str, Any]:
         "status": record.get("status") or "",
         "linkedBlockCodes": list(record.get("linkedBlockCodes") or []),
         "linkedRightArchiveCodes": list(record.get("linkedRightArchiveCodes") or []),
+        "linkedRecords": list(record.get("linkedRecords") or []),
         "properties": business_properties_without_audit(record.get("properties") or {}),
         "payload": business_payload(record),
         "deletedAt": record.get("deletedAt"),
@@ -2263,6 +2680,7 @@ def business_changed_fields(before: dict[str, Any], after: dict[str, Any]) -> li
         "status",
         "linkedBlockCodes",
         "linkedRightArchiveCodes",
+        "linkedRecords",
         "properties",
         "deletedAt",
     ]
@@ -3204,11 +3622,32 @@ def business_attribute_values(
     )
 
 
+def inferred_business_attribute_field(key: str, value: Any) -> dict[str, Any]:
+    if isinstance(value, bool):
+        input_type = "boolean"
+    elif isinstance(value, int):
+        input_type = "integer"
+    elif isinstance(value, (float, Decimal)):
+        input_type = "number"
+    else:
+        input_type = "text"
+    return {"key": key, "inputType": input_type}
+
+
 def sync_business_attributes_mysql(cur: Any, module_key: str, record: dict[str, Any]) -> int:
     record_id = str(record.get("id") or "")
     cur.execute("DELETE FROM business_record_attributes WHERE business_record_id = %s", (record_id,))
     written = 0
-    for field in business_field_schema(module_key):
+    fields = list(business_field_schema(module_key))
+    known_keys = {str(field.get("key") or "") for field in fields}
+    properties = record.get("properties") or {}
+    if isinstance(properties, dict):
+        fields.extend(
+            inferred_business_attribute_field(str(key), value)
+            for key, value in properties.items()
+            if str(key) and str(key) not in known_keys
+        )
+    for field in fields:
         values = business_attribute_values(module_key, record, field)
         if values is None:
             continue
@@ -3294,6 +3733,28 @@ def sync_business_links_mysql(cur: Any, record: dict[str, Any], *, batch_size: i
         )
 
 
+def sync_business_record_links_mysql(cur: Any, record: dict[str, Any]) -> None:
+    record_id = str(record.get("id") or "")
+    cur.execute("DELETE FROM business_record_links WHERE source_record_id = %s", (record_id,))
+    for index, link in enumerate(record.get("linkedRecords") or []):
+        cur.execute(
+            """
+            INSERT INTO business_record_links (
+                source_record_id, relation_type, target_module_key, target_record_id,
+                sort_order, properties
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                record_id,
+                str(link.get("relationType") or ""),
+                str(link.get("targetModuleKey") or ""),
+                str(link.get("targetRecordId") or ""),
+                int(link.get("sortOrder") or index),
+                serializable_json(link.get("properties"), {}),
+            ),
+        )
+
+
 def execute_upsert_business_scalar_mysql(cur: Any, module_key: str, record: dict[str, Any]) -> None:
     cur.execute(
         """
@@ -3329,6 +3790,7 @@ def execute_upsert_business_scalar_mysql(cur: Any, module_key: str, record: dict
 def execute_upsert_business_mysql(cur: Any, module_key: str, record: dict[str, Any]) -> None:
     execute_upsert_business_scalar_mysql(cur, module_key, record)
     sync_business_links_mysql(cur, record)
+    sync_business_record_links_mysql(cur, record)
     sync_business_attributes_mysql(cur, module_key, record)
 
 
@@ -3337,6 +3799,7 @@ def upsert_business_record_mysql(
     record: dict[str, Any],
     *,
     sync_links: bool = True,
+    sync_record_links: bool = True,
     connection_factory: Any = mysql_connect,
 ) -> None:
     with connection_factory() as conn:
@@ -3344,6 +3807,8 @@ def upsert_business_record_mysql(
             execute_upsert_business_scalar_mysql(cur, module_key, record)
             if sync_links:
                 sync_business_links_mysql(cur, record)
+            if sync_record_links:
+                sync_business_record_links_mysql(cur, record)
             sync_business_attributes_mysql(cur, module_key, record)
         conn.commit()
 
@@ -4299,6 +4764,52 @@ def list_business_reference_options(
     }
 
 
+@router.get("/references/business/{module_key}")
+def list_business_record_reference_options(
+    module_key: str,
+    q: str = Query(default=""),
+    status: str = Query(default="active"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    module_key = validate_business_module(module_key)
+    require_permission(context, permission_for_business_module(module_key, "view"))
+    fetch_limit = min(500, max(100, limit + offset))
+    records, _source_total = business_reference_source_payload(
+        module_key,
+        query_text=q.strip(),
+        fetch_limit=fetch_limit,
+    )
+    items = []
+    for record in records:
+        if status and str(record.get("status") or "") != status:
+            continue
+        record_id = str(record.get("id") or "").strip()
+        if not record_id:
+            continue
+        record_code = str(record.get("recordCode") or "").strip()
+        name = str(record.get("name") or record_code or record_id).strip()
+        items.append(
+            {
+                "id": record_id,
+                "value": record_id,
+                "label": f"{name} · {record_code}" if record_code else name,
+                "recordCode": record_code,
+                "name": name,
+                "status": str(record.get("status") or ""),
+                "moduleKey": module_key,
+            }
+        )
+    items.sort(key=lambda item: (item["label"], item["id"]))
+    return {
+        "items": items[offset : offset + limit],
+        "total": len(items),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.get("/industry-platform/dashboard")
 def get_industry_platform_dashboard(context: AuthContext = Depends(request_context)) -> dict[str, Any]:
     return industry_platform_dashboard_payload()
@@ -4366,7 +4877,20 @@ def create_business_record(
     require_permission(context, permission_for_business_module(module_key, "create"))
     records = [] if use_mysql() else business_records(module_key)
     payload_data = payload.model_dump(mode="json")
-    payload_data["properties"] = normalize_business_properties(module_key, payload_data.get("properties"))
+    form_version = int(payload_data.get("formVersion") or 1)
+    payload_data["formVersion"] = form_version
+    payload_data["properties"] = normalize_business_properties(
+        module_key,
+        payload_data.get("properties"),
+        enforce_required=form_version >= 2,
+    )
+    payload_data["linkedRecords"] = normalize_business_record_links(
+        module_key,
+        payload_data.get("linkedRecords"),
+        payload_data["properties"],
+        context=context,
+        enforce_required=form_version >= 2,
+    )
     normalized_record = normalize_record(payload_data)
     if module_key == "product-qrcodes":
         properties = dict(normalized_record.get("properties") or {})
@@ -4386,11 +4910,12 @@ def create_business_record(
             "status",
             "linkedBlockCodes",
             "linkedRightArchiveCodes",
+            "linkedRecords",
             "properties",
         ],
     )
     if use_mysql():
-        upsert_business_record_mysql(module_key, created, sync_links=True)
+        upsert_business_record_mysql(module_key, created, sync_links=True, sync_record_links=True)
     else:
         records.append(created)
         save_business_records(module_key, records)
@@ -4554,7 +5079,10 @@ def patch_business_record(
             for key, value in payload.model_dump(mode="json", exclude_unset=True).items()
             if value is not None
         }
+        property_keys = set((patch_data.get("properties") or {}).keys())
+        business_relation_keys = {str(field.get("key") or "") for field in business_relation_fields(module_key)}
         relation_update = bool({"linkedBlockCodes", "linkedRightArchiveCodes"} & set(patch_data))
+        record_relation_update = "linkedRecords" in patch_data or bool(property_keys & business_relation_keys)
         if relation_update:
             matches = fetch_business_records_mysql(module_key, record_id=record_id, limit=1)
             record = matches[0] if matches else None
@@ -4562,11 +5090,23 @@ def patch_business_record(
             record = find_business_record_for_upsert(module_key, record_id)
         if not record or record.get("deletedAt"):
             raise HTTPException(status_code=404, detail="Record not found")
+        form_version = int(patch_data.get("formVersion") or record.get("formVersion") or 1)
+        patch_data["formVersion"] = form_version
         if "properties" in patch_data:
             patch_data["properties"] = normalize_business_properties(
                 module_key,
                 patch_data.get("properties"),
                 previous_properties=record.get("properties"),
+                enforce_required=form_version >= 2,
+            )
+        if record_relation_update:
+            relation_properties = patch_data.get("properties") or dict(record.get("properties") or {})
+            patch_data["linkedRecords"] = normalize_business_record_links(
+                module_key,
+                patch_data.get("linkedRecords"),
+                relation_properties,
+                context=context,
+                enforce_required=form_version >= 2,
             )
         patched = normalize_record(
             {
@@ -4586,7 +5126,12 @@ def patch_business_record(
             before=record,
             changed_fields=changed_fields,
         )
-        upsert_business_record_mysql(module_key, patched, sync_links=relation_update)
+        upsert_business_record_mysql(
+            module_key,
+            patched,
+            sync_links=relation_update,
+            sync_record_links=record_relation_update,
+        )
         return ManagedRecordOut.model_validate(patched)
     records = business_records(module_key)
     for index, record in enumerate(records):
@@ -4597,11 +5142,26 @@ def patch_business_record(
             for key, value in payload.model_dump(mode="json", exclude_unset=True).items()
             if value is not None
         }
+        property_keys = set((patch_data.get("properties") or {}).keys())
+        business_relation_keys = {str(field.get("key") or "") for field in business_relation_fields(module_key)}
+        record_relation_update = "linkedRecords" in patch_data or bool(property_keys & business_relation_keys)
+        form_version = int(patch_data.get("formVersion") or record.get("formVersion") or 1)
+        patch_data["formVersion"] = form_version
         if "properties" in patch_data:
             patch_data["properties"] = normalize_business_properties(
                 module_key,
                 patch_data.get("properties"),
                 previous_properties=record.get("properties"),
+                enforce_required=form_version >= 2,
+            )
+        if record_relation_update:
+            relation_properties = patch_data.get("properties") or dict(record.get("properties") or {})
+            patch_data["linkedRecords"] = normalize_business_record_links(
+                module_key,
+                patch_data.get("linkedRecords"),
+                relation_properties,
+                context=context,
+                enforce_required=form_version >= 2,
             )
         patched = normalize_record(
             {

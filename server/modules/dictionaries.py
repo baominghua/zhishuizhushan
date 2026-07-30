@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,6 +31,25 @@ router = APIRouter(prefix="/api", tags=["dictionaries"])
 
 TYPE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,99}$")
 ITEM_CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
+STANDARD_DIVISION_RESOURCE = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / "cn-administrative-divisions-2023.json"
+)
+STANDARD_DIVISION_SHA256 = "eaec154ce55f9683fbae09a21cea7d8523e4074f323602cf92b6840611139c5b"
+ADMIN_DIVISION_NAMESPACE = uuid.UUID("8fa23946-eb3c-5f40-8ab3-d5cf10675b0a")
+STANDARD_DIVISION_LEVELS = ("province", "city", "county", "town")
+ADMIN_DIVISION_PARENT_LEVEL = {
+    "city": "province",
+    "county": "city",
+    "town": "county",
+    "village": "town",
+}
+STANDARD_DIVISION_SPECIAL_REGIONS = (
+    ("710000", "台湾省"),
+    ("810000", "香港特别行政区"),
+    ("820000", "澳门特别行政区"),
+)
 
 
 DEFAULT_DICTIONARIES = [
@@ -379,6 +402,156 @@ def api_datetime(value: Any) -> str | None:
             value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
     return str(value)
+
+
+@lru_cache(maxsize=1)
+def standard_administrative_division_seeds() -> list[dict[str, Any]]:
+    payload_bytes = STANDARD_DIVISION_RESOURCE.read_bytes()
+    digest = hashlib.sha256(payload_bytes).hexdigest()
+    if digest != STANDARD_DIVISION_SHA256:
+        raise RuntimeError("Administrative division snapshot checksum mismatch")
+    payload = json.loads(payload_bytes.decode("utf-8"))
+    if not isinstance(payload, list):
+        raise RuntimeError("Administrative division snapshot must contain a list")
+
+    records: list[dict[str, Any]] = []
+
+    def normalized_code(raw_code: str, level_index: int) -> str:
+        if level_index <= 1:
+            return raw_code.ljust(6, "0")
+        return raw_code
+
+    def append_level(
+        nodes: list[dict[str, Any]],
+        level_index: int,
+        parent_code: str = "",
+        parent_names: tuple[str, ...] = (),
+    ) -> None:
+        level_code = STANDARD_DIVISION_LEVELS[level_index]
+        for index, node in enumerate(nodes):
+            raw_code = compact_text(node.get("code"))
+            label = compact_text(node.get("name"))
+            if not raw_code or not label:
+                raise RuntimeError("Administrative division snapshot contains an invalid node")
+            item_code = normalized_code(raw_code, level_index)
+            full_names = (*parent_names, label)
+            code_system = (
+                "GB/T 2260-2007"
+                if level_index <= 2
+                else "GB/T 10114-2003 / statistical-division"
+            )
+            records.append(
+                {
+                    "id": str(
+                        uuid.uuid5(
+                            ADMIN_DIVISION_NAMESPACE,
+                            f"{level_code}:{item_code}",
+                        )
+                    ),
+                    "itemCode": item_code,
+                    "label": label,
+                    "parentCode": parent_code,
+                    "levelCode": level_code,
+                    "fullName": " / ".join(full_names),
+                    "sortOrder": (index + 1) * 10,
+                    "source": "national-standard-snapshot",
+                    "searchAliases": list(dict.fromkeys([label, item_code, raw_code])),
+                    "metadata": {
+                        "codeSystem": code_system,
+                        "referenceYear": 2023,
+                        "datasetVersion": "2023-06-30",
+                        "snapshotStatus": "historical-public-snapshot",
+                        "officialRuleUrl": (
+                            "https://www.stats.gov.cn/sj/tjbz/gjtjbz/"
+                            "202302/t20230213_1902741.html"
+                        ),
+                        "officialSnapshotUrl": (
+                            "https://www.stats.gov.cn/sj/tjbz/"
+                            "tjyqhdmhcxhfdm/2023/index.html"
+                        ),
+                        "packagingSource": (
+                            "https://github.com/modood/"
+                            "Administrative-divisions-of-China/releases/tag/2.7.0"
+                        ),
+                        "resourceSha256": STANDARD_DIVISION_SHA256,
+                    },
+                }
+            )
+            children = node.get("children")
+            if level_index < len(STANDARD_DIVISION_LEVELS) - 1 and isinstance(children, list):
+                append_level(children, level_index + 1, item_code, full_names)
+
+    append_level(payload, 0)
+    for index, (item_code, label) in enumerate(STANDARD_DIVISION_SPECIAL_REGIONS):
+        records.append(
+            {
+                "id": str(
+                    uuid.uuid5(
+                        ADMIN_DIVISION_NAMESPACE,
+                        f"province:{item_code}",
+                    )
+                ),
+                "itemCode": item_code,
+                "label": label,
+                "parentCode": "",
+                "levelCode": "province",
+                "fullName": label,
+                "sortOrder": (len(payload) + index + 1) * 10,
+                "source": "national-standard-snapshot",
+                "searchAliases": [label, item_code],
+                "metadata": {
+                    "codeSystem": "GB/T 2260-2007",
+                    "referenceYear": 2023,
+                    "datasetVersion": "2023-06-30",
+                    "snapshotStatus": "province-code-only",
+                    "coverageNote": "Province-level code only; lower levels use separate systems.",
+                    "resourceSha256": STANDARD_DIVISION_SHA256,
+                },
+            }
+        )
+    return records
+
+
+def standard_division_seed_enabled() -> bool:
+    value = os.getenv("SMART_BAMBOO_SEED_STANDARD_DIVISIONS", "1")
+    return compact_text(value).lower() not in {"0", "false", "no", "off"}
+
+
+def dictionary_item_identity(item: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        compact_text(item.get("dictionaryTypeId")),
+        compact_text(item.get("levelCode")),
+        compact_text(item.get("itemCode")),
+    )
+
+
+def parent_level_for(level_code: Any) -> str:
+    return ADMIN_DIVISION_PARENT_LEVEL.get(compact_text(level_code), "")
+
+
+def system_dictionary_seeds() -> list[dict[str, Any]]:
+    seeds: list[dict[str, Any]] = []
+    for dictionary_seed in DEFAULT_DICTIONARIES:
+        cloned = {key: value for key, value in dictionary_seed.items() if key != "items"}
+        items = list(dictionary_seed.get("items") or [])
+        if (
+            cloned.get("typeCode") == "administrative-divisions"
+            and standard_division_seed_enabled()
+        ):
+            standard_items = standard_administrative_division_seeds()
+            items = [*standard_items, *items]
+            cloned["properties"] = {
+                **(cloned.get("properties") or {}),
+                "referenceYear": 2023,
+                "datasetVersion": "2023-06-30",
+                "standardItemCount": len(standard_items),
+                "coverage": "National province/city/county/town plus curated project villages",
+                "snapshotStatus": "historical-public-snapshot",
+                "resourceSha256": STANDARD_DIVISION_SHA256,
+            }
+        cloned["items"] = items
+        seeds.append(cloned)
+    return [*seeds, *business_dictionary_seeds()]
 
 
 class DictionaryTypeIn(BaseModel):
@@ -851,7 +1024,7 @@ def _save_item_record(record: dict[str, Any]) -> None:
                         %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s,
                         %s::timestamptz, %s::timestamptz, %s::timestamptz
                     )
-                    ON CONFLICT (dictionary_type_id, item_code) DO UPDATE SET
+                    ON CONFLICT (dictionary_type_id, level_code, item_code) DO UPDATE SET
                         label = EXCLUDED.label,
                         parent_item_id = EXCLUDED.parent_item_id,
                         level_code = EXCLUDED.level_code,
@@ -892,6 +1065,7 @@ def _save_item_record(record: dict[str, Any]) -> None:
     for index, current in enumerate(records):
         if current["id"] == normalized["id"] or (
             current["dictionaryTypeId"] == normalized["dictionaryTypeId"]
+            and current["levelCode"] == normalized["levelCode"]
             and current["itemCode"] == normalized["itemCode"]
         ):
             records[index] = normalized
@@ -899,6 +1073,140 @@ def _save_item_record(record: dict[str, Any]) -> None:
     else:
         records.append(normalized)
     save_json_records(dictionary_items_json_path(), records)
+
+
+def _save_item_records(records: list[dict[str, Any]]) -> None:
+    normalized_records = [normalize_item(record) for record in records]
+    if not normalized_records:
+        return
+    if use_mysql():
+        sql = """
+            INSERT INTO dictionary_items (
+                id, dictionary_type_id, item_code, label, parent_item_id,
+                level_code, full_name, pinyin, initials, search_aliases,
+                sort_order, status, metadata, source, created_at, updated_at, deleted_at
+            ) VALUES (
+                %s, %s, %s, %s, NULLIF(%s, ''), %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s
+            )
+            ON DUPLICATE KEY UPDATE
+                label = VALUES(label),
+                parent_item_id = VALUES(parent_item_id),
+                level_code = VALUES(level_code),
+                full_name = VALUES(full_name),
+                pinyin = VALUES(pinyin),
+                initials = VALUES(initials),
+                search_aliases = VALUES(search_aliases),
+                sort_order = VALUES(sort_order),
+                status = VALUES(status),
+                metadata = VALUES(metadata),
+                source = VALUES(source),
+                updated_at = VALUES(updated_at),
+                deleted_at = VALUES(deleted_at)
+        """
+        values = [
+            (
+                item["id"],
+                item["dictionaryTypeId"],
+                item["itemCode"],
+                item["label"],
+                item["parentItemId"],
+                item["levelCode"],
+                item["fullName"],
+                item["pinyin"],
+                item["initials"],
+                json.dumps(item["searchAliases"], ensure_ascii=False),
+                item["sortOrder"],
+                item["status"],
+                json.dumps(item["metadata"], ensure_ascii=False),
+                item["source"],
+                mysql_datetime(item["createdAt"]),
+                mysql_datetime(item["updatedAt"]),
+                mysql_datetime(item["deletedAt"]),
+            )
+            for item in normalized_records
+        ]
+        with mysql_connect() as conn:
+            with conn.cursor() as cur:
+                for start in range(0, len(values), 1000):
+                    cur.executemany(sql, values[start : start + 1000])
+            conn.commit()
+        return
+    if use_postgis():
+        import psycopg
+
+        sql = """
+            INSERT INTO dictionary_items (
+                id, dictionary_type_id, item_code, label, parent_item_id,
+                level_code, full_name, pinyin, initials, search_aliases,
+                sort_order, status, metadata, source, created_at, updated_at, deleted_at
+            ) VALUES (
+                %s::uuid, %s::uuid, %s, %s, NULLIF(%s, '')::uuid,
+                %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s,
+                %s::timestamptz, %s::timestamptz, %s::timestamptz
+            )
+            ON CONFLICT (dictionary_type_id, level_code, item_code) DO UPDATE SET
+                label = EXCLUDED.label,
+                parent_item_id = EXCLUDED.parent_item_id,
+                level_code = EXCLUDED.level_code,
+                full_name = EXCLUDED.full_name,
+                pinyin = EXCLUDED.pinyin,
+                initials = EXCLUDED.initials,
+                search_aliases = EXCLUDED.search_aliases,
+                sort_order = EXCLUDED.sort_order,
+                status = EXCLUDED.status,
+                metadata = EXCLUDED.metadata,
+                source = EXCLUDED.source,
+                updated_at = EXCLUDED.updated_at,
+                deleted_at = EXCLUDED.deleted_at
+        """
+        values = [
+            (
+                item["id"],
+                item["dictionaryTypeId"],
+                item["itemCode"],
+                item["label"],
+                item["parentItemId"],
+                item["levelCode"],
+                item["fullName"],
+                item["pinyin"],
+                item["initials"],
+                json.dumps(item["searchAliases"], ensure_ascii=False),
+                item["sortOrder"],
+                item["status"],
+                json.dumps(item["metadata"], ensure_ascii=False),
+                item["source"],
+                item["createdAt"],
+                item["updatedAt"],
+                item["deletedAt"],
+            )
+            for item in normalized_records
+        ]
+        with psycopg.connect(database.get_settings().database_url) as conn:
+            with conn.cursor() as cur:
+                for start in range(0, len(values), 1000):
+                    cur.executemany(sql, values[start : start + 1000])
+            conn.commit()
+        return
+
+    existing = load_all_items()
+    by_id = {item["id"]: index for index, item in enumerate(existing)}
+    by_identity = {
+        dictionary_item_identity(item): index
+        for index, item in enumerate(existing)
+    }
+    for item in normalized_records:
+        index = by_id.get(item["id"])
+        if index is None:
+            index = by_identity.get(dictionary_item_identity(item))
+        if index is None:
+            index = len(existing)
+            existing.append(item)
+        else:
+            existing[index] = item
+        by_id[item["id"]] = index
+        by_identity[dictionary_item_identity(item)] = index
+    save_json_records(dictionary_items_json_path(), existing)
 
 
 def type_by_code(type_code: str, *, include_deleted: bool = False) -> dict[str, Any] | None:
@@ -928,14 +1236,17 @@ def item_by_code(
     dictionary_type_id: str,
     item_code: str,
     *,
+    level_code: str = "",
     include_deleted: bool = False,
 ) -> dict[str, Any] | None:
+    normalized_level = compact_text(level_code)
     return next(
         (
             item
             for item in load_all_items()
             if item["dictionaryTypeId"] == dictionary_type_id
             and item["itemCode"] == compact_text(item_code)
+            and (not normalized_level or item["levelCode"] == normalized_level)
             and (include_deleted or not item["deletedAt"])
         ),
         None,
@@ -954,14 +1265,20 @@ def item_by_id(item_id: str, *, include_deleted: bool = False) -> dict[str, Any]
 
 
 def ensure_system_dictionaries() -> None:
-    seeds = [*DEFAULT_DICTIONARIES, *business_dictionary_seeds()]
+    seeds = system_dictionary_seeds()
     existing_types = load_all_types()
     existing_items = load_all_items()
     types_by_code = {item["typeCode"]: item for item in existing_types}
     items_by_identity = {
-        (item["dictionaryTypeId"], item["itemCode"]): item
+        dictionary_item_identity(item): item
         for item in existing_items
     }
+    items_by_code: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in existing_items:
+        items_by_code.setdefault(
+            (item["dictionaryTypeId"], item["itemCode"]),
+            [],
+        ).append(item)
     pending_types: list[dict[str, Any]] = []
     pending_items: list[dict[str, Any]] = []
 
@@ -980,11 +1297,20 @@ def ensure_system_dictionaries() -> None:
             pending_types.append(dictionary_type)
             types_by_code[dictionary_type["typeCode"]] = dictionary_type
         for index, item_seed in enumerate(dictionary_seed.get("items") or []):
-            identity = (dictionary_type["id"], item_seed["itemCode"])
+            level_code = compact_text(item_seed.get("levelCode"))
+            identity = (dictionary_type["id"], level_code, item_seed["itemCode"])
             if identity in items_by_identity:
                 continue
             parent_code = compact_text(item_seed.get("parentCode"))
-            parent = items_by_identity.get((dictionary_type["id"], parent_code)) if parent_code else None
+            parent_level = parent_level_for(level_code)
+            parent = None
+            if parent_code and parent_level:
+                parent = items_by_identity.get(
+                    (dictionary_type["id"], parent_level, parent_code)
+                )
+            if parent_code and parent is None:
+                candidates = items_by_code.get((dictionary_type["id"], parent_code), [])
+                parent = candidates[0] if candidates else None
             item = normalize_item(
                 {
                     **item_seed,
@@ -994,7 +1320,7 @@ def ensure_system_dictionaries() -> None:
                     "parentCode": parent_code,
                     "status": "active",
                     "sortOrder": item_seed.get("sortOrder", (index + 1) * 10),
-                    "source": "seed",
+                    "source": item_seed.get("source") or "seed",
                     "searchAliases": item_seed.get("searchAliases") or [item_seed["label"]],
                     "metadata": {
                         **(item_seed.get("metadata") or {}),
@@ -1004,12 +1330,15 @@ def ensure_system_dictionaries() -> None:
             )
             pending_items.append(item)
             items_by_identity[identity] = item
+            items_by_code.setdefault(
+                (dictionary_type["id"], item["itemCode"]),
+                [],
+            ).append(item)
 
     if use_mysql() or use_postgis():
         for dictionary_type in pending_types:
             _save_type_record(dictionary_type)
-        for item in pending_items:
-            _save_item_record(item)
+        _save_item_records(pending_items)
     else:
         if pending_types:
             save_json_records(
@@ -1017,10 +1346,7 @@ def ensure_system_dictionaries() -> None:
                 [*existing_types, *pending_types],
             )
         if pending_items:
-            save_json_records(
-                dictionary_items_json_path(),
-                [*existing_items, *pending_items],
-            )
+            _save_item_records(pending_items)
     sync_administrative_divisions_from_blocks()
 
 
@@ -1037,7 +1363,7 @@ def sync_administrative_divisions_from_blocks(
         return {"created": 0, "updated": 0, "examined": 0}
 
     existing = {
-        item["itemCode"]: item
+        (item["levelCode"], item["itemCode"]): item
         for item in _dictionary_items(dictionary_type["id"], include_deleted=True)
     }
     created = 0
@@ -1073,9 +1399,12 @@ def sync_administrative_divisions_from_blocks(
             if not entry["itemCode"] or not entry["label"]:
                 continue
             examined += 1
-            parent = existing.get(entry["parentCode"])
+            parent = existing.get(
+                (parent_level_for(entry["levelCode"]), entry["parentCode"])
+            )
             parent_full_name = compact_text(parent.get("fullName")) if parent else ""
-            current = existing.get(entry["itemCode"])
+            identity = (entry["levelCode"], entry["itemCode"])
+            current = existing.get(identity)
             if current is not None:
                 metadata = current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
                 if (
@@ -1106,7 +1435,7 @@ def sync_administrative_divisions_from_blocks(
                 )
                 if any(current.get(key) != refreshed.get(key) for key in compared_fields):
                     _save_item_record(refreshed)
-                    existing[refreshed["itemCode"]] = refreshed
+                    existing[identity] = refreshed
                     updated += 1
                 continue
             item = normalize_item(
@@ -1129,7 +1458,7 @@ def sync_administrative_divisions_from_blocks(
                 }
             )
             _save_item_record(item)
-            existing[item["itemCode"]] = item
+            existing[identity] = item
             created += 1
     return {"created": created, "updated": updated, "examined": examined}
 
@@ -1271,10 +1600,23 @@ def create_dictionary_item(
 ) -> dict[str, Any]:
     require_permission(context, "system.dictionaries.create")
     dictionary_type = _require_dictionary(type_code)
-    if item_by_code(dictionary_type["id"], payload.itemCode, include_deleted=True):
+    if item_by_code(
+        dictionary_type["id"],
+        payload.itemCode,
+        level_code=payload.levelCode,
+        include_deleted=True,
+    ):
         raise HTTPException(status_code=409, detail="itemCode already exists")
     parent_code = compact_text(payload.parentCode)
-    parent = item_by_code(dictionary_type["id"], parent_code) if parent_code else None
+    parent = (
+        item_by_code(
+            dictionary_type["id"],
+            parent_code,
+            level_code=parent_level_for(payload.levelCode),
+        )
+        if parent_code
+        else None
+    )
     if parent_code and parent is None:
         raise HTTPException(status_code=422, detail="parentCode does not exist")
     record = normalize_item(
@@ -1303,9 +1645,18 @@ def patch_dictionary_item(
     if item is None or item["dictionaryTypeId"] != dictionary_type["id"]:
         raise HTTPException(status_code=404, detail="Dictionary item not found")
     changes = payload.model_dump(exclude_unset=True)
-    if "parentCode" in changes:
-        parent_code = compact_text(changes.get("parentCode"))
-        parent = item_by_code(dictionary_type["id"], parent_code) if parent_code else None
+    if "parentCode" in changes or "levelCode" in changes:
+        parent_code = compact_text(changes.get("parentCode", item["parentCode"]))
+        target_level = compact_text(changes.get("levelCode", item["levelCode"]))
+        parent = (
+            item_by_code(
+                dictionary_type["id"],
+                parent_code,
+                level_code=parent_level_for(target_level),
+            )
+            if parent_code
+            else None
+        )
         if parent_code and parent is None:
             raise HTTPException(status_code=422, detail="parentCode does not exist")
         if parent and parent["id"] == item["id"]:

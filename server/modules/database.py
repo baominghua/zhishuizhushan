@@ -546,7 +546,7 @@ def init_platform_schema() -> None:
                     item_code text NOT NULL,
                     label text NOT NULL,
                     parent_item_id uuid REFERENCES dictionary_items(id) ON DELETE SET NULL,
-                    level_code text,
+                    level_code text NOT NULL DEFAULT '',
                     full_name text,
                     pinyin text,
                     initials text,
@@ -557,10 +557,29 @@ def init_platform_schema() -> None:
                     source text NOT NULL DEFAULT 'manual',
                     created_at timestamptz NOT NULL DEFAULT now(),
                     updated_at timestamptz NOT NULL DEFAULT now(),
-                    deleted_at timestamptz,
-                    UNIQUE (dictionary_type_id, item_code)
+                    deleted_at timestamptz
                 )
                 """
+            )
+            cur.execute(
+                "ALTER TABLE dictionary_items "
+                "ALTER COLUMN level_code SET DEFAULT ''"
+            )
+            cur.execute(
+                "UPDATE dictionary_items SET level_code = '' "
+                "WHERE level_code IS NULL"
+            )
+            cur.execute(
+                "ALTER TABLE dictionary_items "
+                "ALTER COLUMN level_code SET NOT NULL"
+            )
+            cur.execute(
+                "ALTER TABLE dictionary_items DROP CONSTRAINT IF EXISTS "
+                "dictionary_items_dictionary_type_id_item_code_key"
+            )
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_dictionary_item_code "
+                "ON dictionary_items (dictionary_type_id, level_code, item_code)"
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_dictionary_item_lookup ON dictionary_items (dictionary_type_id, parent_item_id, status, sort_order)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_dictionary_item_level ON dictionary_items (dictionary_type_id, level_code, status)")

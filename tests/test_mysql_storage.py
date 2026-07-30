@@ -91,6 +91,7 @@ def test_mysql_schema_upgrade_adds_all_ledger_indexes_only_when_missing():
     missing = mysql_index_upgrade_statements(set())
     existing = mysql_index_upgrade_statements(
         {
+            ("dictionary_items", "uq_dictionary_item_code"),
             ("forest_blocks", "idx_forest_blocks_operation"),
             ("forest_blocks", "idx_forest_blocks_town_active_updated"),
             ("forest_blocks", "idx_forest_blocks_town_active_area"),
@@ -99,6 +100,10 @@ def test_mysql_schema_upgrade_adds_all_ledger_indexes_only_when_missing():
     )
 
     assert missing == [
+        (
+            "ALTER TABLE dictionary_items ADD UNIQUE KEY "
+            "uq_dictionary_item_code (dictionary_type_id, level_code, item_code)"
+        ),
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_operation (base_type, operation_type)",
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_town_active_updated (town_code, deleted_at, updated_at)",
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_town_active_area (deleted_at, town_code, area_mu)",
@@ -127,17 +132,22 @@ def test_mysql_schema_upgrade_inspects_existing_indexes_before_alter():
     apply_mysql_schema_upgrades(cursor)
 
     assert "information_schema.statistics" in cursor.calls[0]
-    assert cursor.calls[1:5] == [
+    assert "dictionary_items" in cursor.calls[1]
+    assert cursor.calls[2:7] == [
+        (
+            "ALTER TABLE dictionary_items ADD UNIQUE KEY "
+            "uq_dictionary_item_code (dictionary_type_id, level_code, item_code)"
+        ),
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_operation (base_type, operation_type)",
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_town_active_updated (town_code, deleted_at, updated_at)",
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_town_active_area (deleted_at, town_code, area_mu)",
         "ALTER TABLE forest_blocks ADD INDEX idx_forest_blocks_operation_active (deleted_at, base_type, operation_type)",
     ]
-    assert "information_schema.columns" in cursor.calls[5]
-    assert cursor.calls[6] == (
+    assert "information_schema.columns" in cursor.calls[7]
+    assert cursor.calls[8] == (
         "ALTER TABLE import_batch_block_links ADD COLUMN target_json JSON NULL"
     )
-    assert cursor.calls[7] == (
+    assert cursor.calls[9] == (
         "ALTER TABLE import_batch_right_links ADD COLUMN target_json JSON NULL"
     )
 

@@ -143,7 +143,7 @@ def test_business_reference_options_reuse_existing_subject_ledgers(app_client):
     ]
 
 
-def test_staff_and_counterparty_fields_are_existing_ledger_references(app_client):
+def test_staff_and_counterparty_fields_are_normalized_ledger_relations(app_client):
     response = app_client.get(
         "/api/business/modules",
         headers={"X-RS-User": "operator"},
@@ -152,20 +152,19 @@ def test_staff_and_counterparty_fields_are_existing_ledger_references(app_client
     modules = {item["key"]: item for item in response.json()["items"]}
 
     expected = {
-        ("enterprises", "contactName"): ("reference", "people"),
-        ("maintenance-tasks", "assignee"): ("reference", "subjects"),
-        ("work-logs", "worker"): ("multi-reference", "people"),
-        ("trade-matches", "counterparty"): ("reference", "subjects"),
-        ("supply-chain-finance", "borrower"): ("reference", "subjects"),
-        ("mobile-service-channels", "ownerName"): ("reference", "people"),
+        ("maintenance-tasks", "assigneeFarmerIds"): "farmers",
+        ("work-logs", "workerFarmerIds"): "farmers",
+        ("trade-matches", "buyerEnterpriseIds"): "enterprises",
+        ("supply-chain-finance", "borrowerEnterpriseIds"): "enterprises",
+        ("mobile-service-channels", "ownerCooperativeIds"): "cooperatives",
     }
-    for (module_key, field_key), (input_type, reference_group) in expected.items():
+    for (module_key, field_key), target_module in expected.items():
         fields = {field["key"]: field for field in modules[module_key]["fieldSchema"]}
         field = fields[field_key]
-        assert field["inputType"] == input_type
-        assert field["referenceEndpoint"] == f"/api/business-reference-options/{reference_group}"
-        assert field["referenceValueKey"] == "value"
-        assert field["referenceLabelKey"] == "label"
+        assert field["inputType"] == "business-relation"
+        assert field["referenceEndpoint"] == f"/api/references/business/{target_module}"
+        assert field["referenceValueKey"] == "id"
+        assert field["targetModuleKey"] == target_module
 
 
 def test_period_fields_use_month_pickers_and_validate_month_values(app_client):
@@ -382,7 +381,8 @@ def test_operations_modules_expose_typed_field_schemas(app_client):
 
     assert maintenance_fields["taskType"]["inputType"] == "dictionary"
     assert maintenance_fields["taskType"]["dictionaryCode"] == "business-maintenance-tasks-task-type"
-    assert maintenance_fields["planDate"]["inputType"] == "date"
+    assert maintenance_fields["plannedStartAt"]["inputType"] == "datetime-local"
+    assert maintenance_fields["plannedEndAt"]["inputType"] == "datetime-local"
     assert maintenance_fields["closureStatus"]["options"]
     assert work_log_fields["laborCount"]["inputType"] == "integer"
     assert work_log_fields["laborCount"]["min"] == 0
@@ -415,23 +415,33 @@ def test_business_administrative_fields_use_searchable_division_references(app_c
     performance = {item["key"]: item for item in modules["performance-dashboards"]["fieldSchema"]}
     prices = {item["key"]: item for item in modules["price-indexes"]["fieldSchema"]}
 
-    assert farmers["townVillage"] == {
-        "key": "townVillage",
+    assert farmers["townCode"] == {
+        "key": "townCode",
         "label": "所属乡镇",
+        "section": "行政区划",
         "inputType": "reference",
         "required": True,
         "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=town",
-        "referenceValueKey": "label",
+        "referenceValueKey": "value",
         "referenceLabelKey": "fullName",
         "multiple": False,
+        "referenceDictionaryCode": "administrative-divisions",
+        "referenceLevel": "town",
+        "parentField": "countyCode",
+        "displayProperty": "townName",
     }
-    assert farmers["villageName"]["referenceEndpoint"].endswith("level=village")
-    assert farmers["villageName"]["multiple"] is False
-    assert cooperatives["serviceArea"]["inputType"] == "multi-reference"
-    assert cooperatives["serviceArea"]["referenceEndpoint"] == "/api/dictionary-options/administrative-divisions"
-    assert franchise_bases["region"]["inputType"] == "reference"
+    assert farmers["villageCode"]["referenceEndpoint"].endswith("level=village")
+    assert farmers["villageCode"]["referenceValueKey"] == "value"
+    assert farmers["villageCode"]["parentField"] == "townCode"
+    assert farmers["villageCode"]["multiple"] is False
+    assert cooperatives["cityCode"]["parentField"] == "provinceCode"
+    assert cooperatives["townCode"]["parentField"] == "countyCode"
+    assert cooperatives["villageCode"]["parentField"] == "townCode"
+    assert franchise_bases["villageCode"]["inputType"] == "reference"
+    assert franchise_bases["villageCode"]["parentField"] == "townCode"
     assert performance["coverage"]["inputType"] == "multi-reference"
-    assert prices["region"]["inputType"] == "reference"
+    assert prices["countyCode"]["inputType"] == "reference"
+    assert prices["countyCode"]["parentField"] == "cityCode"
 
 
 def test_business_multi_references_are_stored_as_lists(app_client):

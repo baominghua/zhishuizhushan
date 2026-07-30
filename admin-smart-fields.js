@@ -232,6 +232,8 @@ const AdminSmartFields = (() => {
     placeholder = "输入编号或名称搜索",
     limit = DEFAULT_LIMIT,
     multiple = true,
+    queryProvider = null,
+    onChange = null,
   }) {
     if (!input || !endpoint || !valueKey) throw new Error("关联选择控件配置不完整");
     const selected = new Map(splitValues(input.value).map((value) => [value, { value, label: value, historic: true }]));
@@ -255,6 +257,15 @@ const AdminSmartFields = (() => {
 
     function syncInput() {
       input.value = Array.from(selected.keys()).join(", ");
+    }
+
+    function emitChange() {
+      const values = Array.from(selected.keys());
+      input.dispatchEvent(new CustomEvent("smart-reference-change", {
+        bubbles: true,
+        detail: { values },
+      }));
+      if (typeof onChange === "function") onChange(values);
     }
 
     function renderChips() {
@@ -287,6 +298,7 @@ const AdminSmartFields = (() => {
         historic: false,
       });
       renderChips();
+      emitChange();
       searchInput.value = "";
       results.classList.add("hidden");
       searchInput.setAttribute("aria-expanded", "false");
@@ -295,6 +307,7 @@ const AdminSmartFields = (() => {
     function remove(value) {
       selected.delete(String(value));
       renderChips();
+      emitChange();
     }
 
     async function search(term) {
@@ -313,6 +326,11 @@ const AdminSmartFields = (() => {
       results.append(loading);
       try {
         const params = new URLSearchParams({ q: normalized, limit: String(limit), offset: "0" });
+        const dynamicQuery = typeof queryProvider === "function" ? (queryProvider() || {}) : {};
+        Object.entries(dynamicQuery).forEach(([key, value]) => {
+          const normalizedValue = String(value ?? "").trim();
+          if (normalizedValue) params.set(key, normalizedValue);
+        });
         const separator = endpoint.includes("?") ? "&" : "?";
         const items = normalizeItems(await api(`${endpoint}${separator}${params}`));
         const buttons = items.map((item) => {

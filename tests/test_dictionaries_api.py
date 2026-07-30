@@ -1,6 +1,81 @@
 from __future__ import annotations
 
 
+def test_standard_administrative_division_snapshot_has_four_level_national_coverage():
+    from server.modules.dictionaries import standard_administrative_division_seeds
+
+    first = standard_administrative_division_seeds()
+    second = standard_administrative_division_seeds()
+    by_code = {item["itemCode"]: item for item in first}
+    by_identity = {
+        (item["levelCode"], item["itemCode"]): item for item in first
+    }
+    level_counts = {
+        level: sum(item["levelCode"] == level for item in first)
+        for level in ("province", "city", "county", "town")
+    }
+
+    assert first is second
+    assert len(first) == 44_706
+    assert level_counts == {
+        "province": 34,
+        "city": 342,
+        "county": 2_978,
+        "town": 41_352,
+    }
+    assert len(by_identity) == len(first)
+    assert by_code["110000"]["label"] == "北京市"
+    assert by_code["440300"]["parentCode"] == "440000"
+    assert by_code["440305"]["parentCode"] == "440300"
+    assert by_code["440305001"]["parentCode"] == "440305"
+    assert by_code["440305001"]["fullName"] == "广东省 / 深圳市 / 南山区 / 南头街道"
+    assert by_identity[("city", "441900")]["label"] == "东莞市"
+    assert by_identity[("county", "441900")]["label"] == "东莞市"
+    assert by_code["440305001"]["metadata"]["referenceYear"] == 2023
+    assert by_code["440305001"]["metadata"]["snapshotStatus"] == "historical-public-snapshot"
+    assert by_code["710000"]["label"] == "台湾省"
+    assert by_code["810000"]["label"] == "香港特别行政区"
+    assert by_code["820000"]["label"] == "澳门特别行政区"
+    assert by_code["440305001"]["id"] == standard_administrative_division_seeds()[
+        first.index(by_code["440305001"])
+    ]["id"]
+
+
+def test_bulk_dictionary_item_save_writes_json_storage_once(monkeypatch):
+    from server.modules import dictionaries
+
+    saved: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(dictionaries, "use_mysql", lambda: False)
+    monkeypatch.setattr(dictionaries, "use_postgis", lambda: False)
+    monkeypatch.setattr(dictionaries, "load_all_items", lambda: [])
+    monkeypatch.setattr(
+        dictionaries,
+        "save_json_records",
+        lambda _path, records: saved.append(records),
+    )
+
+    dictionaries._save_item_records(
+        [
+            {
+                "dictionaryTypeId": "division-type",
+                "typeCode": "administrative-divisions",
+                "itemCode": "110000",
+                "label": "北京市",
+            },
+            {
+                "dictionaryTypeId": "division-type",
+                "typeCode": "administrative-divisions",
+                "itemCode": "110100",
+                "label": "市辖区",
+                "parentCode": "110000",
+            },
+        ]
+    )
+
+    assert len(saved) == 1
+    assert [item["itemCode"] for item in saved[0]] == ["110000", "110100"]
+
+
 def sample_dictionary(type_code: str = "maintenance-methods") -> dict[str, object]:
     return {
         "typeCode": type_code,
@@ -248,6 +323,7 @@ def test_business_enumeration_dictionaries_are_generated_from_backend_field_sche
         ("tending", "抚育"),
         ("fire-prevention", "防火"),
         ("anti-theft", "防盗伐"),
+        ("plant-protection", "植保"),
         ("other", "其他"),
     ]
 

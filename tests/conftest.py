@@ -21,6 +21,7 @@ def pytest_configure(config):
 @pytest.fixture()
 def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setenv("REMOTE_SENSING_DATA_DIR", str(tmp_path / "remote-sensing"))
+    monkeypatch.setenv("SMART_BAMBOO_SEED_STANDARD_DIVISIONS", "0")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("REMOTE_SENSING_DATABASE_URL", raising=False)
     monkeypatch.delenv("SMART_BAMBOO_DATABASE_URL", raising=False)

@@ -16,6 +16,7 @@ PLATFORM_MYSQL_TABLES = [
     "business_records",
     "business_record_block_links",
     "business_record_right_links",
+    "business_record_links",
     "business_record_attributes",
     "dictionary_types",
     "dictionary_items",
@@ -52,6 +53,13 @@ PLATFORM_CORE_MYSQL_TABLES = tuple(
 )
 
 MYSQL_INDEX_UPGRADES = {
+    (
+        "dictionary_items",
+        "uq_dictionary_item_code",
+    ): (
+        "ALTER TABLE dictionary_items ADD UNIQUE KEY "
+        "uq_dictionary_item_code (dictionary_type_id, level_code, item_code)"
+    ),
     (
         "forest_blocks",
         "idx_forest_blocks_operation",
@@ -104,6 +112,39 @@ def apply_mysql_schema_upgrades(cur: Any) -> None:
         "WHERE table_schema = DATABASE()"
     )
     existing_indexes = {(str(row[0]), str(row[1])) for row in cur.fetchall()}
+    cur.execute(
+        "SELECT is_nullable, column_default FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() "
+        "AND table_name = 'dictionary_items' "
+        "AND column_name = 'level_code'"
+    )
+    level_columns = cur.fetchall()
+    level_column = level_columns[0] if level_columns else None
+    if level_column and (
+        str(level_column[0]).upper() != "NO"
+        or str(level_column[1] or "") != ""
+    ):
+        cur.execute("UPDATE dictionary_items SET level_code = '' WHERE level_code IS NULL")
+        cur.execute(
+            "ALTER TABLE dictionary_items MODIFY COLUMN "
+            "level_code VARCHAR(40) NOT NULL DEFAULT ''"
+        )
+    if ("dictionary_items", "uq_dictionary_item_code") in existing_indexes:
+        cur.execute(
+            "SELECT column_name FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() "
+            "AND table_name = 'dictionary_items' "
+            "AND index_name = 'uq_dictionary_item_code' "
+            "ORDER BY seq_in_index"
+        )
+        columns = tuple(str(row[0]) for row in cur.fetchall())
+        if columns != ("dictionary_type_id", "level_code", "item_code"):
+            cur.execute(
+                "ALTER TABLE dictionary_items "
+                "DROP INDEX uq_dictionary_item_code, "
+                "ADD UNIQUE KEY uq_dictionary_item_code "
+                "(dictionary_type_id, level_code, item_code)"
+            )
     for statement in mysql_index_upgrade_statements(existing_indexes):
         cur.execute(statement)
     cur.execute(
@@ -343,6 +384,25 @@ def mysql_schema_statements() -> list[str]:
         ) {table_options}
         """,
         f"""
+        CREATE TABLE IF NOT EXISTS business_record_links (
+            source_record_id CHAR(36) NOT NULL,
+            relation_type VARCHAR(96) NOT NULL,
+            target_module_key VARCHAR(96) NOT NULL,
+            target_record_id CHAR(36) NOT NULL,
+            sort_order INT NOT NULL DEFAULT 0,
+            properties JSON,
+            UNIQUE KEY uq_business_record_link (
+                source_record_id, relation_type, target_module_key, target_record_id
+            ),
+            KEY idx_business_record_link_target (target_module_key, target_record_id),
+            KEY idx_business_record_link_relation (relation_type, source_record_id),
+            CONSTRAINT fk_business_record_link_source
+                FOREIGN KEY (source_record_id) REFERENCES business_records(id) ON DELETE CASCADE,
+            CONSTRAINT fk_business_record_link_target
+                FOREIGN KEY (target_record_id) REFERENCES business_records(id) ON DELETE CASCADE
+        ) {table_options}
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS business_record_attributes (
             business_record_id CHAR(36) NOT NULL,
             module_key VARCHAR(96) NOT NULL,
@@ -392,7 +452,7 @@ def mysql_schema_statements() -> list[str]:
             item_code VARCHAR(120) NOT NULL,
             label VARCHAR(200) NOT NULL,
             parent_item_id CHAR(36),
-            level_code VARCHAR(40),
+            level_code VARCHAR(40) NOT NULL DEFAULT '',
             full_name VARCHAR(500),
             pinyin VARCHAR(300),
             initials VARCHAR(120),
@@ -404,7 +464,7 @@ def mysql_schema_statements() -> list[str]:
             created_at DATETIME(6) NOT NULL,
             updated_at DATETIME(6) NOT NULL,
             deleted_at DATETIME(6),
-            UNIQUE KEY uq_dictionary_item_code (dictionary_type_id, item_code),
+            UNIQUE KEY uq_dictionary_item_code (dictionary_type_id, level_code, item_code),
             KEY idx_dictionary_item_lookup (dictionary_type_id, parent_item_id, status, sort_order),
             KEY idx_dictionary_item_level (dictionary_type_id, level_code, status),
             KEY idx_dictionary_item_label (dictionary_type_id, label),
