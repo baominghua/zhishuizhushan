@@ -33,6 +33,7 @@ dashboard_token="$(openssl rand -hex 32)"
 break_glass_token="$(openssl rand -hex 32)"
 release_commit="$(git -C "${repo_root}" rev-parse HEAD)"
 release_tag="20260717-${release_commit:0:12}"
+tianditu_tk="${REMOTE_SENSING_TIANDITU_TK:-}"
 
 cat > "${target}" <<EOF
 MYSQL_DATABASE=smart_bamboo
@@ -57,7 +58,7 @@ REMOTE_SENSING_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:33
 REMOTE_SENSING_API_TOKENS='{"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]},"${break_glass_token}":{"user":"break_glass","roles":["admin"],"projects":["*"],"areas":["*"]}}'
 REMOTE_SENSING_CORS_ORIGINS=http://36.140.138.117
 REMOTE_SENSING_TASK_WORKERS=4
-REMOTE_SENSING_TIANDITU_TK=
+REMOTE_SENSING_TIANDITU_TK=${tianditu_tk}
 REMOTE_SENSING_TIANDITU_REFERER=http://36.140.138.117
 REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES=53687091200
 REMOTE_SENSING_BASEMAP_CACHE_MAX_AGE_DAYS=30

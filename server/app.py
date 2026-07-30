@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import csv
 import io
+import math
 import os
 import re
 import shutil
@@ -165,6 +166,11 @@ BASEMAP_CACHE_MAX_BYTES = max(0, env_int("REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES
 BASEMAP_CACHE_MAX_AGE_DAYS = max(0.0, env_float("REMOTE_SENSING_BASEMAP_CACHE_MAX_AGE_DAYS", 0))
 TIANDITU_LAYERS = {"img_w", "cia_w", "vec_w", "cva_w", "ter_w", "cta_w"}
 TIANDITU_BROWSER_CACHE_CONTROL = "public, max-age=2592000, stale-while-revalidate=86400, immutable"
+TIANDITU_PREWARM_BOUNDS = env_list("REMOTE_SENSING_TIANDITU_PREWARM_BOUNDS", [])
+TIANDITU_PREWARM_LAYERS = env_list("REMOTE_SENSING_TIANDITU_PREWARM_LAYERS", ["img_w", "cia_w"])
+TIANDITU_PREWARM_MIN_ZOOM = max(0, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM", 8))
+TIANDITU_PREWARM_MAX_ZOOM = min(18, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM", 13))
+TIANDITU_PREWARM_MAX_TILES = max(1, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES", 10000))
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff", ".geotiff"}
 IMAGERY_SCENE_VIEW_PERMISSION = "imagery.scenes.view"
 IMAGERY_MANAGE_PERMISSION = "imagery.scenes.manage"
@@ -387,6 +393,13 @@ class QualityIssueUpdateRequest(BaseModel):
 class SceneDeliveryRequest(BaseModel):
     status: str
     comment: str = ""
+
+
+class TiandituPrewarmRequest(BaseModel):
+    bounds: list[float]
+    minZoom: int = 8
+    maxZoom: int = 13
+    layers: list[str] = ["img_w", "cia_w"]
 
 
 def split_tokens(value: str | list[str] | None) -> list[str]:
@@ -3119,6 +3132,14 @@ def tianditu_proxy_config() -> dict[str, Any]:
         "cache": tianditu_cache_stats(),
         "hasServerTk": bool(TIANDITU_TK),
         "hasFixedReferer": bool(TIANDITU_REFERER),
+        "prewarm": {
+            "bounds": TIANDITU_PREWARM_BOUNDS,
+            "layers": TIANDITU_PREWARM_LAYERS,
+            "minZoom": TIANDITU_PREWARM_MIN_ZOOM,
+            "maxZoom": TIANDITU_PREWARM_MAX_ZOOM,
+            "maxTiles": TIANDITU_PREWARM_MAX_TILES,
+            "startupError": str(getattr(app.state, "tianditu_prewarm_error", "")),
+        },
     }
 
 
@@ -3153,6 +3174,210 @@ def fetch_tianditu_tile(layer: str, z: int, x: int, y: int, tk: str, referer: st
     if "image" not in content_type.lower() and content.lstrip().startswith(b"<"):
         raise HTTPException(status_code=502, detail="Tianditu returned a non-image response")
     return content
+
+
+def tianditu_tile_x(longitude: float, zoom: int) -> int:
+    tile_count = 1 << zoom
+    value = math.floor((longitude + 180.0) / 360.0 * tile_count)
+    return min(tile_count - 1, max(0, value))
+
+
+def tianditu_tile_y(latitude: float, zoom: int) -> int:
+    tile_count = 1 << zoom
+    clamped = min(85.05112878, max(-85.05112878, latitude))
+    radians = math.radians(clamped)
+    value = math.floor(
+        (1.0 - math.log(math.tan(radians) + (1.0 / math.cos(radians))) / math.pi)
+        / 2.0
+        * tile_count
+    )
+    return min(tile_count - 1, max(0, value))
+
+
+def tianditu_tiles_for_bounds(
+    bounds: list[float],
+    *,
+    min_zoom: int,
+    max_zoom: int,
+) -> list[tuple[int, int, int]]:
+    if len(bounds) != 4:
+        raise HTTPException(status_code=422, detail="Bounds must contain west, south, east, north.")
+    west, south, east, north = [float(value) for value in bounds]
+    if not (-180 <= west < east <= 180 and -85.05112878 <= south < north <= 85.05112878):
+        raise HTTPException(status_code=422, detail="Bounds are outside the supported Web Mercator extent.")
+    if min_zoom < 0 or max_zoom > 18 or min_zoom > max_zoom:
+        raise HTTPException(status_code=422, detail="Zoom range must be between 0 and 18.")
+
+    tiles: list[tuple[int, int, int]] = []
+    for zoom in range(min_zoom, max_zoom + 1):
+        min_x = tianditu_tile_x(west, zoom)
+        max_x = tianditu_tile_x(east, zoom)
+        min_y = tianditu_tile_y(north, zoom)
+        max_y = tianditu_tile_y(south, zoom)
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                tiles.append((zoom, x, y))
+    return tiles
+
+
+def write_tianditu_cache_tile(cache_path: Path, content: bytes) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.part")
+    temporary.write_bytes(content)
+    temporary.replace(cache_path)
+
+
+def run_tianditu_prewarm_task(task_id: str) -> None:
+    task = find_task_record(task_id)
+    if task.get("status") == "canceled":
+        return
+    if not TIANDITU_TK:
+        update_task(
+            task_id,
+            status="failed",
+            progress=100,
+            message="Tianditu server key is missing",
+            failedAt=now_iso(),
+        )
+        return
+
+    try:
+        coordinates = tianditu_tiles_for_bounds(
+            [float(value) for value in list(task.get("bounds") or [])],
+            min_zoom=int(task.get("minZoom") or 0),
+            max_zoom=int(task.get("maxZoom") or 0),
+        )
+    except Exception as exc:
+        update_task(
+            task_id,
+            status="failed",
+            progress=100,
+            message=f"Invalid basemap prewarm task: {exc}",
+            failedAt=now_iso(),
+        )
+        return
+    layers = [str(layer) for layer in list(task.get("layers") or [])]
+    total = len(coordinates) * len(layers)
+    cache_hits = 0
+    downloaded = 0
+    failed = 0
+    errors: list[str] = []
+    completed = 0
+    update_task(task_id, status="running", progress=0, message="Basemap prewarm started", startedAt=now_iso())
+
+    for layer in layers:
+        for zoom, x, y in coordinates:
+            cache_path = tianditu_cache_path(layer, zoom, x, y)
+            try:
+                if cache_path.exists():
+                    cache_hits += 1
+                else:
+                    content = fetch_tianditu_tile(layer, zoom, x, y, TIANDITU_TK)
+                    write_tianditu_cache_tile(cache_path, content)
+                    downloaded += 1
+            except Exception as exc:
+                failed += 1
+                if len(errors) < 10:
+                    errors.append(f"{layer}/{zoom}/{x}/{y}: {exc}")
+            completed += 1
+            if completed == total or completed % max(1, total // 100) == 0:
+                update_task(
+                    task_id,
+                    progress=min(99, int(completed * 100 / total)),
+                    message=f"Basemap prewarm {completed}/{total}",
+                    cacheHits=cache_hits,
+                    downloadedTiles=downloaded,
+                    failedTiles=failed,
+                )
+
+    maybe_prune_cache(
+        "tianditu",
+        TIANDITU_CACHE_DIR,
+        BASEMAP_CACHE_MAX_BYTES,
+        BASEMAP_CACHE_MAX_AGE_DAYS,
+    )
+    all_failed = failed == total and total > 0
+    update_task(
+        task_id,
+        status="failed" if all_failed else "completed",
+        progress=100,
+        message=(
+            f"Basemap prewarm failed for all {total} tiles"
+            if all_failed
+            else f"Basemap prewarm ready: {cache_hits} cached, {downloaded} downloaded, {failed} failed"
+        ),
+        cacheHits=cache_hits,
+        downloadedTiles=downloaded,
+        failedTiles=failed,
+        errors=errors,
+        completedAt=now_iso(),
+    )
+
+
+def create_tianditu_prewarm_task(
+    *,
+    bounds: list[float],
+    min_zoom: int,
+    max_zoom: int,
+    layers: list[str],
+    actor: str,
+) -> dict[str, Any]:
+    if not TIANDITU_TK:
+        raise HTTPException(
+            status_code=409,
+            detail="Configure REMOTE_SENSING_TIANDITU_TK before starting basemap prewarm.",
+        )
+    normalized_layers = list(dict.fromkeys(str(layer).strip() for layer in layers if str(layer).strip()))
+    unsupported = [layer for layer in normalized_layers if layer not in TIANDITU_LAYERS]
+    if not normalized_layers or unsupported:
+        raise HTTPException(status_code=422, detail=f"Unsupported Tianditu layers: {', '.join(unsupported) or 'none'}")
+    tiles = tianditu_tiles_for_bounds(bounds, min_zoom=min_zoom, max_zoom=max_zoom)
+    tile_count = len(tiles) * len(normalized_layers)
+    if tile_count > TIANDITU_PREWARM_MAX_TILES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Prewarm request contains {tile_count:,} tiles; the maximum is {TIANDITU_PREWARM_MAX_TILES:,}.",
+        )
+
+    timestamp = now_iso()
+    task = {
+        "id": f"task-basemap-{uuid.uuid4().hex[:12]}",
+        "type": "basemap-prewarm",
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued",
+        "bounds": [float(value) for value in bounds],
+        "minZoom": int(min_zoom),
+        "maxZoom": int(max_zoom),
+        "layers": normalized_layers,
+        "tileCount": tile_count,
+        "cacheHits": 0,
+        "downloadedTiles": 0,
+        "failedTiles": 0,
+        "createdBy": actor,
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "events": [{"at": timestamp, "status": "queued", "progress": 0, "message": "Queued"}],
+    }
+    upsert_task(task)
+    TASK_EXECUTOR.submit(run_tianditu_prewarm_task, task["id"])
+    return task
+
+
+def schedule_tianditu_startup_prewarm() -> dict[str, Any] | None:
+    if not TIANDITU_TK or len(TIANDITU_PREWARM_BOUNDS) != 4:
+        return None
+    try:
+        bounds = [float(value) for value in TIANDITU_PREWARM_BOUNDS]
+    except ValueError:
+        return None
+    return create_tianditu_prewarm_task(
+        bounds=bounds,
+        min_zoom=TIANDITU_PREWARM_MIN_ZOOM,
+        max_zoom=TIANDITU_PREWARM_MAX_ZOOM,
+        layers=TIANDITU_PREWARM_LAYERS,
+        actor="system-startup",
+    )
 
 
 def geoserver_wms_url() -> str:
@@ -3372,6 +3597,10 @@ try:
     recover_interrupted_tasks()
 except Exception as exc:
     record_startup_error("imagery_task_recovery_failed", "影像任务恢复失败", exc)
+try:
+    schedule_tianditu_startup_prewarm()
+except Exception as exc:
+    app.state.tianditu_prewarm_error = str(exc)
 TITILER_MOUNTED = mount_optional_titiler()
 
 
@@ -4028,6 +4257,29 @@ def deployment_readiness_summary(deployment: dict[str, Any]) -> dict[str, Any]:
         )
     )
     blocking_issues.extend(import_dir_issues)
+
+    tianditu_proxy = deployment.get("tiandituProxy") or {}
+    if tianditu_proxy.get("enabled") and not tianditu_proxy.get("hasServerTk"):
+        warning = readiness_item(
+            "tianditu_server_key_missing",
+            "天地图服务端密钥缺失",
+            "warning",
+            "天地图代理已启用，但服务端没有可用密钥，瓦片请求将失败且无法建立持久缓存。",
+            section="basemap",
+            action_required="配置 REMOTE_SENSING_TIANDITU_TK，并重建应用容器后验证缓存命中。",
+        )
+        warnings.append(warning)
+        checks.append(warning)
+    else:
+        checks.append(
+            readiness_item(
+                "tianditu_server_key",
+                "天地图服务端密钥",
+                "pass",
+                "天地图代理密钥已配置。",
+                section="basemap",
+            )
+        )
 
     api_checks = list(deployment.get("apiChecks") or [])
     missing_api_checks = [item for item in api_checks if not item.get("available")]
@@ -5106,6 +5358,23 @@ def prune_tianditu_cache(
         max_age_days=maxAgeDays or BASEMAP_CACHE_MAX_AGE_DAYS,
     )
     return {**tianditu_cache_stats(), **result}
+
+
+@app.post("/api/cache/tianditu/prewarm")
+def start_tianditu_prewarm(
+    payload: TiandituPrewarmRequest,
+    request: Request,
+) -> dict[str, Any]:
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "imagery.cache.manage")
+    task = create_tianditu_prewarm_task(
+        bounds=payload.bounds,
+        min_zoom=payload.minZoom,
+        max_zoom=payload.maxZoom,
+        layers=payload.layers,
+        actor=str(context.get("user") or ""),
+    )
+    return {"ok": True, "task": task}
 
 
 @app.delete("/api/scenes/{scene_id}")

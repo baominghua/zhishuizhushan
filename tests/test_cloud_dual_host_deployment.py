@@ -1228,3 +1228,78 @@ def test_protected_environment_mutators_do_not_require_python_312_f_strings():
 
         assert r"={'\''" not in script
         assert "rendered_value =" in script
+
+
+def test_primary_environment_generator_preserves_operator_supplied_tianditu_key():
+    generator = read_text("ops/scripts/generate-primary-env.sh")
+
+    assert 'tianditu_tk="${REMOTE_SENSING_TIANDITU_TK:-}"' in generator
+    assert 'REMOTE_SENSING_TIANDITU_TK=${tianditu_tk}' in generator
+    assert "REMOTE_SENSING_TIANDITU_TK=" not in generator.replace(
+        "REMOTE_SENSING_TIANDITU_TK=${tianditu_tk}",
+        "",
+    )
+
+
+def test_primary_compose_schedules_project_basemap_prewarm_without_blocking_startup():
+    environment = compose_app_environment("ops/compose.primary.yml")
+
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_BOUNDS"]
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_LAYERS"] == "img_w,cia_w"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM"] == "8"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM"] == "13"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES"] == "10000"
+
+
+def test_standby_failover_inherits_project_basemap_prewarm_settings():
+    environment = compose_app_environment("ops/compose.standby.yml")
+
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_BOUNDS"]
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_LAYERS"] == "img_w,cia_w"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM"] == "8"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM"] == "13"
+    assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES"] == "10000"
+
+
+def test_tianditu_key_configurator_updates_only_key_without_logging_it(tmp_path):
+    env_file = tmp_path / "primary.env"
+    env_file.write_text(
+        "MYSQL_PASSWORD=keep-this-secret\n"
+        "REMOTE_SENSING_TIANDITU_TK=\n"
+        "SMART_BAMBOO_RELEASE_TAG=keep-this-release\n",
+        encoding="utf-8",
+    )
+    key = "0123456789abcdef0123456789abcdef"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "ops/scripts/configure-tianditu-key.py"),
+            "--env-file",
+            str(env_file),
+            "--key-stdin",
+        ],
+        input=key + "\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    content = env_file.read_text(encoding="utf-8")
+    assert "MYSQL_PASSWORD=keep-this-secret" in content
+    assert "SMART_BAMBOO_RELEASE_TAG=keep-this-release" in content
+    assert f"REMOTE_SENSING_TIANDITU_TK={key}" in content
+    assert key not in result.stdout
+    assert key not in result.stderr
+    assert not list(tmp_path.glob(".primary.env.*"))
+
+
+def test_tianditu_cache_activation_recreates_only_app_and_verifies_real_cache_hit():
+    activation = read_text("ops/scripts/activate-tianditu-cache.sh")
+
+    assert "set -Eeuo pipefail" in activation
+    assert "set -x" not in activation
+    assert "configure-tianditu-key.py" in activation
+    assert '"${compose[@]}" up -d --no-deps --no-build --force-recreate app' in activation
+    assert "/api/health" in activation
