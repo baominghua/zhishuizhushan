@@ -70,6 +70,43 @@ def test_system_administrative_division_dictionary_is_seeded(app_client):
     assert {item["value"] for item in cities.json()["items"]} >= {"350700"}
     assert {item["value"] for item in counties.json()["items"]} >= {"350703"}
 
+    jianyang_towns = app_client.get(
+        "/api/dictionary-options/administrative-divisions?parentCode=350703",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    jianou_towns = app_client.get(
+        "/api/dictionary-options/administrative-divisions?parentCode=350783",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    masha_villages = app_client.get(
+        "/api/dictionary-options/administrative-divisions?parentCode=350703105",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    huangkeng_villages = app_client.get(
+        "/api/dictionary-options/administrative-divisions?parentCode=350703106",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    xiaoqiao_villages = app_client.get(
+        "/api/dictionary-options/administrative-divisions?parentCode=350783105",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+
+    assert {item["value"] for item in counties.json()["items"]} >= {
+        "350703",
+        "350783",
+    }
+    assert {item["value"] for item in jianyang_towns.json()["items"]} >= {
+        "350703105",
+        "350703106",
+    }
+    assert {item["value"] for item in jianou_towns.json()["items"]} >= {"350783105"}
+    assert {item["label"] for item in masha_villages.json()["items"]} >= {
+        "杜潭村",
+        "溪头村",
+    }
+    assert {item["label"] for item in huangkeng_villages.json()["items"]} >= {"新峰村"}
+    assert {item["label"] for item in xiaoqiao_villages.json()["items"]} >= {"上屯村"}
+
 
 def test_dictionary_crud_hierarchy_options_and_soft_delete(app_client):
     created = app_client.post(
