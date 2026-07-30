@@ -890,6 +890,69 @@ button:disabled {
   width: min(760px, 100%);
 }
 
+.dictionary-detail-panel {
+  width: min(1180px, 100%);
+}
+
+.dictionary-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.dictionary-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid var(--line);
+}
+
+.dictionary-summary > div:last-child {
+  border-right: 0;
+}
+
+.dictionary-summary span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.dictionary-summary strong {
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.dictionary-mobile-meta {
+  display: none;
+}
+
+.dictionary-item-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(160px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.dictionary-item-toolbar > label:not(.checkbox-field) {
+  display: grid;
+  gap: 6px;
+}
+
+.dictionary-item-table table {
+  min-width: 880px;
+}
+
+.dictionary-item-table th:last-child,
+.dictionary-item-table td:last-child {
+  width: 116px;
+}
+
 .table-wrap {
   margin-top: 10px;
   overflow: auto;
@@ -1084,6 +1147,89 @@ input[readonly] {
 }
 
 @media (max-width: 680px) {
+  .dictionary-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dictionary-summary > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .dictionary-summary > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .dictionary-item-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .dictionary-ledger-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .dictionary-ledger-table thead {
+    display: none;
+  }
+
+  .dictionary-ledger-table tbody,
+  .dictionary-ledger-table tr {
+    display: block;
+  }
+
+  .dictionary-ledger-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .dictionary-ledger-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .dictionary-ledger-table td {
+    display: none;
+    padding: 0;
+    border: 0;
+  }
+
+  .dictionary-ledger-table .dictionary-primary-cell,
+  .dictionary-ledger-table .dictionary-actions-cell {
+    display: block;
+  }
+
+  .dictionary-ledger-table .dictionary-actions-cell {
+    width: auto;
+  }
+
+  .dictionary-ledger-table .dictionary-actions-cell .row-actions {
+    justify-content: flex-end;
+  }
+
+  .dictionary-mobile-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 7px;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .dictionary-mobile-meta span {
+    position: relative;
+  }
+
+  .dictionary-mobile-meta span:not(:last-child)::after {
+    position: absolute;
+    right: -6px;
+    color: var(--line-strong);
+    content: "·";
+  }
+
   .ledger-pagination {
     align-items: stretch;
     flex-direction: column;
@@ -1506,6 +1652,110 @@ input[readonly] {
 
 .business-core-field-input input {
   background: var(--panel-strong);
+}
+
+.smart-reference-picker {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.smart-reference-picker.is-disabled {
+  opacity: 0.65;
+}
+
+.smart-reference-search {
+  width: 100%;
+}
+
+.smart-reference-results {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid rgba(72, 199, 169, 0.35);
+  border-radius: 6px;
+  background: #071a17;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+}
+
+.smart-reference-result {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #dceee9;
+  text-align: left;
+}
+
+.smart-reference-result:hover,
+.smart-reference-result:focus-visible {
+  background: rgba(54, 191, 156, 0.14);
+}
+
+.smart-reference-result:disabled {
+  color: #6f8d85;
+  cursor: default;
+}
+
+.smart-reference-state {
+  margin: 0;
+  padding: 10px;
+  color: #8fb2aa;
+  font-size: 13px;
+}
+
+.smart-reference-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 8px;
+}
+
+.smart-reference-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 4px 4px 9px;
+  border: 1px solid rgba(72, 199, 169, 0.28);
+  border-radius: 5px;
+  background: rgba(29, 104, 87, 0.24);
+  color: #cfe9e2;
+  font-size: 13px;
+}
+
+.smart-reference-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.smart-reference-remove {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  margin-left: 3px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ac6bb;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.smart-reference-remove:hover,
+.smart-reference-remove:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 .ledger-chip-list {

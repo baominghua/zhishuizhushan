@@ -53,6 +53,7 @@ from .forest_blocks import (
     require_target_area_allowed,
     sanitize_block_for_ledger,
     save_blocks,
+    sync_blocks_administrative_divisions,
 )
 from .forest_scene_links import (
     load_scene_links,
@@ -3005,8 +3006,10 @@ def execute_forest_block_import(
     if did_change_blocks:
         if database_backed:
             save_blocks(pending_database_blocks)
+            sync_blocks_administrative_divisions(pending_database_blocks)
         else:
             save_blocks(blocks)
+            sync_blocks_administrative_divisions(pending_right_blocks)
     upsert_right_archives_from_blocks(pending_right_blocks)
 
     report = build_report(

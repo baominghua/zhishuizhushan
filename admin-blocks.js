@@ -15,13 +15,27 @@
     splitValues,
     stringifyPretty,
   } = AdminCommon;
+  const {
+    bindAdministrativeDivision,
+    bindDictionarySelect,
+    bindReferencePicker,
+  } = AdminSmartFields;
 
   const BLOCK_CREATE_PERMISSION = "forest.blocks.create";
   const BLOCK_UPDATE_PERMISSION = "forest.blocks.update";
   const BLOCK_DELETE_PERMISSION = "forest.blocks.delete";
   const BLOCK_RESTORE_PERMISSION = "forest.blocks.restore";
   const BLOCK_ROLLBACK_PERMISSION = "forest.blocks.rollback";
-  const state = { blocks: [], blockVersions: [], activeId: "", editorMode: "" };
+  const state = {
+    blocks: [],
+    blockVersions: [],
+    activeId: "",
+    editorMode: "",
+    divisionControl: null,
+    dictionaryControls: {},
+    tagPicker: null,
+    tagOptions: new Map(),
+  };
   let pager;
   let keywordTimer;
   const initialBlockCode = new URLSearchParams(window.location.search).get("blockCode") || "";
@@ -47,6 +61,19 @@
 
   function isDeletedBlock(block) {
     return Boolean(block?.deletedAt);
+  }
+
+  function dictionaryLabel(fieldId, value) {
+    const normalized = String(value || "");
+    if (!normalized) return "-";
+    const element = state.dictionaryControls[fieldId]?.element;
+    const selected = Array.from(element?.children || [])
+      .find((option) => String(option.value) === normalized);
+    return selected?.textContent?.replace(/^历史值：/, "") || normalized;
+  }
+
+  function resourceTagLabel(value) {
+    return state.tagOptions.get(String(value || "")) || String(value || "");
   }
 
   function blockActionButtons(block) {
@@ -81,7 +108,7 @@
           <tr data-id="${escapeHtml(block.id)}" class="${active}">
             <td><div class="cell-stack"><strong>${escapeHtml(block.blockCode || "-")}</strong><small>${escapeHtml(block.name || "-")}</small></div></td>
             <td><div class="cell-stack"><strong>${escapeHtml(locationOf(block) || "-")}</strong><small>${escapeHtml(formatArea(block.areaMu))}</small></div></td>
-            <td><div class="cell-stack"><strong>${escapeHtml(labelFor("operationType", block.operationType))}</strong><small>${escapeHtml(block.forestType || labelFor("baseType", block.baseType))}</small></div></td>
+            <td><div class="cell-stack"><strong>${escapeHtml(dictionaryLabel("operationType", block.operationType))}</strong><small>${escapeHtml(block.forestType ? dictionaryLabel("forestType", block.forestType) : dictionaryLabel("baseType", block.baseType))}</small></div></td>
             <td><span class="status-pill ${block.geometry ? "complete" : "partial"}">${escapeHtml(geometryLabel)}</span></td>
             <td>${escapeHtml(formatDateTime(block.updatedAt))}</td>
             <td>${blockActionButtons(block)}</td>
@@ -130,15 +157,15 @@
       ["林班名称", block.name],
       ["区划位置", locationOf(block) || "-"],
       ["面积", formatArea(block.areaMu)],
-      ["竹种/林种", block.forestType || "-"],
-      ["基地类型", labelFor("baseType", block.baseType)],
-      ["经营类型", labelFor("operationType", block.operationType)],
-      ["质量等级", block.qualityGrade || "-"],
-      ["健康状态", block.healthStatus || "-"],
-      ["风险等级", block.riskLevel || "-"],
+      ["竹种/林种", dictionaryLabel("forestType", block.forestType)],
+      ["基地类型", dictionaryLabel("baseType", block.baseType)],
+      ["经营类型", dictionaryLabel("operationType", block.operationType)],
+      ["质量等级", dictionaryLabel("qualityGrade", block.qualityGrade)],
+      ["健康状态", dictionaryLabel("healthStatus", block.healthStatus)],
+      ["风险等级", dictionaryLabel("riskLevel", block.riskLevel)],
       ["图形状态", block.geometry ? "有空间边界" : "待补空间边界"],
       ["更新时间", formatDateTime(block.updatedAt)],
-      ["标签", Array.isArray(block.tags) && block.tags.length ? block.tags.join(", ") : "-"],
+      ["标签", Array.isArray(block.tags) && block.tags.length ? block.tags.map(resourceTagLabel).join(", ") : "-"],
     ];
     grid.innerHTML = rows
       .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "-")}</dd></div>`)
@@ -222,34 +249,88 @@
     }
   }
 
-  function fillForm(block = {}) {
+  function setupSmartFields() {
+    state.divisionControl = bindAdministrativeDivision({
+      api,
+      county: { code: $("#countyCode"), name: $("#countyName") },
+      town: { code: $("#townCode"), name: $("#townName") },
+      village: { code: $("#villageCode"), name: $("#villageName") },
+    });
+    [
+      ["baseType", "forest-base-types"],
+      ["operationType", "forest-operation-types"],
+      ["qualityGrade", "quality-grades"],
+      ["healthStatus", "health-statuses"],
+      ["riskLevel", "risk-levels"],
+      ["forestType", "forest-types"],
+    ].forEach(([fieldId, typeCode]) => {
+      state.dictionaryControls[fieldId] = bindDictionarySelect({
+        element: $(`#${fieldId}`),
+        typeCode,
+        api,
+        blankLabel: "未填写",
+      });
+    });
+    state.tagPicker = bindReferencePicker({
+      input: $("#tags"),
+      endpoint: "/api/dictionary-options/forest-resource-tags",
+      valueKey: "value",
+      labelKey: "label",
+      api,
+      placeholder: "搜索并选择资源标签",
+    });
+    const tagOptionsReady = api("/api/dictionary-options/forest-resource-tags?limit=500&offset=0")
+      .then((payload) => {
+        state.tagOptions = new Map(
+          (payload.items || []).map((item) => [String(item.value || ""), String(item.label || item.value || "")]),
+        );
+      });
+    return Promise.all([
+      state.divisionControl.ready,
+      ...Object.values(state.dictionaryControls).map((control) => control.ready),
+      tagOptionsReady,
+    ]);
+  }
+
+  async function fillForm(block = {}) {
     $("#formTitle").textContent = block.id ? "编辑林班" : "新增林班";
     $("#blockId").value = block.id || "";
     $("#blockCode").value = block.blockCode || "";
     $("#blockCode").readOnly = Boolean(block.id);
     $("#blockName").value = block.name || "";
-    $("#countyCode").value = block.countyCode || "";
-    $("#countyName").value = block.countyName || "";
-    $("#townCode").value = block.townCode || "";
-    $("#townName").value = block.townName || "";
-    $("#villageCode").value = block.villageCode || "";
-    $("#villageName").value = block.villageName || "";
     $("#areaMu").value = block.areaMu ?? "";
-    $("#forestType").value = block.forestType || "";
-    $("#baseType").value = block.baseType || "";
-    $("#operationType").value = block.operationType || "";
-    $("#qualityGrade").value = block.qualityGrade || "";
-    $("#healthStatus").value = block.healthStatus || "";
-    $("#riskLevel").value = block.riskLevel || "";
-    $("#tags").value = Array.isArray(block.tags) ? block.tags.join(", ") : "";
     $("#properties").value = stringifyPretty(block.properties, {});
     $("#geometry").value = stringifyPretty(block.geometry, null);
+    await Promise.all(Object.values(state.dictionaryControls).map((control) => control.ready));
+    Object.entries({
+      baseType: block.baseType,
+      operationType: block.operationType,
+      qualityGrade: block.qualityGrade,
+      healthStatus: block.healthStatus,
+      riskLevel: block.riskLevel,
+      forestType: block.forestType,
+    }).forEach(([fieldId, value]) => state.dictionaryControls[fieldId].setValue(value || ""));
+    state.tagPicker.setValues(
+      (Array.isArray(block.tags) ? block.tags : []).map((value) => ({
+        value,
+        label: resourceTagLabel(value),
+        historic: !state.tagOptions.has(String(value)),
+      })),
+    );
+    await state.divisionControl.setValue({
+      countyCode: block.countyCode,
+      countyName: block.countyName,
+      townCode: block.townCode,
+      townName: block.townName,
+      villageCode: block.villageCode,
+      villageName: block.villageName,
+    });
   }
 
-  function openBlockEditor(mode, block = {}) {
+  async function openBlockEditor(mode, block = {}) {
     state.editorMode = mode;
     closeBlockDetail();
-    fillForm(mode === "edit" ? block : {});
+    await fillForm(mode === "edit" ? block : {});
     $("#saveBlock").dataset.permission = mode === "edit" ? BLOCK_UPDATE_PERMISSION : BLOCK_CREATE_PERMISSION;
     $("#blockEditorOverlay").classList.remove("hidden");
     $("#blockEditorOverlay").setAttribute("aria-hidden", "false");
@@ -449,10 +530,11 @@
     });
   }
 
-  function initialize() {
+  async function initialize() {
     initShell();
     if (initialBlockCode && $("#keyword")) $("#keyword").value = initialBlockCode;
     pager = createLedgerPager({ anchor: $("#blockRows").closest(".table-wrap"), onPageChange: loadBlocks });
+    await setupSmartFields();
     attachEvents();
     renderDetail();
     loadBlocks();

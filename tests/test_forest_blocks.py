@@ -257,11 +257,13 @@ def test_platform_storage_health_checks_postgis_schema(
             "forest_block_versions",
             "forest_rights",
             "forest_right_versions",
-            "map_layers",
-            "business_records",
-            "admin_roles",
-            "admin_users",
-            None,
+                "map_layers",
+                "business_records",
+                "dictionary_types",
+                "dictionary_items",
+                "admin_roles",
+                "admin_users",
+                None,
         )
     )
 

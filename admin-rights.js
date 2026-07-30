@@ -3,6 +3,7 @@
     $,
     api,
     applyActionPermissions,
+    authProfile,
     createLedgerPager,
     escapeHtml,
     formatArea,
@@ -15,13 +16,24 @@
     splitValues,
     stringifyPretty,
   } = AdminCommon;
+  const {
+    bindDictionarySelect,
+    bindReferencePicker,
+  } = AdminSmartFields;
 
   const RIGHT_CREATE_PERMISSION = "forest.rights.create";
   const RIGHT_UPDATE_PERMISSION = "forest.rights.update";
   const RIGHT_DELETE_PERMISSION = "forest.rights.delete";
   const RIGHT_RESTORE_PERMISSION = "forest.rights.restore";
   const RIGHT_ROLLBACK_PERMISSION = "forest.rights.rollback";
-  const state = { rights: [], rightVersions: [], activeId: "" };
+  const state = {
+    rights: [],
+    rightVersions: [],
+    activeId: "",
+    dictionaryControls: {},
+    linkedBlockPicker: null,
+    holderPicker: null,
+  };
   let pager;
   let keywordTimer;
   const initialArchiveCode = new URLSearchParams(window.location.search).get("archiveCode") || "";
@@ -234,37 +246,78 @@
     }
   }
 
-  function fillForm(right = {}) {
+  function setupSmartFields() {
+    [
+      ["rightArchiveCertificateType", "certificate-types"],
+      ["rightArchiveRightType", "right-types"],
+      ["rightArchiveOwnershipType", "ownership-types"],
+      ["rightArchiveStatus", "archive-statuses"],
+    ].forEach(([fieldId, typeCode]) => {
+      state.dictionaryControls[fieldId] = bindDictionarySelect({
+        element: $(`#${fieldId}`),
+        typeCode,
+        api,
+        blankLabel: fieldId === "rightArchiveStatus" ? "待补充" : "未填写",
+      });
+    });
+    state.linkedBlockPicker = bindReferencePicker({
+      input: $("#rightArchiveLinkedBlockCodes"),
+      endpoint: "/api/forest-blocks",
+      valueKey: "blockCode",
+      labelKey: "name",
+      api,
+      placeholder: "输入林班编号、名称或村镇搜索",
+    });
+    state.holderPicker = bindReferencePicker({
+      input: $("#rightArchiveHolder"),
+      endpoint: "/api/business-reference-options/subjects",
+      valueKey: "name",
+      labelKey: "label",
+      api,
+      multiple: false,
+      placeholder: "搜索已有竹农、合作社或竹企",
+    });
+    return Promise.all(Object.values(state.dictionaryControls).map((control) => control.ready));
+  }
+
+  async function fillForm(right = {}) {
     state.activeId = right.id || "";
     $("#rightFormTitle").textContent = right.id ? "编辑林权档案" : "新建林权档案";
     $("#rightArchiveId").value = right.id || "";
     $("#rightArchiveCode").value = right.archiveCode || "";
     $("#rightArchiveCertificateNo").value = right.certificateNo || "";
-    $("#rightArchiveHolder").value = right.holder || "";
-    $("#rightArchiveCertificateType").value = right.certificateType || "";
-    $("#rightArchiveRightType").value = right.rightType || "";
-    $("#rightArchiveOwnershipType").value = right.ownershipType || "";
+    state.holderPicker.setValues(
+      right.holder
+        ? [{ name: right.holder, label: right.holder, historic: true }]
+        : [],
+    );
     $("#rightArchiveRightStart").value = right.rightStart || "";
     $("#rightArchiveRightEnd").value = right.rightEnd || "";
     $("#rightArchiveContractNo").value = right.contractNo || "";
-    $("#rightArchiveStatus").value = right.archiveStatus || "partial";
-    $("#rightArchiveRegistrar").value = right.registrar || "";
+    $("#rightArchiveRegistrar").value = right.registrar || authProfile()?.user || $("#authUser")?.value.trim() || "";
     $("#rightArchiveAreaMu").value = right.areaMu ?? "";
-    $("#rightArchiveLinkedBlockCodes").value = Array.isArray(right.linkedBlockCodes) ? right.linkedBlockCodes.join(", ") : "";
     const relationsPartial = Boolean(right.properties?.linkedTargetsTruncated);
-    $("#rightArchiveLinkedBlockCodes").disabled = relationsPartial;
+    state.linkedBlockPicker.setValues(Array.isArray(right.linkedBlockCodes) ? right.linkedBlockCodes : []);
+    state.linkedBlockPicker.setDisabled(relationsPartial);
     $("#rightArchiveLinkedBlockCodes").dataset.preserveRelations = String(relationsPartial);
     $("#rightArchiveLinkedBlockCodes").title = relationsPartial
       ? "关联林班超过 100 条，请通过图档关联管理分批维护"
       : "";
     $("#rightArchiveMissingItems").value = right.missingItems || "";
     $("#rightArchiveProperties").value = stringifyPretty(right.properties, {});
+    await Promise.all(Object.values(state.dictionaryControls).map((control) => control.ready));
+    Object.entries({
+      rightArchiveCertificateType: right.certificateType,
+      rightArchiveRightType: right.rightType,
+      rightArchiveOwnershipType: right.ownershipType,
+      rightArchiveStatus: right.archiveStatus || "partial",
+    }).forEach(([fieldId, value]) => state.dictionaryControls[fieldId].setValue(value || ""));
     renderRows();
   }
 
-  function openRightEditor(mode, right = {}) {
+  async function openRightEditor(mode, right = {}) {
     closeRightDetail();
-    fillForm(mode === "edit" ? right : {});
+    await fillForm(mode === "edit" ? right : {});
     $("#saveRightArchive").dataset.permission = mode === "edit" ? RIGHT_UPDATE_PERMISSION : RIGHT_CREATE_PERMISSION;
     $("#rightForm").classList.remove("hidden");
     $("#rightForm").setAttribute("aria-hidden", "false");
@@ -472,10 +525,11 @@
     });
   }
 
-  function initialize() {
+  async function initialize() {
     initShell();
     if (initialArchiveCode && $("#rightKeyword")) $("#rightKeyword").value = initialArchiveCode;
     pager = createLedgerPager({ anchor: $("#rightRows").closest(".table-wrap"), onPageChange: loadRights });
+    await setupSmartFields();
     attachEvents();
     loadRights();
   }

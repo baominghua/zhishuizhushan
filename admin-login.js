@@ -1,6 +1,7 @@
 (() => {
   const CSRF_TOKEN_KEY = "smartBambooCsrfToken";
   const PROFILE_KEY = "smartBambooAuthProfile";
+  const SERVICE_TOKEN_KEY = "smartBambooServiceToken";
   let authConfig = null;
   let loginRequestInFlight = false;
   let passwordLoginBlocked = false;
@@ -125,14 +126,15 @@
       button.disabled = true;
       setStatus("正在验证部署服务令牌...", "busy");
       try {
+        const serviceToken = token.value.trim();
         const response = await fetch("/api/auth/me", {
           credentials: "include",
-          headers: { Authorization: `Bearer ${token.value.trim()}` },
+          headers: { Authorization: `Bearer ${serviceToken}` },
         });
         const payload = await readPayload(response);
         if (!response.ok) throw new Error(payload.detail || "服务令牌验证失败。");
-        storeProfile(payload);
-        setStatus("服务令牌验证通过，请由部署系统继续访问后台。", "success");
+        sessionStorage.setItem(SERVICE_TOKEN_KEY, serviceToken);
+        completeLogin(payload);
       } catch (error) {
         setStatus(error.message || "服务令牌验证失败。", "error");
       } finally {

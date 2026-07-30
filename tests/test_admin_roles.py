@@ -218,6 +218,40 @@ def test_role_permission_catalog_exposes_granular_crud_actions(app_client):
     } <= set(body["permissionImplications"]["system.roles.manage"])
 
 
+def test_permission_catalog_exposes_dictionary_module_and_granular_actions(app_client):
+    response = app_client.get(
+        "/api/admin/permission-catalog",
+        headers={"X-RS-Roles": "system.roles.view"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    dictionary_menu = next(
+        module for module in body["menuModules"] if module["key"] == "dictionaries"
+    )
+    codes = {item["code"] for item in body["permissions"]}
+
+    assert dictionary_menu["href"] == "admin-dictionaries.html"
+    assert dictionary_menu["permission"] == "system.dictionaries.view"
+    assert {
+        "system.dictionaries.view",
+        "system.dictionaries.manage",
+        "system.dictionaries.create",
+        "system.dictionaries.update",
+        "system.dictionaries.delete",
+        "system.dictionaries.restore",
+        "system.dictionaries.import",
+    } <= codes
+    assert {
+        "system.dictionaries.view",
+        "system.dictionaries.create",
+        "system.dictionaries.update",
+        "system.dictionaries.delete",
+        "system.dictionaries.restore",
+        "system.dictionaries.import",
+    } <= set(body["permissionImplications"]["system.dictionaries.manage"])
+
+
 def test_deleted_admin_role_can_be_listed_and_restored(app_client):
     created = app_client.post(
         "/api/admin/roles",

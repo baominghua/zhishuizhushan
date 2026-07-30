@@ -2213,6 +2213,7 @@ def test_mysql_business_dashboard_is_bounded_and_uses_relation_counts():
     payload = dashboard_payload(
         "farmers",
         [record],
+        dictionary_catalog={},
         summary={
             "total": 2000,
             "linkedBlockCount": 1500,

@@ -270,11 +270,12 @@ test("only displays the non-persistent service-token fallback when human login i
   assert.equal(storage.size, 0);
 });
 
-test("uses a fallback bearer only for its diagnostic request without persisting or navigating it", async () => {
+test("stores a validated service token for the current tab and returns to the requested admin page", async () => {
   const harness = createHarness({
+    href: "https://zhushan.example/admin-login.html?returnTo=admin-blocks.html",
     responses: [
       response(200, { humanLoginEnabled: false, httpsRequired: false }),
-      response(200, { authenticated: true, user: "deployment" }),
+      response(200, { authenticated: true, authType: "service-token", user: "deployment" }),
     ],
   });
   await settle();
@@ -293,7 +294,12 @@ test("uses a fallback bearer only for its diagnostic request without persisting 
   assert.equal(token.value, "");
   assert.equal(localStorage.size, 0);
   assert.equal(cookieWrites.length, 0);
-  assert.equal([...storage.values()].some((value) => String(value).includes("deployment-token")), false);
-  assert.equal(location.replacedWith, undefined);
+  assert.equal(storage.get("smartBambooServiceToken"), "deployment-token");
+  assert.deepEqual(JSON.parse(storage.get("smartBambooAuthProfile")), {
+    authenticated: true,
+    authType: "service-token",
+    user: "deployment",
+  });
+  assert.equal(location.replacedWith, "admin-blocks.html");
   assert.doesNotMatch(location.href, /deployment-token/);
 });

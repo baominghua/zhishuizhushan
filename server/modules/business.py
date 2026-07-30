@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -575,13 +576,38 @@ def field_option(value: str, label: str) -> dict[str, str]:
 
 BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     "farmers": [
-        {"key": "townVillage", "label": "所属村镇", "inputType": "text", "required": True},
-        {"key": "villageName", "label": "所属村", "inputType": "text"},
+        {
+            "key": "townVillage",
+            "label": "所属乡镇",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=town",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+        },
+        {
+            "key": "villageName",
+            "label": "所属村",
+            "inputType": "reference",
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=village",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+        },
         {"key": "phone", "label": "联系电话", "inputType": "tel"},
         {"key": "managedAreaMu", "label": "经营面积", "inputType": "number", "unit": "亩", "min": 0, "step": 0.01},
     ],
     "cooperatives": [
-        {"key": "serviceArea", "label": "服务范围", "inputType": "text", "required": True},
+        {
+            "key": "serviceArea",
+            "label": "服务范围",
+            "inputType": "multi-reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+        },
         {"key": "memberCount", "label": "成员数量", "inputType": "integer", "unit": "人", "min": 0},
         {"key": "serviceCapacity", "label": "服务能力", "inputType": "text"},
         {
@@ -597,8 +623,29 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "enterprises": [
-        {"key": "mainBusiness", "label": "主营方向", "inputType": "text", "required": True},
-        {"key": "contactName", "label": "联系人", "inputType": "text"},
+        {
+            "key": "mainBusiness",
+            "label": "主营方向",
+            "inputType": "select",
+            "required": True,
+            "options": [
+                field_option("raw-bamboo", "原竹经营"),
+                field_option("bamboo-shoot", "竹笋经营"),
+                field_option("primary-processing", "竹材初加工"),
+                field_option("deep-processing", "竹制品深加工"),
+                field_option("equipment-service", "设备与技术服务"),
+                field_option("trade-logistics", "贸易与物流"),
+                field_option("comprehensive", "综合经营"),
+            ],
+        },
+        {
+            "key": "contactName",
+            "label": "联系人",
+            "inputType": "reference",
+            "referenceEndpoint": "/api/business-reference-options/people",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {
             "key": "purchaseStatus",
             "label": "采购状态",
@@ -613,12 +660,25 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "plant-protection-events": [
-        {"key": "issueType", "label": "问题类型", "inputType": "text", "required": True},
+        {
+            "key": "issueType",
+            "label": "问题类型",
+            "inputType": "select",
+            "required": True,
+            "options": [
+                field_option("bamboo-locust", "竹蝗"),
+                field_option("bamboo-shoot-pest", "竹笋害虫"),
+                field_option("bamboo-witch-broom", "竹丛枝病"),
+                field_option("bamboo-rust", "竹锈病"),
+                field_option("rodent-damage", "鼠害"),
+                field_option("other", "其他"),
+            ],
+        },
         {
             "key": "riskLevel",
             "label": "风险等级",
-            "inputType": "select",
-            "options": [field_option("low", "低"), field_option("medium", "中"), field_option("high", "高"), field_option("critical", "严重")],
+            "inputType": "dictionary",
+            "dictionaryCode": "risk-levels",
         },
         {"key": "treatmentAdvice", "label": "处置建议", "inputType": "textarea"},
         {
@@ -629,10 +689,36 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "materials": [
-        {"key": "itemCategory", "label": "物资品类", "inputType": "text", "required": True},
+        {
+            "key": "itemCategory",
+            "label": "物资品类",
+            "inputType": "select",
+            "required": True,
+            "options": [
+                field_option("fertilizer", "肥料"),
+                field_option("pesticide", "植保药剂"),
+                field_option("seedling", "苗木"),
+                field_option("tool", "生产工具"),
+                field_option("protective-equipment", "防护用品"),
+                field_option("other", "其他"),
+            ],
+        },
         {"key": "stock", "label": "库存数量", "inputType": "number", "min": 0, "step": 0.01},
-        {"key": "unit", "label": "计量单位", "inputType": "text"},
-        {"key": "usageStage", "label": "适用环节", "inputType": "text"},
+        {"key": "unit", "label": "计量单位", "inputType": "dictionary", "dictionaryCode": "material-units"},
+        {
+            "key": "usageStage",
+            "label": "适用环节",
+            "inputType": "select",
+            "options": [
+                field_option("planting", "栽植"),
+                field_option("tending", "抚育"),
+                field_option("fertilizing", "施肥"),
+                field_option("plant-protection", "植保"),
+                field_option("harvesting", "采收"),
+                field_option("transport", "运输"),
+                field_option("general", "通用"),
+            ],
+        },
         {
             "key": "inventoryStatus",
             "label": "库存状态",
@@ -641,7 +727,20 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "policies": [
-        {"key": "target", "label": "适用对象", "inputType": "text", "required": True},
+        {
+            "key": "target",
+            "label": "适用对象",
+            "inputType": "select",
+            "required": True,
+            "options": [
+                field_option("farmer", "竹农"),
+                field_option("cooperative", "合作社"),
+                field_option("enterprise", "竹企"),
+                field_option("village-collective", "村集体"),
+                field_option("operator", "经营主体"),
+                field_option("all", "全部主体"),
+            ],
+        },
         {"key": "applicationItem", "label": "申报事项", "inputType": "text"},
         {"key": "deadline", "label": "截止日期", "inputType": "date"},
         {
@@ -652,7 +751,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "stewardship-agreements": [
-        {"key": "serviceProvider", "label": "托管主体", "inputType": "text", "required": True},
+        {
+            "key": "serviceProvider",
+            "label": "托管主体",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business/cooperatives",
+            "referenceValueKey": "recordCode",
+            "referenceLabelKey": "name",
+        },
         {"key": "contractTerm", "label": "协议期限", "inputType": "text", "required": True},
         {"key": "areaMu", "label": "托管面积", "inputType": "number", "unit": "亩", "min": 0, "step": 0.01},
         {
@@ -670,8 +777,25 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "franchise-bases": [
-        {"key": "region", "label": "所在区域", "inputType": "text", "required": True},
-        {"key": "operator", "label": "经营主体", "inputType": "text", "required": True},
+        {
+            "key": "region",
+            "label": "所在区域",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+        },
+        {
+            "key": "operator",
+            "label": "经营主体",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business/enterprises",
+            "referenceValueKey": "recordCode",
+            "referenceLabelKey": "name",
+        },
         {"key": "baseAreaMu", "label": "基地面积", "inputType": "number", "unit": "亩", "min": 0, "step": 0.01},
         {
             "key": "serviceLevel",
@@ -705,7 +829,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("other", "其他"),
             ],
         },
-        {"key": "assignee", "label": "责任人", "inputType": "text", "required": True},
+        {
+            "key": "assignee",
+            "label": "责任人/责任主体",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business-reference-options/subjects",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {"key": "planDate", "label": "计划日期", "inputType": "date", "required": True},
         {
             "key": "closureStatus",
@@ -736,7 +868,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("other", "其他"),
             ],
         },
-        {"key": "worker", "label": "作业人/班组", "inputType": "text", "required": True},
+        {
+            "key": "worker",
+            "label": "作业人/班组",
+            "inputType": "multi-reference",
+            "required": True,
+            "referenceEndpoint": "/api/business-reference-options/people",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {"key": "workDate", "label": "作业日期", "inputType": "date", "required": True},
         {"key": "laborCount", "label": "用工人数", "inputType": "integer", "unit": "人", "min": 0, "step": 1},
     ],
@@ -753,7 +893,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("emergency", "应急"),
             ],
         },
-        {"key": "deviceCode", "label": "无人机编号", "inputType": "text", "required": True},
+        {
+            "key": "deviceCode",
+            "label": "无人机编号",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business/equipment",
+            "referenceValueKey": "recordCode",
+            "referenceLabelKey": "name",
+        },
         {"key": "routeCode", "label": "航线编号", "inputType": "text"},
         {
             "key": "resultStatus",
@@ -797,18 +945,26 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "pest-warnings": [
-        {"key": "riskType", "label": "病虫害类型", "inputType": "text", "required": True},
         {
-            "key": "riskLevel",
-            "label": "风险等级",
+            "key": "riskType",
+            "label": "病虫害类型",
             "inputType": "select",
             "required": True,
             "options": [
-                field_option("low", "低"),
-                field_option("medium", "中"),
-                field_option("high", "高"),
-                field_option("critical", "严重"),
+                field_option("bamboo-locust", "竹蝗"),
+                field_option("bamboo-shoot-pest", "竹笋害虫"),
+                field_option("bamboo-witch-broom", "竹丛枝病"),
+                field_option("bamboo-rust", "竹锈病"),
+                field_option("rodent-damage", "鼠害"),
+                field_option("other", "其他"),
             ],
+        },
+        {
+            "key": "riskLevel",
+            "label": "风险等级",
+            "inputType": "dictionary",
+            "dictionaryCode": "risk-levels",
+            "required": True,
         },
         {"key": "treatmentAdvice", "label": "处置建议", "inputType": "textarea"},
         {
@@ -836,7 +992,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("technical", "技术服务"),
             ],
         },
-        {"key": "supplier", "label": "供应商", "inputType": "text", "required": True},
+        {
+            "key": "supplier",
+            "label": "供应商",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business/enterprises",
+            "referenceValueKey": "recordCode",
+            "referenceLabelKey": "name",
+        },
         {
             "key": "deliveryStatus",
             "label": "配送状态",
@@ -873,7 +1037,7 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("understory", "林下经济"),
             ],
         },
-        {"key": "forecastPeriod", "label": "预测周期", "inputType": "text", "required": True},
+        {"key": "forecastPeriod", "label": "预测周期", "inputType": "month", "required": True},
         {"key": "forecastYield", "label": "预测产量", "inputType": "number", "unit": "吨", "min": 0, "step": 0.01},
         {"key": "modelName", "label": "模型名称/版本", "inputType": "text", "required": True},
         {"key": "confidence", "label": "置信度", "inputType": "number", "unit": "%", "min": 0, "max": 100, "step": 0.1},
@@ -919,7 +1083,7 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("distribution", "主体分成"),
             ],
         },
-        {"key": "estimatePeriod", "label": "测算周期", "inputType": "text", "required": True},
+        {"key": "estimatePeriod", "label": "测算周期", "inputType": "month", "required": True},
         {"key": "expectedIncome", "label": "预计收入", "inputType": "number", "unit": "元", "min": 0, "step": 0.01},
         {"key": "cost", "label": "预计成本", "inputType": "number", "unit": "元", "min": 0, "step": 0.01},
         {"key": "netIncome", "label": "预计净收益", "inputType": "number", "unit": "元", "step": 0.01, "readOnly": True},
@@ -936,7 +1100,14 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("organization", "主体绩效"),
             ],
         },
-        {"key": "coverage", "label": "覆盖范围", "inputType": "text"},
+        {
+            "key": "coverage",
+            "label": "覆盖范围",
+            "inputType": "multi-reference",
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+        },
         {"key": "metricCaliber", "label": "指标口径", "inputType": "textarea", "required": True},
         {"key": "metricValue", "label": "指标值", "inputType": "number", "step": 0.01},
         {
@@ -1000,7 +1171,14 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
         {"key": "quantity", "label": "交易数量", "inputType": "number", "unit": "吨", "min": 0, "step": 0.01},
         {"key": "unitPrice", "label": "意向单价", "inputType": "number", "unit": "元/吨", "min": 0, "step": 0.01},
-        {"key": "counterparty", "label": "对接主体", "inputType": "text"},
+        {
+            "key": "counterparty",
+            "label": "对接主体",
+            "inputType": "reference",
+            "referenceEndpoint": "/api/business-reference-options/subjects",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {
             "key": "matchStatus",
             "label": "撮合状态",
@@ -1016,7 +1194,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "logistics-traces": [
         {"key": "batchNo", "label": "溯源批次", "inputType": "text", "required": True},
-        {"key": "carrier", "label": "承运单位/司机", "inputType": "text", "required": True},
+        {
+            "key": "carrier",
+            "label": "承运单位/司机",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business/enterprises",
+            "referenceValueKey": "recordCode",
+            "referenceLabelKey": "name",
+        },
         {"key": "currentNode", "label": "当前节点", "inputType": "text", "required": True},
         {"key": "quantity", "label": "流转数量", "inputType": "number", "unit": "吨", "min": 0, "step": 0.01},
         {
@@ -1077,7 +1263,15 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("credit", "主体授信"),
             ],
         },
-        {"key": "borrower", "label": "融资主体", "inputType": "text", "required": True},
+        {
+            "key": "borrower",
+            "label": "融资主体",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/business-reference-options/subjects",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {"key": "amount", "label": "申请金额", "inputType": "number", "unit": "元", "min": 0, "step": 0.01},
         {"key": "dueDate", "label": "到期日期", "inputType": "date"},
         {
@@ -1111,9 +1305,18 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 field_option("processed", "竹加工品"),
             ],
         },
-        {"key": "region", "label": "采样区域/市场", "inputType": "text", "required": True},
+        {
+            "key": "region",
+            "label": "采样区域/市场",
+            "inputType": "reference",
+            "required": True,
+            "referenceEndpoint": "/api/dictionary-options/administrative-divisions",
+            "referenceValueKey": "label",
+            "referenceLabelKey": "fullName",
+            "multiple": False,
+        },
         {"key": "price", "label": "价格", "inputType": "number", "unit": "元/吨", "min": 0, "step": 0.01},
-        {"key": "period", "label": "采样周期", "inputType": "text", "required": True},
+        {"key": "period", "label": "采样周期", "inputType": "month", "required": True},
         {
             "key": "publishStatus",
             "label": "发布状态",
@@ -1142,7 +1345,14 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
             "options": [field_option("wechat", "微信端"), field_option("app", "移动 App"), field_option("h5", "H5")],
         },
         {"key": "entry", "label": "功能入口", "inputType": "text", "required": True},
-        {"key": "ownerName", "label": "负责人", "inputType": "text"},
+        {
+            "key": "ownerName",
+            "label": "负责人",
+            "inputType": "reference",
+            "referenceEndpoint": "/api/business-reference-options/people",
+            "referenceValueKey": "value",
+            "referenceLabelKey": "label",
+        },
         {
             "key": "publishStatus",
             "label": "上线状态",
@@ -1151,6 +1361,23 @@ BUSINESS_FIELD_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         },
     ],
 }
+
+
+def business_dictionary_code(module_key: str, field_key: str) -> str:
+    kebab_field = re.sub(r"(?<!^)(?=[A-Z])", "-", field_key).lower().replace("_", "-")
+    return f"business-{module_key}-{kebab_field}"
+
+
+for business_module_key, field_schema in BUSINESS_FIELD_SCHEMAS.items():
+    for field in field_schema:
+        if field.get("inputType") != "select":
+            continue
+        field["inputType"] = "dictionary"
+        field.setdefault(
+            "dictionaryCode",
+            business_dictionary_code(business_module_key, str(field.get("key") or "field")),
+        )
+
 
 for business_module_key, field_schema in BUSINESS_FIELD_SCHEMAS.items():
     BUSINESS_MODULES[business_module_key]["fieldSchema"] = field_schema
@@ -1295,6 +1522,17 @@ INDUSTRY_PLATFORM_MODULES = [
     ("mobile-service-channels", "移动端服务"),
 ]
 
+BUSINESS_REFERENCE_GROUPS = {
+    "people": ("farmers",),
+    "subjects": ("farmers", "cooperatives", "enterprises"),
+}
+
+BUSINESS_REFERENCE_SOURCE_LABELS = {
+    "farmers": "竹农",
+    "cooperatives": "合作社",
+    "enterprises": "竹企",
+}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -1345,8 +1583,52 @@ def business_field_schema(module_key: str) -> list[dict[str, Any]]:
     return BUSINESS_FIELD_SCHEMAS.get(module_key, [])
 
 
-def normalize_business_properties(module_key: str, properties: dict[str, Any] | None) -> dict[str, Any]:
+def business_dictionary_catalog() -> dict[str, dict[str, Any]]:
+    from .dictionaries import load_all_items, load_all_types
+
+    catalog: dict[str, dict[str, Any]] = {}
+    types_by_id: dict[str, dict[str, Any]] = {}
+    for dictionary_type in load_all_types():
+        type_code = str(dictionary_type.get("typeCode") or "")
+        type_id = str(dictionary_type.get("id") or "")
+        if not type_code or not type_id:
+            continue
+        entry = {"type": dictionary_type, "items": {}}
+        catalog[type_code] = entry
+        types_by_id[type_id] = entry
+    for item in load_all_items():
+        entry = types_by_id.get(str(item.get("dictionaryTypeId") or ""))
+        item_code = str(item.get("itemCode") or "")
+        if entry is not None and item_code:
+            entry["items"][item_code] = item
+    return catalog
+
+
+def dictionary_field_items(
+    field: dict[str, Any],
+    catalog: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]] | None:
+    type_code = str(field.get("dictionaryCode") or "")
+    entry = catalog.get(type_code)
+    if field.get("inputType") != "dictionary" or not type_code:
+        return None
+    if entry is None:
+        return {}
+    dictionary_type = entry["type"]
+    if dictionary_type.get("deletedAt") or dictionary_type.get("status") != "active":
+        return {}
+    return entry["items"]
+
+
+def normalize_business_properties(
+    module_key: str,
+    properties: dict[str, Any] | None,
+    *,
+    previous_properties: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     normalized = dict(properties or {})
+    previous = dict(previous_properties or {})
+    dictionary_catalog: dict[str, dict[str, Any]] | None = None
     for field in business_field_schema(module_key):
         key = str(field.get("key") or "")
         if not key or key not in normalized:
@@ -1368,6 +1650,11 @@ def normalize_business_properties(module_key: str, properties: dict[str, Any] | 
                 normalized[key] = date.fromisoformat(str(value).strip()).isoformat()
             elif input_type == "datetime-local":
                 normalized[key] = datetime.fromisoformat(str(value).strip()).isoformat()
+            elif input_type == "month":
+                month_value = str(value).strip()
+                if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month_value):
+                    raise ValueError("must use YYYY-MM")
+                normalized[key] = month_value
             elif input_type == "boolean":
                 if isinstance(value, bool):
                     normalized[key] = value
@@ -1377,14 +1664,36 @@ def normalize_business_properties(module_key: str, properties: dict[str, Any] | 
                     normalized[key] = False
                 else:
                     raise ValueError("must be a boolean")
+            elif input_type == "multi-reference":
+                source_values = value if isinstance(value, list) else str(value).split(",")
+                normalized[key] = [
+                    str(item).strip()
+                    for item in source_values
+                    if str(item).strip()
+                ]
             else:
                 normalized[key] = str(value).strip()
         except (ValueError, ArithmeticError) as exc:
             raise HTTPException(status_code=422, detail=f"Invalid business field {key}: {exc}") from exc
 
-        options = field.get("options") or []
-        allowed = {str(option.get("value")) for option in options if isinstance(option, dict)}
-        if allowed and str(normalized[key]) not in allowed:
+        if field.get("inputType") == "dictionary":
+            if dictionary_catalog is None:
+                dictionary_catalog = business_dictionary_catalog()
+            dictionary_items = dictionary_field_items(field, dictionary_catalog)
+        else:
+            dictionary_items = None
+        if dictionary_items is None:
+            options = field.get("options") or []
+            allowed = {str(option.get("value")) for option in options if isinstance(option, dict)}
+        else:
+            allowed = {
+                item_code
+                for item_code, item in dictionary_items.items()
+                if not item.get("deletedAt") and item.get("status") == "active"
+            }
+        normalized_value = str(normalized[key])
+        historical_value_unchanged = key in previous and str(previous.get(key)) == normalized_value
+        if (dictionary_items is not None or allowed) and normalized_value not in allowed and not historical_value_unchanged:
             raise HTTPException(
                 status_code=422,
                 detail=f"Invalid business field {key}: expected one of {', '.join(sorted(allowed))}",
@@ -3639,10 +3948,25 @@ def business_core_value(record: dict[str, Any], key: str) -> Any:
     return payload.get(key)
 
 
-def business_core_display(module_key: str, record: dict[str, Any], key: str) -> str:
+def business_core_display(
+    module_key: str,
+    record: dict[str, Any],
+    key: str,
+    *,
+    dictionary_catalog: dict[str, dict[str, Any]] | None = None,
+) -> str:
     value = business_core_value(record, key)
     field = next((item for item in business_field_schema(module_key) if item.get("key") == key), None)
     if field:
+        catalog = dictionary_catalog if dictionary_catalog is not None else business_dictionary_catalog()
+        dictionary_items = dictionary_field_items(field, catalog)
+        dictionary_option = (
+            dictionary_items.get(str(value))
+            if dictionary_items is not None
+            else None
+        )
+        if dictionary_option:
+            return str(dictionary_option.get("label") or dictionary_option.get("itemCode") or "-")
         option = next(
             (item for item in field.get("options") or [] if str(item.get("value")) == str(value)),
             None,
@@ -3669,7 +3993,12 @@ def business_linked_display(record: dict[str, Any]) -> str:
     return f"已关联 {linked_count} 个林班" if linked_count else "-"
 
 
-def dashboard_row(module_key: str, record: dict[str, Any]) -> list[str]:
+def dashboard_row(
+    module_key: str,
+    record: dict[str, Any],
+    *,
+    dictionary_catalog: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     linked = business_linked_display(record)
     if module_key in BUSINESS_DASHBOARD_FIELDS:
         values = []
@@ -3679,7 +4008,14 @@ def dashboard_row(module_key: str, record: dict[str, Any]) -> list[str]:
             elif field_key == "@location":
                 values.append(module_location(record))
             else:
-                values.append(business_core_display(module_key, record, field_key))
+                values.append(
+                    business_core_display(
+                        module_key,
+                        record,
+                        field_key,
+                        dictionary_catalog=dictionary_catalog,
+                    )
+                )
         return [str(record.get("name") or "-"), *values]
     if module_key == "farmers":
         return [str(record.get("name") or "-"), module_location(record), linked, str(record.get("status") or "-")]
@@ -3763,8 +4099,14 @@ def dashboard_payload(
     records: list[dict[str, Any]],
     *,
     summary: dict[str, Any] | None = None,
+    dictionary_catalog: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     config = BUSINESS_MODULES[module_key]
+    dictionary_catalog = (
+        dictionary_catalog
+        if dictionary_catalog is not None
+        else business_dictionary_catalog()
+    )
     visible = active_records(records)
     linked_blocks = sorted({code for record in visible for code in record.get("linkedBlockCodes", [])})
     calculated_aggregates, calculated_metrics = business_numeric_aggregates(module_key, visible)
@@ -3792,7 +4134,14 @@ def dashboard_payload(
         ],
         "aggregates": aggregates,
         "columns": config["columns"],
-        "rows": [dashboard_row(module_key, record) for record in visible],
+        "rows": [
+            dashboard_row(
+                module_key,
+                record,
+                dictionary_catalog=dictionary_catalog,
+            )
+            for record in visible
+        ],
         "rowLimit": BUSINESS_DASHBOARD_ROW_LIMIT,
         "rowsTruncated": total > len(visible),
         "adminHref": admin_link["href"] if admin_link else "",
@@ -3869,6 +4218,85 @@ def industry_platform_dashboard_payload() -> dict[str, Any]:
 @router.get("/business/modules")
 def list_business_modules(context: AuthContext = Depends(request_context)) -> dict[str, Any]:
     return {"items": [{"key": key, **value} for key, value in BUSINESS_MODULES.items()]}
+
+
+def business_reference_source_payload(
+    module_key: str,
+    *,
+    query_text: str,
+    fetch_limit: int,
+) -> tuple[list[dict[str, Any]], int]:
+    filters = ManagedFilters(q=query_text, limit=fetch_limit, offset=0)
+    if use_mysql():
+        return (
+            fetch_business_records_mysql(
+                module_key,
+                filters=filters,
+                limit=fetch_limit,
+                offset=0,
+                include_targets=False,
+            ),
+            count_business_records_mysql(module_key, filters),
+        )
+    if use_postgis():
+        return (
+            fetch_business_records_postgis(
+                module_key,
+                filters=filters,
+                limit=fetch_limit,
+                offset=0,
+            ),
+            count_business_records_postgis(module_key, filters),
+        )
+    payload = list_records(business_records(module_key), filters)
+    return payload["items"], int(payload["total"])
+
+
+@router.get("/business-reference-options/{group_key}")
+def list_business_reference_options(
+    group_key: str,
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    _ = context
+    source_modules = BUSINESS_REFERENCE_GROUPS.get(group_key)
+    if source_modules is None:
+        raise HTTPException(status_code=404, detail="Business reference group not found")
+    fetch_limit = min(500, max(100, limit + offset))
+    items: list[dict[str, Any]] = []
+    total = 0
+    for module_key in source_modules:
+        records, source_total = business_reference_source_payload(
+            module_key,
+            query_text=q.strip(),
+            fetch_limit=fetch_limit,
+        )
+        total += source_total
+        source_label = BUSINESS_REFERENCE_SOURCE_LABELS[module_key]
+        for record in records:
+            record_code = str(record.get("recordCode") or "").strip()
+            name = str(record.get("name") or record_code).strip()
+            if not record_code:
+                continue
+            items.append(
+                {
+                    "value": record_code,
+                    "label": f"{name} · {source_label}",
+                    "recordCode": record_code,
+                    "name": name,
+                    "moduleKey": module_key,
+                    "moduleLabel": source_label,
+                }
+            )
+    items.sort(key=lambda item: (item["label"], item["recordCode"]))
+    return {
+        "items": items[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/industry-platform/dashboard")
@@ -4135,7 +4563,11 @@ def patch_business_record(
         if not record or record.get("deletedAt"):
             raise HTTPException(status_code=404, detail="Record not found")
         if "properties" in patch_data:
-            patch_data["properties"] = normalize_business_properties(module_key, patch_data.get("properties"))
+            patch_data["properties"] = normalize_business_properties(
+                module_key,
+                patch_data.get("properties"),
+                previous_properties=record.get("properties"),
+            )
         patched = normalize_record(
             {
                 **record,
@@ -4166,7 +4598,11 @@ def patch_business_record(
             if value is not None
         }
         if "properties" in patch_data:
-            patch_data["properties"] = normalize_business_properties(module_key, patch_data.get("properties"))
+            patch_data["properties"] = normalize_business_properties(
+                module_key,
+                patch_data.get("properties"),
+                previous_properties=record.get("properties"),
+            )
         patched = normalize_record(
             {
                 **record,

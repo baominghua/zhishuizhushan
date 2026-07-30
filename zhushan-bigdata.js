@@ -162,9 +162,8 @@ const normalizeZhushanApiBase = (value) => String(value || "").trim().replace(/\
 const resolveZhushanApiBase = () => {
   const configured = normalizeZhushanApiBase(ZHUSHAN_SDK_CONFIG.remoteApiBase);
   if (configured) return configured;
+  if (/^https?:$/.test(window.location.protocol)) return window.location.origin;
   if (window.location.protocol === "file:") return "http://127.0.0.1:8010";
-  if (window.location.port === "8010") return window.location.origin;
-  if (window.location.hostname) return `${window.location.protocol}//${window.location.hostname}:8010`;
   return "http://127.0.0.1:8010";
 };
 const ZHUSHAN_REMOTE_API_BASE =

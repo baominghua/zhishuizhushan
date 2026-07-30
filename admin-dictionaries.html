@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智慧竹山后台｜字典管理</title>
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body data-admin-module="dictionaries" data-permission="system.dictionaries.view">
+    <main class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="brand-block">
+          <p class="brand-kicker">Data Governance</p>
+          <h1>字典管理</h1>
+          <p class="brand-copy">行政区划、林业分类、权属状态与业务选项。</p>
+        </div>
+        <nav class="sidebar-nav" aria-label="后台模块导航">
+          <a href="admin.html" data-module="overview">后台首页</a><a href="admin-deployment.html" data-module="deployment">部署诊断</a><a href="admin-blocks.html" data-module="blocks">林班空间台账</a><a href="admin-rights.html" data-module="rights">林权档案台账</a><a href="admin-linkages.html" data-module="linkages">图档关联管理</a><a href="admin-farmers.html" data-module="farmers">竹农管理</a><a href="admin-cooperatives.html" data-module="cooperatives">合作社管理</a><a href="admin-enterprises.html" data-module="enterprises">竹企管理</a><a href="admin-plant-protection.html" data-module="plantProtection">植保管理</a><a href="admin-materials.html" data-module="materials">农资管理</a><a href="admin-policies.html" data-module="policies">政策法规管理</a><a href="admin-stewardship-agreements.html" data-module="stewardshipAgreements">托管协议</a><a href="admin-franchise-bases.html" data-module="franchiseBases">加盟基地</a><a href="admin-maintenance-tasks.html" data-module="maintenanceTasks">管护任务</a><a href="admin-work-logs.html" data-module="workLogs">作业记录</a><a href="admin-drone-tasks.html" data-module="droneTasks">无人机任务</a><a href="admin-equipment.html" data-module="equipment">设备台账</a><a href="admin-pest-warnings.html" data-module="pestWarnings">病虫害预警</a><a href="admin-material-services.html" data-module="materialServices">农资服务</a><a href="admin-yield-forecasts.html" data-module="yieldForecasts">产量预测</a><a href="admin-harvest-plans.html" data-module="harvestPlans">采挖计划</a><a href="admin-income-estimates.html" data-module="incomeEstimates">收益测算</a><a href="admin-performance-dashboards.html" data-module="performanceDashboards">绩效看板</a><a href="admin-carbon-estimates.html" data-module="carbonEstimates">碳汇测算</a><a href="admin-trade-matches.html" data-module="tradeMatches">交易撮合</a><a href="admin-logistics-traces.html" data-module="logisticsTraces">物流溯源</a><a href="admin-product-qrcodes.html" data-module="productQrcodes">二维码管理</a><a href="admin-supply-chain-finance.html" data-module="supplyChainFinance">供应链金融</a><a href="admin-price-indexes.html" data-module="priceIndexes">价格指数</a><a href="admin-mobile-service-channels.html" data-module="mobileServiceChannels">移动端服务</a><a href="admin-map-layers.html" data-module="mapLayers">地图图层发布</a><a href="admin-dictionaries.html" data-module="dictionaries">字典管理</a><a href="admin-imports.html" data-module="imports">成果入库</a><a href="admin-imagery.html" data-module="imagery">影像管理</a><a href="admin-roles.html" data-module="roles">角色权限管理</a><a href="admin-users.html" data-module="users">用户账号管理</a>
+        </nav>
+        <section class="sidebar-status" aria-labelledby="apiStatusTitle">
+          <div class="section-heading">
+            <h2 id="apiStatusTitle">权限边界</h2>
+            <span id="statusBadge" class="status-badge idle">未连接</span>
+          </div>
+          <p id="statusText" class="status-text">当前页面权限：<span id="permissionCode">system.dictionaries.view</span></p>
+        </section>
+      </aside>
+
+      <section class="admin-main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <p class="eyebrow">数据治理</p>
+            <h2>字典管理</h2>
+          </div>
+          <div class="topbar-actions">
+            <button id="reloadDictionaries" type="button">刷新字典</button>
+            <button id="newDictionary" type="button" class="button-ghost" data-permission="system.dictionaries.create">新建字典</button>
+          </div>
+        </header>
+
+        <section class="panel config-panel">
+          <div class="field-grid field-grid-wide">
+            <label>
+              <span>关键词</span>
+              <input id="dictionaryKeyword" type="search" placeholder="字典编码、名称、分类" />
+            </label>
+            <label>
+              <span>分类</span>
+              <select id="dictionaryCategoryFilter">
+                <option value="">全部分类</option>
+                <option value="administrative">行政区划</option>
+                <option value="forestry">林业资源</option>
+                <option value="rights">林权档案</option>
+                <option value="business">业务经营</option>
+                <option value="materials">农资物料</option>
+                <option value="system">系统通用</option>
+              </select>
+            </label>
+            <label>
+              <span>状态</span>
+              <select id="dictionaryStatusFilter">
+                <option value="">全部状态</option>
+                <option value="active">启用</option>
+                <option value="disabled">停用</option>
+              </select>
+            </label>
+            <label class="checkbox-field">
+              <span>显示已删除</span>
+              <input id="includeDeletedDictionaries" type="checkbox" data-permission="system.dictionaries.restore" />
+            </label>
+            <label><span>API 基地址</span><input id="apiBase" type="url" /></label>
+            <label><span>角色头</span><input id="authRoles" type="text" value="admin" /></label>
+            <label><span>区域头</span><input id="authAreas" type="text" /></label>
+            <label><span>用户头</span><input id="authUser" type="text" /></label>
+          </div>
+        </section>
+
+        <section class="dictionary-summary" aria-label="字典统计">
+          <div><span>字典总数</span><strong id="dictionaryTotal">0</strong></div>
+          <div><span>启用字典</span><strong id="dictionaryActiveTotal">0</strong></div>
+          <div><span>词条数量</span><strong id="dictionaryItemTotal">0</strong></div>
+          <div><span>层级字典</span><strong id="dictionaryHierarchyTotal">0</strong></div>
+        </section>
+
+        <section class="workbench-grid ledger-workbench ledger-workbench-full" data-admin-primary-ledger="true">
+          <div class="panel table-panel ledger-main-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">字典台账</p>
+                <h2>字典列表</h2>
+              </div>
+            </div>
+            <div class="table-wrap ledger-table-wrap ledger-table-full">
+              <table class="dictionary-ledger-table">
+                <thead>
+                  <tr>
+                    <th>字典</th>
+                    <th>分类</th>
+                    <th>结构</th>
+                    <th>词条</th>
+                    <th>状态</th>
+                    <th>更新时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="dictionaryRows">
+                  <tr class="placeholder-row"><td colspan="7">等待加载字典</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <section id="dictionaryDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
+            <div class="panel detail-panel detail-drawer-panel dictionary-detail-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">字典详情</p>
+                  <h2 id="dictionaryDetailTitle">选择字典查看详情</h2>
+                </div>
+                <div class="panel-actions">
+                  <button id="newDictionaryItem" type="button" data-permission="system.dictionaries.create">新增词条</button>
+                  <button id="editDictionaryFromDetail" type="button" class="button-ghost" data-permission="system.dictionaries.update">编辑字典</button>
+                  <button id="closeDictionaryDetail" type="button" class="button-ghost">关闭</button>
+                </div>
+              </div>
+              <dl id="dictionaryDetailGrid" class="detail-grid"></dl>
+              <div class="dictionary-item-toolbar">
+                <label>
+                  <span>词条搜索</span>
+                  <input id="dictionaryItemKeyword" type="search" placeholder="编码、名称、拼音、别名" />
+                </label>
+                <label>
+                  <span>层级</span>
+                  <input id="dictionaryItemLevelFilter" type="search" placeholder="province、town、village" />
+                </label>
+                <label>
+                  <span>父级</span>
+                  <select id="dictionaryItemParentFilter"><option value="">全部父级</option></select>
+                </label>
+                <label class="checkbox-field">
+                  <span>显示已删除词条</span>
+                  <input id="includeDeletedDictionaryItems" type="checkbox" data-permission="system.dictionaries.restore" />
+                </label>
+              </div>
+              <div class="table-wrap dictionary-item-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>词条</th>
+                      <th>父级</th>
+                      <th>层级</th>
+                      <th>来源</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dictionaryItemRows">
+                    <tr class="placeholder-row"><td colspan="6">选择字典后加载词条</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <form id="dictionaryForm" class="crud-modal hidden" aria-hidden="true">
+            <div class="panel form-panel crud-editor-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">字典维护</p>
+                  <h2 id="dictionaryFormTitle">新建字典</h2>
+                </div>
+                <div class="panel-actions">
+                  <button id="cancelDictionaryEdit" type="button" class="button-ghost">关闭</button>
+                  <button id="saveDictionary" type="submit" data-permission="system.dictionaries.create">保存字典</button>
+                </div>
+              </div>
+              <input id="dictionaryId" type="hidden" />
+              <fieldset>
+                <legend>基础信息</legend>
+                <div class="field-grid">
+                  <label><span>字典编码</span><input id="dictionaryTypeCode" type="text" required pattern="[a-z][a-z0-9-]{1,99}" placeholder="maintenance-methods" /></label>
+                  <label><span>字典名称</span><input id="dictionaryName" type="text" required /></label>
+                  <label>
+                    <span>分类</span>
+                    <select id="dictionaryCategory" required>
+                      <option value="administrative">行政区划</option>
+                      <option value="forestry">林业资源</option>
+                      <option value="rights">林权档案</option>
+                      <option value="business" selected>业务经营</option>
+                      <option value="materials">农资物料</option>
+                      <option value="system">系统通用</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>状态</span>
+                    <select id="dictionaryStatus"><option value="active">启用</option><option value="disabled">停用</option></select>
+                  </label>
+                  <label>
+                    <span>取值方式</span>
+                    <select id="dictionaryValueMode"><option value="code">保存编码</option><option value="label">保存名称</option></select>
+                  </label>
+                  <label><span>排序</span><input id="dictionarySortOrder" type="number" step="1" value="0" /></label>
+                  <label class="checkbox-field"><span>层级字典</span><input id="dictionaryHierarchyEnabled" type="checkbox" /></label>
+                  <label class="field-span-2"><span>说明</span><textarea id="dictionaryDescription" rows="3"></textarea></label>
+                  <label class="field-span-2"><span>扩展 JSON</span><textarea id="dictionaryProperties" rows="4" spellcheck="false">{}</textarea></label>
+                </div>
+              </fieldset>
+            </div>
+          </form>
+
+          <form id="dictionaryItemForm" class="crud-modal hidden" aria-hidden="true">
+            <div class="panel form-panel crud-editor-panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">词条维护</p>
+                  <h2 id="dictionaryItemFormTitle">新增词条</h2>
+                </div>
+                <div class="panel-actions">
+                  <button id="cancelDictionaryItemEdit" type="button" class="button-ghost">关闭</button>
+                  <button id="saveDictionaryItem" type="submit" data-permission="system.dictionaries.create">保存词条</button>
+                </div>
+              </div>
+              <input id="dictionaryItemId" type="hidden" />
+              <fieldset>
+                <legend>词条信息</legend>
+                <div class="field-grid">
+                  <label><span>词条编码</span><input id="dictionaryItemCode" type="text" required /></label>
+                  <label><span>显示名称</span><input id="dictionaryItemLabel" type="text" required /></label>
+                  <label><span>父级词条</span><select id="dictionaryItemParent"><option value="">无父级</option></select></label>
+                  <label><span>层级编码</span><input id="dictionaryItemLevel" type="text" placeholder="province、town、village" /></label>
+                  <label class="field-span-2"><span>完整名称</span><input id="dictionaryItemFullName" type="text" /></label>
+                  <label><span>拼音</span><input id="dictionaryItemPinyin" type="text" /></label>
+                  <label><span>首字母</span><input id="dictionaryItemInitials" type="text" /></label>
+                  <label><span>搜索别名</span><input id="dictionaryItemAliases" type="text" placeholder="多个别名用逗号分隔" /></label>
+                  <label><span>排序</span><input id="dictionaryItemSortOrder" type="number" step="1" value="0" /></label>
+                  <label>
+                    <span>状态</span>
+                    <select id="dictionaryItemStatus"><option value="active">启用</option><option value="disabled">停用</option></select>
+                  </label>
+                  <label>
+                    <span>来源</span>
+                    <select id="dictionaryItemSource">
+                      <option value="manual">人工维护</option>
+                      <option value="import">批量导入</option>
+                      <option value="forest-block">林班数据</option>
+                      <option value="seed">系统种子</option>
+                    </select>
+                  </label>
+                  <label class="field-span-2"><span>元数据 JSON</span><textarea id="dictionaryItemMetadata" rows="4" spellcheck="false">{}</textarea></label>
+                </div>
+              </fieldset>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="admin-common.js"></script>
+    <script src="admin-dictionaries.js"></script>
+  </body>
+</html>

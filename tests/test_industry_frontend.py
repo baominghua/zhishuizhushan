@@ -393,6 +393,13 @@ def test_bigdata_map_keeps_neutral_fallback_until_online_tiles_load():
     assert "!hasStoredDashboardView()" in js
 
 
+def test_bigdata_uses_the_serving_origin_for_production_api_and_basemap_proxy():
+    js = _read("zhushan-bigdata.js")
+
+    assert 'if (/^https?:$/.test(window.location.protocol)) return window.location.origin;' in js
+    assert '`${window.location.protocol}//${window.location.hostname}:8010`' not in js
+
+
 def test_bigdata_does_not_seed_static_demo_map_features():
     html = _read("zhushan-bigdata.html")
     js = _read("zhushan-bigdata.js")

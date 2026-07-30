@@ -156,6 +156,28 @@ test("shared API uses cookies, limits CSRF to human writes, and redirects 401s l
   assert.equal(harness.location.replacedWith, "admin-login.html?returnTo=admin-users.html%3Frole%3Doperator%23ledger");
 });
 
+test("shared API reuses the current-tab service token without copying it to local storage", async () => {
+  const harness = createHarness({
+    session: {
+      smartBambooServiceToken: "deployment-token",
+      smartBambooAuthProfile: JSON.stringify({
+        authenticated: true,
+        authType: "service-token",
+        user: "deployment",
+      }),
+    },
+    responses: [jsonResponse(200, { ok: true })],
+  });
+
+  await harness.context.__AdminCommon.api("/api/forest-blocks");
+
+  assert.equal(
+    harness.calls[0].options.headers.get("Authorization"),
+    "Bearer deployment-token",
+  );
+  assert.equal(harness.localStorage.has("smartBambooServiceToken"), false);
+});
+
 test("session refresh renders effective permissions and blocks then releases forced password change", async () => {
   const harness = createHarness({
     responses: [

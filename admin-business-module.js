@@ -14,6 +14,10 @@
     splitValues,
     stringifyPretty,
   } = AdminCommon;
+  const {
+    bindDictionarySelect,
+    bindReferencePicker,
+  } = AdminSmartFields;
 
   const body = document.body;
   const endpoint = body.dataset.businessEndpoint;
@@ -25,7 +29,16 @@
     .split("/")
     .filter(Boolean)
     .pop();
-  const state = { records: [], businessEvents: [], fieldSchema: [], activeId: "" };
+  const state = {
+    records: [],
+    businessEvents: [],
+    fieldSchema: [],
+    activeId: "",
+    coreSmartControls: {},
+    statusControl: null,
+    linkedBlockPicker: null,
+    linkedRightPicker: null,
+  };
   let pager;
   let keywordTimer;
   let editorReturnFocus = null;
@@ -311,7 +324,7 @@
     const heading = document.createElement("div");
     heading.id = "businessCoreFields";
     heading.className = "business-core-form-heading field-span-2";
-    heading.innerHTML = `<strong>模块核心字段</strong><small>字段按后台数据模型校验，并同步写入 MySQL 结构化属性索引。</small>`;
+    heading.innerHTML = "<strong>模块核心字段</strong>";
     propertiesLabel.parentElement.insertBefore(heading, propertiesLabel);
     fields.forEach((field) => {
       const label = document.createElement("label");
@@ -325,12 +338,16 @@
         control = `<select id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}"${required}><option value="">请选择</option>${options
           .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label || option.value)}</option>`)
           .join("")}</select>`;
+      } else if (field.inputType === "dictionary") {
+        control = `<select id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}"${required}><option value="">正在加载...</option></select>`;
+      } else if (field.inputType === "reference" || field.inputType === "multi-reference") {
+        control = `<input id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" type="text"${required} />`;
       } else if (field.inputType === "textarea") {
         control = `<textarea id="businessCoreField-${escapeHtml(field.key)}" data-business-core-field="${escapeHtml(field.key)}" rows="3"${required}${readOnly}></textarea>`;
       } else {
         const inputType = field.inputType === "number" || field.inputType === "integer"
           ? "number"
-          : field.inputType === "date" || field.inputType === "datetime-local"
+          : field.inputType === "date" || field.inputType === "datetime-local" || field.inputType === "month"
             ? field.inputType
             : "text";
         const step = field.step !== undefined ? ` step="${escapeHtml(field.step)}"` : field.inputType === "integer" ? ' step="1"' : "";
@@ -348,11 +365,77 @@
       .find((input) => input.dataset.businessCoreField === key) || null;
   }
 
+  async function setupSmartFields() {
+    state.statusControl = bindDictionarySelect({
+      element: $("#businessRecordStatus"),
+      typeCode: "business-statuses",
+      api,
+      blankLabel: "请选择状态",
+    });
+    state.linkedBlockPicker = bindReferencePicker({
+      input: $("#businessLinkedBlockCodes"),
+      endpoint: "/api/forest-blocks",
+      valueKey: "blockCode",
+      labelKey: "name",
+      api,
+      placeholder: "搜索林班编号、名称或村镇",
+    });
+    state.linkedRightPicker = bindReferencePicker({
+      input: $("#businessLinkedRightArchiveCodes"),
+      endpoint: "/api/forest-rights",
+      valueKey: "archiveCode",
+      labelKey: "holder",
+      api,
+      placeholder: "搜索档案编号、证号或权利人",
+    });
+    editableCoreFields().forEach((field) => {
+      const input = businessCoreInput(field.key);
+      if (!input) return;
+      if (field.inputType === "dictionary" && field.dictionaryCode) {
+        state.coreSmartControls[field.key] = bindDictionarySelect({
+          element: input,
+          typeCode: field.dictionaryCode,
+          query: field.dictionaryQuery || {},
+          api,
+          blankLabel: "请选择",
+        });
+      } else if (
+        (field.inputType === "reference" || field.inputType === "multi-reference")
+        && field.referenceEndpoint
+      ) {
+        state.coreSmartControls[field.key] = bindReferencePicker({
+          input,
+          endpoint: field.referenceEndpoint,
+          valueKey: field.referenceValueKey || "recordCode",
+          labelKey: field.referenceLabelKey || "name",
+          api,
+          multiple: field.inputType === "multi-reference",
+          placeholder: `搜索${field.label}`,
+        });
+      }
+    });
+    await Promise.all([
+      state.statusControl.ready,
+      ...Object.values(state.coreSmartControls)
+        .filter((control) => control.ready)
+        .map((control) => control.ready),
+    ]);
+  }
+
   function fillBusinessCoreFields(record = {}) {
     ensureBusinessCoreFieldInputs();
     editableCoreFields().forEach((field) => {
       const input = businessCoreInput(field.key);
-      if (input) input.value = coreFieldValue(record, field);
+      if (!input) return;
+      const value = coreFieldValue(record, field);
+      const control = state.coreSmartControls[field.key];
+      if (field.inputType === "dictionary" && control) {
+        control.setValue(value);
+      } else if ((field.inputType === "reference" || field.inputType === "multi-reference") && control) {
+        control.setValues(field.inputType === "multi-reference" ? splitValues(value) : value ? [value] : []);
+      } else {
+        input.value = value;
+      }
     });
   }
 
@@ -368,6 +451,7 @@
     if (field.inputType === "integer") return Number.parseInt(rawValue, 10);
     if (field.inputType === "number") return Number(rawValue);
     if (field.inputType === "boolean") return rawValue === "true";
+    if (field.inputType === "multi-reference") return splitValues(rawValue);
     return rawValue;
   }
 
@@ -651,17 +735,16 @@
     $("#businessRecordId").value = record.id || "";
     $("#businessRecordCode").value = record.recordCode || "";
     $("#businessRecordName").value = record.name || "";
-    $("#businessRecordStatus").value = record.status || "active";
-    $("#businessLinkedBlockCodes").value = Array.isArray(record.linkedBlockCodes) ? record.linkedBlockCodes.join(", ") : "";
-    $("#businessLinkedRightArchiveCodes").value = Array.isArray(record.linkedRightArchiveCodes)
-      ? record.linkedRightArchiveCodes.join(", ")
-      : "";
+    state.statusControl.setValue(record.status || "active");
+    state.linkedBlockPicker.setValues(Array.isArray(record.linkedBlockCodes) ? record.linkedBlockCodes : []);
+    state.linkedRightPicker.setValues(Array.isArray(record.linkedRightArchiveCodes) ? record.linkedRightArchiveCodes : []);
     const relationsPartial = Boolean(record.properties?.linkedTargetsTruncated);
     [$("#businessLinkedBlockCodes"), $("#businessLinkedRightArchiveCodes")].forEach((input) => {
-      input.disabled = relationsPartial;
       input.dataset.preserveRelations = String(relationsPartial);
       input.title = relationsPartial ? "关联数据超过 100 条，请通过关联管理功能分批维护" : "";
     });
+    state.linkedBlockPicker.setDisabled(relationsPartial);
+    state.linkedRightPicker.setDisabled(relationsPartial);
     fillBusinessCoreFields(record);
     $("#businessProperties").value = stringifyPretty(businessPropertiesForEditing(record), {});
     const deleteButton = $("#deleteBusinessRecord");
@@ -998,6 +1081,7 @@
     await loadModuleFieldSchema();
     ensureBusinessCoreFieldFilter();
     ensureBusinessCoreFieldInputs();
+    await setupSmartFields();
     ensureBusinessEventLedger();
     configureModal($("#businessForm"), "businessFormTitle");
     configureModal($("#businessDetailPanel"), "businessDetailTitle");

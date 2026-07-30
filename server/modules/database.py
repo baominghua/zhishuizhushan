@@ -121,6 +121,8 @@ PLATFORM_POSTGIS_TABLES = [
     "forest_right_versions",
     "map_layers",
     "business_records",
+    "dictionary_types",
+    "dictionary_items",
     "admin_roles",
     "admin_users",
     "import_batches",
@@ -261,6 +263,14 @@ def admin_credentials_json_path() -> Path:
 
 def admin_sessions_json_path() -> Path:
     return get_data_dir() / "admin" / "sessions.json"
+
+
+def dictionary_types_json_path() -> Path:
+    return get_data_dir() / "admin" / "dictionary_types.json"
+
+
+def dictionary_items_json_path() -> Path:
+    return get_data_dir() / "admin" / "dictionary_items.json"
 
 
 def import_batches_json_path() -> Path:
@@ -507,6 +517,53 @@ def init_platform_schema() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_business_records_linked_rights ON business_records USING GIN (linked_right_archive_codes)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_business_records_properties ON business_records USING GIN (properties)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_business_records_payload ON business_records USING GIN (payload)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dictionary_types (
+                    id uuid PRIMARY KEY,
+                    type_code text UNIQUE NOT NULL,
+                    name text NOT NULL,
+                    category text NOT NULL,
+                    hierarchy_enabled boolean NOT NULL DEFAULT false,
+                    value_mode text NOT NULL DEFAULT 'code',
+                    description text,
+                    status text NOT NULL DEFAULT 'active',
+                    sort_order integer NOT NULL DEFAULT 0,
+                    system_defined boolean NOT NULL DEFAULT false,
+                    properties jsonb DEFAULT '{}'::jsonb,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    deleted_at timestamptz
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_dictionary_type_category ON dictionary_types (category, status, sort_order)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dictionary_items (
+                    id uuid PRIMARY KEY,
+                    dictionary_type_id uuid NOT NULL REFERENCES dictionary_types(id) ON DELETE CASCADE,
+                    item_code text NOT NULL,
+                    label text NOT NULL,
+                    parent_item_id uuid REFERENCES dictionary_items(id) ON DELETE SET NULL,
+                    level_code text,
+                    full_name text,
+                    pinyin text,
+                    initials text,
+                    search_aliases jsonb DEFAULT '[]'::jsonb,
+                    sort_order integer NOT NULL DEFAULT 0,
+                    status text NOT NULL DEFAULT 'active',
+                    metadata jsonb DEFAULT '{}'::jsonb,
+                    source text NOT NULL DEFAULT 'manual',
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    deleted_at timestamptz,
+                    UNIQUE (dictionary_type_id, item_code)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_dictionary_item_lookup ON dictionary_items (dictionary_type_id, parent_item_id, status, sort_order)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_dictionary_item_level ON dictionary_items (dictionary_type_id, level_code, status)")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS admin_roles (

@@ -37,6 +37,7 @@ ADMIN_PAGES = {
     "priceIndexes": "admin-price-indexes.html",
     "mobileServiceChannels": "admin-mobile-service-channels.html",
     "mapLayers": "admin-map-layers.html",
+    "dictionaries": "admin-dictionaries.html",
     "imports": "admin-imports.html",
     "imagery": "admin-imagery.html",
     "roles": "admin-roles.html",
@@ -79,6 +80,45 @@ def test_each_admin_module_page_seeds_the_full_navigation_menu():
         html = _read(page)
         for linked_page in ADMIN_PAGES.values():
             assert f'href="{linked_page}"' in html
+
+
+def test_dictionary_admin_is_a_full_width_ledger_with_independent_crud_drawers():
+    html = _read("admin-dictionaries.html")
+    js = _read("admin-dictionaries.js")
+
+    assert 'data-admin-module="dictionaries"' in html
+    assert 'data-permission="system.dictionaries.view"' in html
+    assert 'data-admin-primary-ledger="true"' in html
+    assert 'id="dictionaryRows"' in html
+    assert "<th>操作</th>" in html
+    assert 'id="dictionaryDetailPanel"' in html
+    assert 'id="dictionaryForm"' in html
+    assert 'id="dictionaryItemForm"' in html
+    assert 'class="crud-modal hidden"' in html
+    assert 'data-row-action="view"' in js
+    assert 'data-row-action="edit"' in js
+    assert 'data-row-action="delete"' in js
+    assert "system.dictionaries.create" in js
+    assert "system.dictionaries.update" in js
+    assert "system.dictionaries.delete" in js
+    assert "system.dictionaries.restore" in js
+    assert "/api/dictionary-options/" in js
+
+
+def test_dictionary_ledger_has_a_readable_mobile_summary_and_business_forms_hide_storage_details():
+    html = _read("admin-dictionaries.html")
+    js = _read("admin-dictionaries.js")
+    css = _read("admin.css")
+    business_js = _read("admin-business-module.js")
+
+    assert 'class="dictionary-ledger-table"' in html
+    assert "dictionary-primary-cell" in js
+    assert "dictionary-mobile-meta" in js
+    assert "dictionary-actions-cell" in js
+    assert ".dictionary-ledger-table thead" in css
+    assert ".dictionary-mobile-meta" in css
+    assert "字段按后台数据模型校验" not in business_js
+    assert "MySQL 结构化属性索引" not in business_js
 
 
 def test_role_admin_surfaces_permission_closure_guides_for_first_stage_workflows():
@@ -2677,6 +2717,55 @@ def test_business_admin_uses_backend_typed_field_schema_for_form_controls():
     assert "field.readOnly" in js
 
 
+def test_governed_admin_fields_use_shared_dictionary_division_and_reference_controls():
+    blocks_html = _read("admin-blocks.html")
+    blocks_js = _read("admin-blocks.js")
+    rights_html = _read("admin-rights.html")
+    rights_js = _read("admin-rights.js")
+    business_js = _read("admin-business-module.js")
+
+    assert '<select id="countyCode"' in blocks_html
+    assert '<input id="countyName" type="hidden"' in blocks_html
+    assert "bindAdministrativeDivision" in blocks_js
+    for dictionary_code in [
+        "forest-base-types",
+        "forest-operation-types",
+        "quality-grades",
+        "health-statuses",
+        "risk-levels",
+    ]:
+        assert dictionary_code in blocks_js
+
+    assert "admin-smart-fields.js" in rights_html
+    assert "bindReferencePicker" in rights_js
+    assert "/api/forest-blocks" in rights_js
+    for dictionary_code in [
+        "certificate-types",
+        "right-types",
+        "ownership-types",
+        "archive-statuses",
+    ]:
+        assert dictionary_code in rights_js
+
+    assert "bindReferencePicker" in business_js
+    assert "/api/forest-blocks" in business_js
+    assert "/api/forest-rights" in business_js
+    assert 'field.inputType === "dictionary"' in business_js
+
+
+def test_all_generic_business_pages_load_smart_fields_before_the_module_script():
+    business_pages = [
+        page
+        for page in ADMIN_PAGES.values()
+        if 'admin-business-module.js' in _read(page)
+    ]
+    assert business_pages
+    for page in business_pages:
+        html = _read(page)
+        assert "admin-smart-fields.js" in html
+        assert html.index("admin-smart-fields.js") < html.index("admin-business-module.js")
+
+
 def test_role_detail_panel_renders_permission_receipt_summary():
     roles_html = _read("admin-roles.html")
     roles_js = _read("admin-roles.js")
@@ -3046,3 +3135,33 @@ def test_admin_mobile_row_actions_meet_touch_target_size():
     assert "min-width: 44px;" in mobile_css
     assert "height: 44px;" in mobile_css
     assert "min-height: 44px;" in mobile_css
+
+
+def test_core_ledgers_replace_selectable_free_text_with_smart_controls():
+    blocks_html = _read("admin-blocks.html")
+    blocks_js = _read("admin-blocks.js")
+    rights_html = _read("admin-rights.html")
+    rights_js = _read("admin-rights.js")
+    common_js = _read("admin-common.js")
+
+    assert '<select id="forestType">' in blocks_html
+    assert '["forestType", "forest-types"]' in blocks_js
+    assert 'endpoint: "/api/dictionary-options/forest-resource-tags"' in blocks_js
+    assert 'valueKey: "value"' in blocks_js
+    assert 'labelKey: "label"' in blocks_js
+    assert "state.tagPicker.setValues" in blocks_js
+
+    assert 'id="rightArchiveHolder"' in rights_html
+    assert 'endpoint: "/api/business-reference-options/subjects"' in rights_js
+    assert 'valueKey: "name"' in rights_js
+    assert "state.holderPicker.setValues" in rights_js
+    assert 'id="rightArchiveRegistrar" type="text" readonly' in rights_html
+    assert "authProfile" in common_js
+    assert "authProfile()?.user" in rights_js
+
+
+def test_business_forms_render_standard_month_inputs_for_period_fields():
+    js = _read("admin-business-module.js")
+
+    assert 'field.inputType === "month"' in js
+    assert '? field.inputType' in js

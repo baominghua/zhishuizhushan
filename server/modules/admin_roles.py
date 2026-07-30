@@ -126,6 +126,7 @@ ADMIN_MENU_MODULES = [
     {"key": "priceIndexes", "label": "价格指数", "href": "admin-price-indexes.html", "permission": "business.priceIndexes.manage", "group": "产业平台"},
     {"key": "mobileServiceChannels", "label": "移动端服务", "href": "admin-mobile-service-channels.html", "permission": "business.mobileServiceChannels.manage", "group": "产业平台"},
     {"key": "mapLayers", "label": "地图图层发布", "href": "admin-map-layers.html", "permission": "map.layers.view", "group": "地图发布"},
+    {"key": "dictionaries", "label": "字典管理", "href": "admin-dictionaries.html", "permission": "system.dictionaries.view", "group": "数据治理"},
     {"key": "imports", "label": "成果入库", "href": "admin-imports.html", "permission": "imports.forestBlocks.view", "group": "数据治理"},
     {"key": "imagery", "label": "影像管理", "href": "admin-imagery.html", "permission": "imagery.scenes.view", "group": "数据治理"},
     {"key": "roles", "label": "角色权限管理", "href": "admin-roles.html", "permission": "system.roles.view", "group": "系统"},
@@ -166,6 +167,16 @@ MODULE_RESOURCE_PROFILES = {
             "/api/map-layers/events.csv",
             "/api/map-layers/{record_id}/publication-receipt.json",
             "/api/map-layers/{record_id}/publish",
+        ],
+    },
+    "dictionaries": {
+        "dataDomain": "data-dictionaries",
+        "apiScopes": [
+            "/api/dictionaries",
+            "/api/dictionaries/{dictionary_id}",
+            "/api/dictionaries/{type_code}/items",
+            "/api/dictionaries/{type_code}/items/{item_id}",
+            "/api/dictionary-options/{type_code}",
         ],
     },
     "imports": {
@@ -240,6 +251,40 @@ MODULE_RESOURCE_PROFILES = {
 }
 
 PERMISSION_API_SCOPES = {
+    "system.dictionaries.view": [
+        "/api/dictionaries",
+        "/api/dictionaries/{dictionary_id}",
+        "/api/dictionaries/{type_code}/items",
+        "/api/dictionary-options/{type_code}",
+    ],
+    "system.dictionaries.manage": [
+        "/api/dictionaries",
+        "/api/dictionaries/{dictionary_id}",
+        "/api/dictionaries/{dictionary_id}/restore",
+        "/api/dictionaries/{type_code}/items",
+        "/api/dictionaries/{type_code}/items/{item_id}",
+        "/api/dictionaries/{type_code}/items/{item_id}/restore",
+        "/api/dictionary-options/{type_code}",
+    ],
+    "system.dictionaries.create": [
+        "/api/dictionaries",
+        "/api/dictionaries/{type_code}/items",
+    ],
+    "system.dictionaries.update": [
+        "/api/dictionaries/{dictionary_id}",
+        "/api/dictionaries/{type_code}/items/{item_id}",
+    ],
+    "system.dictionaries.delete": [
+        "/api/dictionaries/{dictionary_id}",
+        "/api/dictionaries/{type_code}/items/{item_id}",
+    ],
+    "system.dictionaries.restore": [
+        "/api/dictionaries/{dictionary_id}/restore",
+        "/api/dictionaries/{type_code}/items/{item_id}/restore",
+    ],
+    "system.dictionaries.import": [
+        "/api/dictionaries/{type_code}/imports",
+    ],
     "system.roles.view": [
         "/api/admin/permission-catalog",
         "/api/admin/roles",
@@ -543,6 +588,13 @@ EXTRA_PERMISSIONS = [
     {"code": "map.layers.restore", "label": "地图图层恢复", "module": "mapLayers"},
     {"code": "map.layers.export", "label": "地图图层事件导出", "module": "mapLayers"},
     {"code": "map.layers.publish", "label": "地图图层发布", "module": "mapLayers"},
+    {"code": "system.dictionaries.view", "label": "字典台账查看", "module": "dictionaries"},
+    {"code": "system.dictionaries.manage", "label": "字典全权管理", "module": "dictionaries"},
+    {"code": "system.dictionaries.create", "label": "字典新增", "module": "dictionaries"},
+    {"code": "system.dictionaries.update", "label": "字典编辑", "module": "dictionaries"},
+    {"code": "system.dictionaries.delete", "label": "字典删除", "module": "dictionaries"},
+    {"code": "system.dictionaries.restore", "label": "字典恢复", "module": "dictionaries"},
+    {"code": "system.dictionaries.import", "label": "字典批量导入", "module": "dictionaries"},
     {"code": "system.roles.view", "label": "角色台账查看", "module": "roles"},
     {"code": "system.roles.manage", "label": "角色权限全权管理", "module": "roles"},
     {"code": "system.roles.create", "label": "角色新增", "module": "roles"},
@@ -645,6 +697,19 @@ MANAGE_PERMISSION_IMPLICATIONS = {
     "map.layers.publish": [
         "map.layers.view",
     ],
+    "system.dictionaries.manage": [
+        "system.dictionaries.view",
+        "system.dictionaries.create",
+        "system.dictionaries.update",
+        "system.dictionaries.delete",
+        "system.dictionaries.restore",
+        "system.dictionaries.import",
+    ],
+    "system.dictionaries.create": ["system.dictionaries.view"],
+    "system.dictionaries.update": ["system.dictionaries.view"],
+    "system.dictionaries.delete": ["system.dictionaries.view"],
+    "system.dictionaries.restore": ["system.dictionaries.view"],
+    "system.dictionaries.import": ["system.dictionaries.view"],
     "system.roles.manage": [
         "system.roles.view",
         "system.roles.create",

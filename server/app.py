@@ -78,6 +78,8 @@ from server.modules.database import (
     use_mysql as smart_bamboo_use_mysql,
     use_postgis as smart_bamboo_use_postgis,
 )
+from server.modules.dictionaries import ensure_system_dictionaries
+from server.modules.dictionaries import router as dictionaries_router
 from server.modules.mysql_schema import REMOTE_SENSING_MYSQL_TABLES, mysql_catalog_schema_statements
 from server.modules.forest_blocks import (
     FOREST_BLOCK_IDENTITY_LOOKUP_BATCH_SIZE,
@@ -162,6 +164,7 @@ TIANDITU_TIMEOUT = max(2, env_int("REMOTE_SENSING_TIANDITU_TIMEOUT", 8))
 BASEMAP_CACHE_MAX_BYTES = max(0, env_int("REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES", 0))
 BASEMAP_CACHE_MAX_AGE_DAYS = max(0.0, env_float("REMOTE_SENSING_BASEMAP_CACHE_MAX_AGE_DAYS", 0))
 TIANDITU_LAYERS = {"img_w", "cia_w", "vec_w", "cva_w", "ter_w", "cta_w"}
+TIANDITU_BROWSER_CACHE_CONTROL = "public, max-age=2592000, stale-while-revalidate=86400, immutable"
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff", ".geotiff"}
 IMAGERY_SCENE_VIEW_PERMISSION = "imagery.scenes.view"
 IMAGERY_MANAGE_PERMISSION = "imagery.scenes.manage"
@@ -289,8 +292,13 @@ try:
     init_platform_schema()
 except Exception as exc:
     record_startup_error("platform_schema_init_failed", "平台数据库 schema 初始化失败", exc)
+try:
+    ensure_system_dictionaries()
+except Exception as exc:
+    record_startup_error("dictionary_seed_failed", "系统字典初始化失败", exc)
 app.include_router(admin_roles_router)
 app.include_router(admin_users_router)
+app.include_router(dictionaries_router)
 app.include_router(auth_router)
 app.include_router(human_auth_router)
 app.include_router(business_router)
@@ -3612,6 +3620,24 @@ CORE_API_READINESS_TARGETS: list[dict[str, str]] = [
         "permission": "map.layers.view",
     },
     {
+        "key": "dictionaries",
+        "group": "data-governance",
+        "groupLabel": "数据治理",
+        "label": "Dictionary catalog",
+        "method": "GET",
+        "path": "/api/dictionaries",
+        "permission": "system.dictionaries.view",
+    },
+    {
+        "key": "dictionary_options",
+        "group": "data-governance",
+        "groupLabel": "数据治理",
+        "label": "Dictionary form options",
+        "method": "GET",
+        "path": "/api/dictionary-options/{type_code}",
+        "permission": "authenticated",
+    },
+    {
         "key": "import_batches",
         "group": "imports",
         "groupLabel": "成果入库",
@@ -5036,7 +5062,7 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
         return Response(
             content=cache_path.read_bytes(),
             media_type="image/png",
-            headers={"Cache-Control": "public, max-age=2592000", "X-Tianditu-Cache": "HIT"},
+            headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "HIT"},
         )
 
     referer = request.headers.get("referer") or request.headers.get("origin") or ""
@@ -5047,7 +5073,7 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
     return Response(
         content=content,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=2592000", "X-Tianditu-Cache": "MISS"},
+        headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "MISS"},
     )
 
 

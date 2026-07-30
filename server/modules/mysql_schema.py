@@ -17,6 +17,8 @@ PLATFORM_MYSQL_TABLES = [
     "business_record_block_links",
     "business_record_right_links",
     "business_record_attributes",
+    "dictionary_types",
+    "dictionary_items",
     "admin_roles",
     "admin_role_permissions",
     "admin_role_menu_modules",
@@ -360,6 +362,57 @@ def mysql_schema_statements() -> list[str]:
             KEY idx_business_attribute_boolean (module_key, field_key, boolean_value),
             CONSTRAINT fk_business_attribute_record
                 FOREIGN KEY (business_record_id) REFERENCES business_records(id) ON DELETE CASCADE
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS dictionary_types (
+            id CHAR(36) PRIMARY KEY,
+            type_code VARCHAR(100) NOT NULL,
+            name VARCHAR(160) NOT NULL,
+            category VARCHAR(80) NOT NULL,
+            hierarchy_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            value_mode VARCHAR(24) NOT NULL DEFAULT 'code',
+            description TEXT,
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
+            sort_order INT NOT NULL DEFAULT 0,
+            system_defined BOOLEAN NOT NULL DEFAULT FALSE,
+            properties JSON,
+            created_at DATETIME(6) NOT NULL,
+            updated_at DATETIME(6) NOT NULL,
+            deleted_at DATETIME(6),
+            UNIQUE KEY uq_dictionary_type_code (type_code),
+            KEY idx_dictionary_type_category (category, status, sort_order),
+            KEY idx_dictionary_type_deleted (deleted_at)
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS dictionary_items (
+            id CHAR(36) PRIMARY KEY,
+            dictionary_type_id CHAR(36) NOT NULL,
+            item_code VARCHAR(120) NOT NULL,
+            label VARCHAR(200) NOT NULL,
+            parent_item_id CHAR(36),
+            level_code VARCHAR(40),
+            full_name VARCHAR(500),
+            pinyin VARCHAR(300),
+            initials VARCHAR(120),
+            search_aliases JSON,
+            sort_order INT NOT NULL DEFAULT 0,
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
+            metadata JSON,
+            source VARCHAR(40) NOT NULL DEFAULT 'manual',
+            created_at DATETIME(6) NOT NULL,
+            updated_at DATETIME(6) NOT NULL,
+            deleted_at DATETIME(6),
+            UNIQUE KEY uq_dictionary_item_code (dictionary_type_id, item_code),
+            KEY idx_dictionary_item_lookup (dictionary_type_id, parent_item_id, status, sort_order),
+            KEY idx_dictionary_item_level (dictionary_type_id, level_code, status),
+            KEY idx_dictionary_item_label (dictionary_type_id, label),
+            KEY idx_dictionary_item_deleted (deleted_at),
+            CONSTRAINT fk_dictionary_item_type
+                FOREIGN KEY (dictionary_type_id) REFERENCES dictionary_types(id) ON DELETE CASCADE,
+            CONSTRAINT fk_dictionary_item_parent
+                FOREIGN KEY (parent_item_id) REFERENCES dictionary_items(id) ON DELETE SET NULL
         ) {table_options}
         """,
         f"""

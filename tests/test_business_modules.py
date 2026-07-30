@@ -98,6 +98,118 @@ def sample_business_record(code: str = "REC-001") -> dict[str, object]:
     }
 
 
+def test_business_reference_options_reuse_existing_subject_ledgers(app_client):
+    subjects = [
+        ("farmers", "FARMER-REF-001", "张三竹农"),
+        ("cooperatives", "COOP-REF-001", "麻沙竹业合作社"),
+        ("enterprises", "ENTERPRISE-REF-001", "建阳竹制品有限公司"),
+    ]
+    for module_key, record_code, name in subjects:
+        response = app_client.post(
+            f"/api/business/{module_key}",
+            json={
+                "recordCode": record_code,
+                "name": name,
+                "status": "active",
+                "properties": {},
+            },
+            headers={"X-RS-Roles": business_permission(module_key, "create")},
+        )
+        assert response.status_code == 200
+
+    response = app_client.get(
+        "/api/business-reference-options/subjects?q=%E7%AB%B9&limit=20",
+        headers={"X-RS-User": "operator"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert {(item["recordCode"], item["moduleKey"]) for item in body["items"]} == {
+        ("FARMER-REF-001", "farmers"),
+        ("COOP-REF-001", "cooperatives"),
+        ("ENTERPRISE-REF-001", "enterprises"),
+    }
+    assert all(item["value"] == item["recordCode"] for item in body["items"])
+    assert all(item["name"] in item["label"] for item in body["items"])
+
+    people = app_client.get(
+        "/api/business-reference-options/people?q=%E5%BC%A0%E4%B8%89",
+        headers={"X-RS-User": "operator"},
+    )
+    assert people.status_code == 200
+    assert [(item["recordCode"], item["moduleKey"]) for item in people.json()["items"]] == [
+        ("FARMER-REF-001", "farmers"),
+    ]
+
+
+def test_staff_and_counterparty_fields_are_existing_ledger_references(app_client):
+    response = app_client.get(
+        "/api/business/modules",
+        headers={"X-RS-User": "operator"},
+    )
+    assert response.status_code == 200
+    modules = {item["key"]: item for item in response.json()["items"]}
+
+    expected = {
+        ("enterprises", "contactName"): ("reference", "people"),
+        ("maintenance-tasks", "assignee"): ("reference", "subjects"),
+        ("work-logs", "worker"): ("multi-reference", "people"),
+        ("trade-matches", "counterparty"): ("reference", "subjects"),
+        ("supply-chain-finance", "borrower"): ("reference", "subjects"),
+        ("mobile-service-channels", "ownerName"): ("reference", "people"),
+    }
+    for (module_key, field_key), (input_type, reference_group) in expected.items():
+        fields = {field["key"]: field for field in modules[module_key]["fieldSchema"]}
+        field = fields[field_key]
+        assert field["inputType"] == input_type
+        assert field["referenceEndpoint"] == f"/api/business-reference-options/{reference_group}"
+        assert field["referenceValueKey"] == "value"
+        assert field["referenceLabelKey"] == "label"
+
+
+def test_period_fields_use_month_pickers_and_validate_month_values(app_client):
+    response = app_client.get(
+        "/api/business/modules",
+        headers={"X-RS-User": "operator"},
+    )
+    assert response.status_code == 200
+    modules = {item["key"]: item for item in response.json()["items"]}
+    for module_key, field_key in (
+        ("yield-forecasts", "forecastPeriod"),
+        ("income-estimates", "estimatePeriod"),
+        ("price-indexes", "period"),
+    ):
+        fields = {field["key"]: field for field in modules[module_key]["fieldSchema"]}
+        assert fields[field_key]["inputType"] == "month"
+
+    invalid = app_client.post(
+        "/api/business/yield-forecasts",
+        json={
+            "recordCode": "FORECAST-MONTH-BAD",
+            "name": "无效月份",
+            "status": "active",
+            "properties": {"forecastPeriod": "2026年7月"},
+        },
+        headers={"X-RS-Roles": business_permission("yield-forecasts", "create")},
+    )
+    assert invalid.status_code == 422
+    assert "forecastPeriod" in invalid.json()["detail"]
+
+    valid = app_client.post(
+        "/api/business/yield-forecasts",
+        json={
+            "recordCode": "FORECAST-MONTH-OK",
+            "name": "有效月份",
+            "status": "active",
+            "properties": {"forecastPeriod": "2026-07"},
+        },
+        headers={"X-RS-Roles": business_permission("yield-forecasts", "create")},
+    )
+    assert valid.status_code == 200
+    assert valid.json()["properties"]["forecastPeriod"] == "2026-07"
+
+
 def sample_map_layer_payload(code: str = "LAYER-QUALITY") -> dict[str, object]:
     return {
         "recordCode": code,
@@ -268,11 +380,77 @@ def test_operations_modules_expose_typed_field_schemas(app_client):
     maintenance_fields = {item["key"]: item for item in modules["maintenance-tasks"]["fieldSchema"]}
     work_log_fields = {item["key"]: item for item in modules["work-logs"]["fieldSchema"]}
 
-    assert maintenance_fields["taskType"]["inputType"] == "select"
+    assert maintenance_fields["taskType"]["inputType"] == "dictionary"
+    assert maintenance_fields["taskType"]["dictionaryCode"] == "business-maintenance-tasks-task-type"
     assert maintenance_fields["planDate"]["inputType"] == "date"
     assert maintenance_fields["closureStatus"]["options"]
     assert work_log_fields["laborCount"]["inputType"] == "integer"
     assert work_log_fields["laborCount"]["min"] == 0
+
+
+def test_all_business_enumerations_are_managed_dictionaries(app_client):
+    response = app_client.get("/api/business/modules", headers={"X-RS-Roles": "admin"})
+
+    assert response.status_code == 200
+    fields = [
+        (module["key"], field)
+        for module in response.json()["items"]
+        for field in module["fieldSchema"]
+        if field.get("options")
+    ]
+    assert fields
+    assert all(field["inputType"] == "dictionary" for _, field in fields)
+    assert all(field.get("dictionaryCode") for _, field in fields)
+    assert not any(field["inputType"] == "select" for _, field in fields)
+
+
+def test_business_administrative_fields_use_searchable_division_references(app_client):
+    response = app_client.get("/api/business/modules", headers={"X-RS-Roles": "admin"})
+
+    assert response.status_code == 200
+    modules = {item["key"]: item for item in response.json()["items"]}
+    farmers = {item["key"]: item for item in modules["farmers"]["fieldSchema"]}
+    cooperatives = {item["key"]: item for item in modules["cooperatives"]["fieldSchema"]}
+    franchise_bases = {item["key"]: item for item in modules["franchise-bases"]["fieldSchema"]}
+    performance = {item["key"]: item for item in modules["performance-dashboards"]["fieldSchema"]}
+    prices = {item["key"]: item for item in modules["price-indexes"]["fieldSchema"]}
+
+    assert farmers["townVillage"] == {
+        "key": "townVillage",
+        "label": "所属乡镇",
+        "inputType": "reference",
+        "required": True,
+        "referenceEndpoint": "/api/dictionary-options/administrative-divisions?level=town",
+        "referenceValueKey": "label",
+        "referenceLabelKey": "fullName",
+        "multiple": False,
+    }
+    assert farmers["villageName"]["referenceEndpoint"].endswith("level=village")
+    assert farmers["villageName"]["multiple"] is False
+    assert cooperatives["serviceArea"]["inputType"] == "multi-reference"
+    assert cooperatives["serviceArea"]["referenceEndpoint"] == "/api/dictionary-options/administrative-divisions"
+    assert franchise_bases["region"]["inputType"] == "reference"
+    assert performance["coverage"]["inputType"] == "multi-reference"
+    assert prices["region"]["inputType"] == "reference"
+
+
+def test_business_multi_references_are_stored_as_lists(app_client):
+    created = app_client.post(
+        "/api/business/cooperatives",
+        json={
+            "recordCode": "COOP-DIVISION-001",
+            "name": "行政区划关联测试合作社",
+            "status": "active",
+            "properties": {
+                "serviceArea": ["麻沙镇", "黄坑镇"],
+                "memberCount": 28,
+            },
+        },
+        headers={"X-RS-Roles": "business.cooperatives.create"},
+    )
+
+    assert created.status_code == 200
+    assert created.json()["properties"]["serviceArea"] == ["麻沙镇", "黄坑镇"]
 
 
 def test_operations_core_fields_are_typed_and_enum_values_are_validated(app_client):
@@ -379,7 +557,7 @@ def test_decision_modules_expose_numeric_models_and_calculate_income(app_client)
             "status": "active",
             "properties": {
                 "estimateType": "net-income",
-                "estimatePeriod": "2026",
+                "estimatePeriod": "2026-12",
                 "expectedIncome": "1250000.50",
                 "cost": "420000.25",
             },
@@ -411,7 +589,7 @@ def test_decision_dashboard_aggregates_numeric_core_fields(app_client):
                 "linkedBlockCodes": ["BLOCK-001"],
                 "properties": {
                     "forecastObject": "bamboo-timber",
-                    "forecastPeriod": "2026-Q3",
+                    "forecastPeriod": "2026-09",
                     "forecastYield": forecast_yield,
                     "modelName": "竹材产量模型 V1",
                 },

@@ -1585,6 +1585,20 @@ def save_blocks(blocks: list[dict[str, Any]]) -> None:
     bump_forest_vector_tile_revision()
 
 
+def sync_blocks_administrative_divisions(blocks: list[dict[str, Any]]) -> None:
+    try:
+        from .dictionaries import sync_administrative_divisions_from_blocks
+
+        sync_administrative_divisions_from_blocks(blocks)
+    except Exception:
+        # Startup seeding performs a complete repair pass if an optional sync fails.
+        return
+
+
+def sync_block_administrative_divisions(block: dict[str, Any]) -> None:
+    sync_blocks_administrative_divisions([block])
+
+
 def context_has_scoped_areas(context: AuthContext) -> bool:
     return has_effective_area_scope(context)
 
@@ -2672,6 +2686,7 @@ def create_forest_block(
             raise HTTPException(status_code=409, detail="blockCode already exists")
         block = sanitize_block_for_ledger(normalize_block(payload.model_dump()))
         save_block(block)
+        sync_block_administrative_divisions(block)
         record_block_version(block, "create", context)
         return ForestBlockOut.model_validate(block)
 
@@ -2681,6 +2696,7 @@ def create_forest_block(
     block = sanitize_block_for_ledger(normalize_block(payload.model_dump()))
     blocks.append(block)
     save_blocks(blocks)
+    sync_block_administrative_divisions(block)
     record_block_version(block, "create", context)
     return ForestBlockOut.model_validate(block)
 
@@ -2771,6 +2787,7 @@ def patch_forest_block(
         ))
         require_target_block_allowed(context, updated)
         save_block(updated)
+        sync_block_administrative_divisions(updated)
         record_block_version(updated, "update", context)
         return ForestBlockOut.model_validate(updated)
 
@@ -2795,6 +2812,7 @@ def patch_forest_block(
         require_target_block_allowed(context, updated)
         blocks[index] = updated
         save_blocks(blocks)
+        sync_block_administrative_divisions(updated)
         record_block_version(updated, "update", context)
         return ForestBlockOut.model_validate(updated)
     raise HTTPException(status_code=404, detail="Forest block not found")

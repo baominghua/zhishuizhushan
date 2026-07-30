@@ -4,6 +4,7 @@ const AdminCommon = (() => {
     : "http://127.0.0.1:8010";
   const CSRF_TOKEN_KEY = "smartBambooCsrfToken";
   const AUTH_PROFILE_KEY = "smartBambooAuthProfile";
+  const SERVICE_TOKEN_KEY = "smartBambooServiceToken";
   let currentAllowedPermissions = null;
   let currentProfile = null;
   let sessionReadyPromise = null;
@@ -135,6 +136,19 @@ const AdminCommon = (() => {
       "map.layers.export",
       "map.layers.publish",
     ],
+    "system.dictionaries.manage": [
+      "system.dictionaries.view",
+      "system.dictionaries.create",
+      "system.dictionaries.update",
+      "system.dictionaries.delete",
+      "system.dictionaries.restore",
+      "system.dictionaries.import",
+    ],
+    "system.dictionaries.create": ["system.dictionaries.view"],
+    "system.dictionaries.update": ["system.dictionaries.view"],
+    "system.dictionaries.delete": ["system.dictionaries.view"],
+    "system.dictionaries.restore": ["system.dictionaries.view"],
+    "system.dictionaries.import": ["system.dictionaries.view"],
     ...businessManagePermissionImplications(),
     "system.roles.manage": [
       "system.roles.view",
@@ -205,6 +219,10 @@ const AdminCommon = (() => {
 
   function buildHeaders(extraHeaders, method = "GET") {
     const headers = new Headers(extraHeaders || {});
+    const serviceToken = sessionStorage.getItem(SERVICE_TOKEN_KEY) || "";
+    if (serviceToken && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${serviceToken}`);
+    }
     if (currentProfile?.authType !== "session") {
       const roles = splitValues($("#authRoles")?.value || "").join(",");
       const areas = splitValues($("#authAreas")?.value || "").join(",");
@@ -226,6 +244,7 @@ const AdminCommon = (() => {
   function clearSessionState() {
     sessionStorage.removeItem(CSRF_TOKEN_KEY);
     sessionStorage.removeItem(AUTH_PROFILE_KEY);
+    sessionStorage.removeItem(SERVICE_TOKEN_KEY);
     LEGACY_TOKEN_KEYS.forEach((key) => {
       sessionStorage.removeItem(key);
       localStorage.removeItem(key);
@@ -508,7 +527,7 @@ const AdminCommon = (() => {
     经营决策: ["yieldForecasts", "harvestPlans", "incomeEstimates", "performanceDashboards", "carbonEstimates"],
     产业平台: ["tradeMatches", "logisticsTraces", "productQrcodes", "supplyChainFinance", "priceIndexes", "mobileServiceChannels"],
     地图发布: ["mapLayers"],
-    数据治理: ["imports", "imagery"],
+    数据治理: ["dictionaries", "imports", "imagery"],
   };
 
   function staticModuleGroup(moduleKey) {
@@ -648,6 +667,16 @@ const AdminCommon = (() => {
   function cacheProfile(profile) {
     currentProfile = profile && typeof profile === "object" ? profile : null;
     if (currentProfile) sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(currentProfile));
+  }
+
+  function authProfile() {
+    if (currentProfile) return currentProfile;
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(AUTH_PROFILE_KEY) || "null");
+      return cached && typeof cached === "object" ? cached : null;
+    } catch (_error) {
+      return null;
+    }
   }
 
   function sharedCsrfCookie() {
@@ -997,6 +1026,7 @@ const AdminCommon = (() => {
     api,
     apiBase,
     applyActionPermissions,
+    authProfile,
     buildHeaders,
     clearSessionState,
     createLedgerPager,
