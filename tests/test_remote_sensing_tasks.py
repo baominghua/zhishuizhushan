@@ -180,6 +180,7 @@ def test_tianditu_upstream_request_does_not_fallback_to_referer_for_server_key(
 
     assert content == b"png-tile"
     assert captured["request"].get_header("Referer") is None
+    assert captured["request"].get_header("User-agent") == "SmartBambooTiandituProxy/1.0"
 
 
 def test_public_scene_exposes_thumbnail_url(isolated_env):

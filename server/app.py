@@ -3147,13 +3147,15 @@ def fetch_tianditu_tile(layer: str, z: int, x: int, y: int, tk: str, referer: st
     server_index = (z + x + y) % 8
     params = urllib.parse.urlencode({"T": layer, "x": x, "y": y, "l": z, "tk": tk})
     url = f"https://t{server_index}.tianditu.gov.cn/DataServer?{params}"
-    headers = {
-        "User-Agent": (
+    if referer:
+        user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36 SmartBambooTiandituProxy/1.0"
-        ),
-    }
+        )
+    else:
+        user_agent = "SmartBambooTiandituProxy/1.0"
+    headers = {"User-Agent": user_agent}
     if referer:
         headers["Referer"] = referer
     request = urllib.request.Request(
