@@ -110,6 +110,78 @@ def test_tianditu_proxy_uses_browser_identity_for_browser_key(isolated_env, monk
     assert captured["request"].get_header("Referer") == "http://127.0.0.1:8010/zhushan-bigdata.html"
 
 
+def test_tianditu_server_key_request_omits_browser_referer(isolated_env, monkeypatch):
+    app_module = reload_app_module()
+    captured = {}
+
+    app_module.TIANDITU_TK = "a" * 32
+
+    def fake_fetch(layer, z, x, y, tk, referer=""):
+        captured.update(
+            {
+                "layer": layer,
+                "z": z,
+                "x": x,
+                "y": y,
+                "tk": tk,
+                "referer": referer,
+            }
+        )
+        return b"png-tile"
+
+    monkeypatch.setattr(app_module, "fetch_tianditu_tile", fake_fetch)
+
+    client = TestClient(app_module.app)
+    response = client.get(
+        "/api/basemaps/tianditu/img_w/10/847/432.png",
+        headers={"Referer": "http://127.0.0.1:8010/zhushan-bigdata.html"},
+    )
+
+    assert response.status_code == 200
+    assert captured["tk"] == "a" * 32
+    assert captured["referer"] == ""
+
+
+def test_tianditu_upstream_request_does_not_fallback_to_referer_for_server_key(
+    isolated_env,
+    monkeypatch,
+):
+    app_module = reload_app_module()
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"png-tile"
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    app_module.TIANDITU_REFERER = "http://36.140.138.117"
+    monkeypatch.setattr(app_module.urllib.request, "urlopen", fake_urlopen)
+
+    content = app_module.fetch_tianditu_tile(
+        "img_w",
+        10,
+        847,
+        432,
+        "a" * 32,
+    )
+
+    assert content == b"png-tile"
+    assert captured["request"].get_header("Referer") is None
+
+
 def test_public_scene_exposes_thumbnail_url(isolated_env):
     app_module = reload_app_module()
     app_module.save_scene(sample_scene("scene-thumbnail-url"))

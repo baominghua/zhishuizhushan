@@ -3147,17 +3147,18 @@ def fetch_tianditu_tile(layer: str, z: int, x: int, y: int, tk: str, referer: st
     server_index = (z + x + y) % 8
     params = urllib.parse.urlencode({"T": layer, "x": x, "y": y, "l": z, "tk": tk})
     url = f"https://t{server_index}.tianditu.gov.cn/DataServer?{params}"
-    request_referer = referer or TIANDITU_REFERER or "http://127.0.0.1/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36 SmartBambooTiandituProxy/1.0"
+        ),
+    }
+    if referer:
+        headers["Referer"] = referer
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36 SmartBambooTiandituProxy/1.0"
-            ),
-            "Referer": request_referer,
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=TIANDITU_TIMEOUT) as response:
@@ -5305,7 +5306,8 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
     if z < 0 or z > 22 or x < 0 or y < 0:
         raise HTTPException(status_code=400, detail="Invalid tile coordinate")
 
-    token = tk.strip() or TIANDITU_TK
+    browser_token = tk.strip()
+    token = browser_token or TIANDITU_TK
     if not token:
         raise HTTPException(status_code=400, detail="Tianditu tk is required. Pass ?tk=... or set REMOTE_SENSING_TIANDITU_TK.")
 
@@ -5317,7 +5319,13 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
             headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "HIT"},
         )
 
-    referer = request.headers.get("referer") or request.headers.get("origin") or ""
+    referer = ""
+    if browser_token:
+        referer = (
+            request.headers.get("referer")
+            or request.headers.get("origin")
+            or TIANDITU_REFERER
+        )
     content = fetch_tianditu_tile(layer, z, x, y, token, referer=referer)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(content)
