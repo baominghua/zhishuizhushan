@@ -187,6 +187,32 @@ const AdminCommon = (() => {
     return raw ? raw.replace(/\/+$/, "") : DEFAULT_API_BASE;
   }
 
+  function isLoopbackHostname(value) {
+    const hostname = String(value || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  }
+
+  function initialApiBase() {
+    const stored = String(localStorage.getItem("smartBambooApiBase") || "").trim();
+    if (!stored) return DEFAULT_API_BASE;
+    try {
+      const currentUrl = new URL(window.location.href, window.location.origin);
+      const storedUrl = new URL(stored);
+      if (
+        /^https?:$/.test(currentUrl.protocol) &&
+        !isLoopbackHostname(currentUrl.hostname) &&
+        isLoopbackHostname(storedUrl.hostname)
+      ) {
+        localStorage.removeItem("smartBambooApiBase");
+        return DEFAULT_API_BASE;
+      }
+      return normalizeApiBase(storedUrl.href);
+    } catch (_error) {
+      localStorage.removeItem("smartBambooApiBase");
+      return DEFAULT_API_BASE;
+    }
+  }
+
   function apiBase() {
     return normalizeApiBase($("#apiBase")?.value || DEFAULT_API_BASE);
   }
@@ -296,7 +322,10 @@ const AdminCommon = (() => {
     const contentType = response.headers.get("content-type") || "";
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     if (!response.ok) {
-      if (response.status === 401) redirectToLogin();
+      if (response.status === 401) {
+        clearSessionState();
+        redirectToLogin();
+      }
       if (isPasswordChangeRequired(response.status, payload)) handleForcedPasswordChange(requestGeneration);
       const detail =
         payload && typeof payload === "object"
@@ -979,7 +1008,8 @@ const AdminCommon = (() => {
   function initShell() {
     clearLegacyTokenState();
     groupConnectionContextFields();
-    $("#apiBase")?.setAttribute("value", localStorage.getItem("smartBambooApiBase") || DEFAULT_API_BASE);
+    const baseInput = $("#apiBase");
+    if (baseInput) baseInput.value = initialApiBase();
     $("#apiBase")?.addEventListener("change", (event) => {
       localStorage.setItem("smartBambooApiBase", normalizeApiBase(event.target.value));
     });
@@ -989,7 +1019,10 @@ const AdminCommon = (() => {
     setActiveNav();
     document.body.classList.add("admin-session-pending");
     blockBusinessRequests();
-    refreshSession().catch(() => {});
+    refreshSession().catch((error) => {
+      setStatus("offline", `身份验证失败：${error.message || "请重新登录或检查 API 地址。"}`);
+      releaseBusinessRequests();
+    });
     return sessionReadyPromise;
   }
 

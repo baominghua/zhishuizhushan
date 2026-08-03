@@ -330,12 +330,17 @@
   async function openBlockEditor(mode, block = {}) {
     state.editorMode = mode;
     closeBlockDetail();
-    await fillForm(mode === "edit" ? block : {});
+    const formReady = fillForm(mode === "edit" ? block : {});
     $("#saveBlock").dataset.permission = mode === "edit" ? BLOCK_UPDATE_PERMISSION : BLOCK_CREATE_PERMISSION;
     $("#blockEditorOverlay").classList.remove("hidden");
     $("#blockEditorOverlay").setAttribute("aria-hidden", "false");
     applyActionPermissions();
     $("#blockCode").focus();
+    try {
+      await formReady;
+    } catch (error) {
+      setStatus("warning", `部分智能选项加载失败：${error.message}`);
+    }
   }
 
   function closeBlockEditor() {
@@ -402,6 +407,9 @@
       renderMetrics(payload.total);
       setStatus("online", `已加载 ${payload.total ?? state.blocks.length} 条林班。`);
     } catch (error) {
+      state.blocks = [];
+      $("#blockRows").innerHTML = `<tr class="placeholder-row"><td colspan="6">林班加载失败：${escapeHtml(error.message)}</td></tr>`;
+      renderMetrics(0);
       setStatus("offline", `林班加载失败：${error.message}`);
     } finally {
       pager.setBusy(false);
@@ -534,10 +542,15 @@
     initShell();
     if (initialBlockCode && $("#keyword")) $("#keyword").value = initialBlockCode;
     pager = createLedgerPager({ anchor: $("#blockRows").closest(".table-wrap"), onPageChange: loadBlocks });
-    await setupSmartFields();
+    const smartFieldsReady = setupSmartFields();
     attachEvents();
     renderDetail();
-    loadBlocks();
+    try {
+      await smartFieldsReady;
+    } catch (error) {
+      setStatus("warning", `部分智能选项加载失败：${error.message}`);
+    }
+    await loadBlocks();
   }
 
   initialize();

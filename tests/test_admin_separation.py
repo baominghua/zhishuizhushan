@@ -292,6 +292,17 @@ def test_forest_block_admin_uses_ledger_detail_and_separate_crud_actions():
     assert "fillForm(activeBlock())" not in js
 
 
+def test_forest_block_admin_binds_actions_before_waiting_for_smart_fields():
+    js = _read("admin-blocks.js")
+
+    initialize = js.split("async function initialize()", 1)[1].split("initialize();", 1)[0]
+    assert "const smartFieldsReady = setupSmartFields();" in initialize
+    assert initialize.index("attachEvents();") < initialize.index("await smartFieldsReady;")
+    assert "await loadBlocks();" in initialize
+    assert "部分智能选项加载失败" in js
+    assert "林班加载失败：" in js
+
+
 def test_forest_block_admin_can_show_deleted_blocks_and_restore_them():
     html = _read("admin-blocks.html")
     js = _read("admin-blocks.js")

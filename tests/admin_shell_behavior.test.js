@@ -411,6 +411,38 @@ test("startup clears migrated token keys before the session profile is loaded", 
   assert.equal(harness.localStorage.has("smartBambooAdminTokenPersistent"), false);
 });
 
+test("remote admin startup discards a stale loopback API base", async () => {
+  const harness = createHarness({
+    href: "http://36.140.138.117:18080/admin-blocks.html",
+    local: { smartBambooApiBase: "http://127.0.0.1:8010" },
+    responses: [jsonResponse(401, { detail: "Authentication required" })],
+  });
+
+  harness.context.__AdminCommon.initShell();
+  await settle();
+
+  assert.equal(harness.elements.get("#apiBase").value, "http://36.140.138.117:18080");
+  assert.equal(harness.localStorage.has("smartBambooApiBase"), false);
+  assert.equal(harness.calls[0].url, "http://36.140.138.117:18080/api/auth/me");
+});
+
+test("failed session startup releases queued business requests instead of hanging", async () => {
+  const harness = createHarness({
+    responses: [
+      jsonResponse(401, { detail: "Authentication required" }),
+      jsonResponse(401, { detail: "Authentication required" }),
+    ],
+  });
+  const common = harness.context.__AdminCommon;
+
+  common.initShell();
+  await settle();
+
+  await assert.rejects(common.api("/api/forest-blocks"), /401 Authentication required/);
+  assert.equal(harness.calls.length, 2);
+  assert.equal(harness.location.replacedWith, "admin-login.html?returnTo=admin-users.html%3Frole%3Doperator%23ledger");
+});
+
 test("failed logout keeps the browser session and lets the user retry", async () => {
   const harness = createHarness({ responses: [jsonResponse(500, { detail: "server unavailable" })] });
   const completed = await harness.context.__AdminCommon.logout();
