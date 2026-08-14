@@ -253,10 +253,18 @@ def test_platform_storage_health_checks_postgis_schema(
     _, database_module = reload_platform_modules()
     cursor = FakeCursor(
         fetchone_result=(
-            "forest_blocks",
-            "forest_block_versions",
-            "forest_rights",
-            "forest_right_versions",
+                "forest_blocks",
+                "forest_block_versions",
+                "forest_subcompartments",
+                "forest_subcompartment_versions",
+                "resource_surveys",
+                "resource_snapshots",
+                "resource_snapshot_versions",
+                "attachments",
+                "attachment_links",
+                "attachment_events",
+                "forest_rights",
+                "forest_right_versions",
                 "map_layers",
                 "business_records",
                 "dictionary_types",
@@ -733,6 +741,22 @@ def test_map_geojson_filters_by_bbox(app_client):
     assert body["meta"]["truncated"] is False
 
 
+def test_forest_block_map_endpoints_require_view_permission_for_identified_roles(app_client):
+    denied_headers = {"X-RS-Roles": "business.farmers.manage"}
+    allowed_headers = {"X-RS-Roles": "forest.blocks.view"}
+
+    denied = app_client.get("/api/map/forest-blocks.geojson", headers=denied_headers)
+    allowed = app_client.get("/api/map/forest-blocks.geojson", headers=allowed_headers)
+    denied_summary = app_client.get("/api/map/forest-blocks/summary", headers=denied_headers)
+    allowed_facets = app_client.get("/api/map/forest-blocks/facets", headers=allowed_headers)
+
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "Permission required: forest.blocks.view"
+    assert denied_summary.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed_facets.status_code == 200
+
+
 def test_map_vector_tile_returns_mvt_and_uses_scope_aware_server_cache(app_client):
     first = sample_block_payload("MVT-350703")
     first["countyCode"] = "350703"
@@ -776,6 +800,48 @@ def test_map_vector_tile_returns_mvt_and_uses_scope_aware_server_cache(app_clien
     assert cached_response.status_code == 200
     assert cached_response.content == first_response.content
     assert cached_response.headers["x-vector-tile-cache"] == "HIT"
+
+
+def test_map_vector_tile_bypasses_an_unwritable_cache(app_client, monkeypatch):
+    from server.modules import forest_blocks
+
+    payload = sample_block_payload("MVT-CACHE-BYPASS")
+    assert app_client.post(
+        "/api/forest-blocks",
+        json=payload,
+        headers={"X-RS-Roles": "admin"},
+    ).status_code == 200
+
+    class UnwritablePath:
+        name = "tile.pbf"
+
+        def exists(self):
+            return False
+
+        def with_name(self, _name):
+            return self
+
+        @property
+        def parent(self):
+            return self
+
+        def mkdir(self, **_kwargs):
+            raise PermissionError("cache is read-only")
+
+        def unlink(self, **_kwargs):
+            return None
+
+    monkeypatch.setattr(
+        forest_blocks,
+        "vector_tile_cache_path",
+        lambda *_args, **_kwargs: UnwritablePath(),
+    )
+
+    response = app_client.get("/api/map/forest-blocks/tiles/14/13566/6867.pbf")
+
+    assert response.status_code == 200
+    assert response.headers["x-vector-tile-cache"] == "BYPASS"
+    assert response.content
 
 
 def test_vector_tile_cache_prunes_expired_and_over_capacity_files(tmp_path, monkeypatch):

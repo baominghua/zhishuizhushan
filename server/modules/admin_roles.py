@@ -133,6 +133,125 @@ ADMIN_MENU_MODULES = [
     {"key": "users", "label": "用户账号管理", "href": "admin-users.html", "permission": "system.users.view", "group": "系统"},
 ]
 
+# These V2 modules are first-class role configuration boundaries, while their
+# entry routes are rendered by the React operations shell instead of legacy HTML.
+V2_ROLE_MODULES = [
+    {
+        "key": "leadershipCockpit",
+        "label": "领导驾驶舱",
+        "href": "/v2/cockpit/leadership",
+        "permission": "cockpit.leadership.view",
+        "group": "展示监管",
+        "dataDomain": "leadership-cockpit",
+        "apiScopes": ["/api/v2/cockpit/leadership"],
+    },
+    {
+        "key": "operationsTodos",
+        "label": "我的待办",
+        "href": "/v2/operations/todos",
+        "permission": "operations.todos.view",
+        "group": "协同办公",
+        "dataDomain": "operations-todos",
+        "apiScopes": ["/api/v2/operations-center/todos"],
+    },
+    {
+        "key": "operationsNotifications",
+        "label": "消息中心",
+        "href": "/v2/system/notifications",
+        "permission": "operations.notifications.view",
+        "group": "协同办公",
+        "dataDomain": "operations-notifications",
+        "apiScopes": ["/api/v2/operations-center/notifications"],
+    },
+    {
+        "key": "operationsAudit",
+        "label": "审计中心",
+        "href": "/v2/system/audit",
+        "permission": "operations.audit.view",
+        "group": "协同办公",
+        "dataDomain": "operations-audit",
+        "apiScopes": ["/api/v2/operations-center/audit"],
+    },
+    {
+        "key": "subcompartments",
+        "label": "小班台账",
+        "href": "/v2/resources/forest-subcompartments",
+        "permission": "forest.subcompartments.view",
+        "group": "空间与权属",
+        "dataDomain": "forest-spatial",
+        "apiScopes": [
+            "/api/v2/resources/forest-subcompartments",
+            "/api/v2/entities/forest-subcompartments",
+        ],
+    },
+    {
+        "key": "resourceSurveys",
+        "label": "资源调查",
+        "href": "/v2/resources/resource-surveys",
+        "permission": "forest.surveys.view",
+        "group": "空间与权属",
+        "dataDomain": "forest-resources",
+        "apiScopes": [
+            "/api/v2/resources/resource-surveys",
+            "/api/v2/resources/resource-snapshots",
+        ],
+    },
+    {
+        "key": "attachments",
+        "label": "附件中心",
+        "href": "/v2/system/attachments",
+        "permission": "files.attachments.view",
+        "group": "数据治理",
+        "dataDomain": "controlled-files",
+        "apiScopes": ["/api/v2/attachments"],
+    },
+    {
+        "key": "laborManagement",
+        "label": "劳务用工",
+        "href": "/v2/operations/labor",
+        "permission": "labor.view",
+        "group": "运营管护",
+        "dataDomain": "labor",
+        "apiScopes": ["/api/v2/labor"],
+    },
+    {
+        "key": "mobileOperations",
+        "label": "现场同步",
+        "href": "/v2/operations/mobile-sync",
+        "permission": "mobile.operations.view",
+        "group": "运营管护",
+        "dataDomain": "mobile-field",
+        "apiScopes": ["/api/v2/mobile"],
+    },
+    {
+        "key": "aiModels",
+        "label": "AI 模型管理",
+        "href": "/v2/ai/models",
+        "permission": "ai.models.view",
+        "group": "AI 智能应用",
+        "dataDomain": "ai-model-assets",
+        "apiScopes": ["/api/v2/ai/model-assets"],
+    },
+    {
+        "key": "aiInference",
+        "label": "AI 推理任务",
+        "href": "/v2/ai/inference-runs",
+        "permission": "ai.inference.view",
+        "group": "AI 智能应用",
+        "dataDomain": "ai-inference-runs",
+        "apiScopes": ["/api/v2/ai/inference-runs"],
+    },
+    {
+        "key": "basemapSettings",
+        "label": "底图服务配置",
+        "href": "/v2/system/basemap-settings",
+        "permission": "system.basemap.view",
+        "group": "系统管理",
+        "dataDomain": "basemap-settings",
+        "apiScopes": ["/api/v2/system/basemap-settings", "/api/v2/system/map-config"],
+    },
+]
+
 MODULE_RESOURCE_PROFILES = {
     "overview": {
         "dataDomain": "platform-overview",
@@ -539,6 +658,62 @@ for module in ADMIN_MENU_MODULES:
         module["permission"] = f"{permission.removesuffix('.manage')}.view"
 
 EXTRA_PERMISSIONS = [
+    {"code": "cockpit.leadership.view", "label": "领导驾驶舱查看", "module": "leadershipCockpit"},
+    {"code": "operations.todos.view", "label": "统一待办查看", "module": "operationsTodos"},
+    {"code": "operations.todos.export", "label": "统一待办导出", "module": "operationsTodos"},
+    {"code": "operations.notifications.view", "label": "统一消息查看", "module": "operationsNotifications"},
+    {"code": "operations.notifications.manage", "label": "统一消息已读状态管理", "module": "operationsNotifications"},
+    {"code": "operations.notifications.export", "label": "统一消息导出", "module": "operationsNotifications"},
+    {"code": "operations.audit.view", "label": "统一审计中心查看", "module": "operationsAudit"},
+    {"code": "operations.audit.export", "label": "统一审计记录导出", "module": "operationsAudit"},
+    {"code": "mobile.operations.view", "label": "现场同步台账查看", "module": "mobileOperations"},
+    {"code": "mobile.operations.manage", "label": "现场同步异常处理", "module": "mobileOperations"},
+    {"code": "iot.devices.view", "label": "设备台账查看", "module": "equipment"},
+    {"code": "iot.devices.manage", "label": "设备台账全权管理", "module": "equipment"},
+    {"code": "iot.devices.maintain", "label": "设备维保登记", "module": "equipment"},
+    {"code": "drone.missions.view", "label": "无人机任务查看", "module": "droneTasks"},
+    {"code": "drone.missions.manage", "label": "无人机任务全权管理", "module": "droneTasks"},
+    {"code": "drone.missions.create", "label": "无人机任务创建", "module": "droneTasks"},
+    {"code": "drone.missions.dispatch", "label": "无人机任务派发", "module": "droneTasks"},
+    {"code": "drone.missions.operate", "label": "无人机任务执行与成果提交", "module": "droneTasks"},
+    {"code": "drone.missions.review", "label": "无人机成果复核归档", "module": "droneTasks"},
+    {"code": "ai.findings.view", "label": "AI 识别结果查看", "module": "pestWarnings"},
+    {"code": "ai.findings.manage", "label": "AI 识别结果全权管理", "module": "pestWarnings"},
+    {"code": "ai.findings.ingest", "label": "AI 识别结果接入", "module": "pestWarnings"},
+    {"code": "ai.findings.review", "label": "AI 识别结果复核转告警", "module": "pestWarnings"},
+    {"code": "ai.models.view", "label": "AI 模型资产查看", "module": "aiModels"},
+    {"code": "ai.models.manage", "label": "AI 模型资产管理", "module": "aiModels"},
+    {"code": "ai.inference.view", "label": "AI 推理任务查看", "module": "aiInference"},
+    {"code": "ai.inference.manage", "label": "AI 推理任务管理", "module": "aiInference"},
+    {"code": "ai.inference.operate", "label": "AI 推理任务执行与转成果", "module": "aiInference"},
+    {"code": "system.basemap.view", "label": "底图服务配置查看", "module": "basemapSettings"},
+    {"code": "system.basemap.manage", "label": "底图服务配置管理", "module": "basemapSettings"},
+    {"code": "labor.view", "label": "劳务用工查看", "module": "laborManagement"},
+    {"code": "labor.manage", "label": "劳务用工全权管理", "module": "laborManagement"},
+    {"code": "labor.workers.manage", "label": "劳务人员管理", "module": "laborManagement"},
+    {"code": "labor.teams.manage", "label": "劳务班组管理", "module": "laborManagement"},
+    {"code": "labor.jobs.create", "label": "用工任务创建", "module": "laborManagement"},
+    {"code": "labor.jobs.dispatch", "label": "用工任务发布匹配与签约", "module": "laborManagement"},
+    {"code": "labor.jobs.operate", "label": "作业考勤与完工上报", "module": "laborManagement"},
+    {"code": "labor.jobs.settle", "label": "劳务验收结算与归档", "module": "laborManagement"},
+    {"code": "safety.events.view", "label": "安全事件查看", "module": "pestWarnings"},
+    {"code": "safety.events.manage", "label": "安全事件全权管理", "module": "pestWarnings"},
+    {"code": "safety.events.create", "label": "安全事件上报", "module": "pestWarnings"},
+    {"code": "safety.events.triage", "label": "安全事件分级", "module": "pestWarnings"},
+    {"code": "safety.events.assign", "label": "安全事件派单", "module": "pestWarnings"},
+    {"code": "safety.events.handle", "label": "安全事件处置", "module": "pestWarnings"},
+    {"code": "safety.events.verify", "label": "安全事件复核", "module": "pestWarnings"},
+    {"code": "safety.events.command", "label": "安全事件升级与重开", "module": "pestWarnings"},
+    {"code": "safety.alerts.view", "label": "安全告警查看", "module": "pestWarnings"},
+    {"code": "safety.alerts.ingest", "label": "安全告警接入", "module": "pestWarnings"},
+    {"code": "safety.alerts.review", "label": "安全告警确认与合并", "module": "pestWarnings"},
+    {"code": "operations.harvest.view", "label": "采伐业务查看", "module": "harvestPlans"},
+    {"code": "operations.harvest.manage", "label": "采伐业务全权管理", "module": "harvestPlans"},
+    {"code": "operations.harvest.create", "label": "采伐申请创建", "module": "harvestPlans"},
+    {"code": "operations.harvest.approve", "label": "采伐申请审批", "module": "harvestPlans"},
+    {"code": "operations.harvest.operate", "label": "采伐作业办理", "module": "harvestPlans"},
+    {"code": "operations.harvest.verify", "label": "采伐验收归档", "module": "harvestPlans"},
+    {"code": "operations.harvest.quota", "label": "采伐配额管理", "module": "harvestPlans"},
     {"code": "forest.blocks.view", "label": "林班台账查看", "module": "blocks"},
     {"code": "forest.blocks.manage", "label": "林班台账全权管理", "module": "blocks"},
     {"code": "forest.blocks.create", "label": "林班台账新增", "module": "blocks"},
@@ -546,6 +721,28 @@ EXTRA_PERMISSIONS = [
     {"code": "forest.blocks.delete", "label": "林班台账删除", "module": "blocks"},
     {"code": "forest.blocks.restore", "label": "林班台账恢复", "module": "blocks"},
     {"code": "forest.blocks.rollback", "label": "林班台账版本回滚", "module": "blocks"},
+    {"code": "forest.blocks.export", "label": "林班台账导出", "module": "blocks"},
+    {"code": "forest.subcompartments.view", "label": "小班台账查看", "module": "subcompartments"},
+    {"code": "forest.subcompartments.manage", "label": "小班台账全权管理", "module": "subcompartments"},
+    {"code": "forest.subcompartments.create", "label": "小班台账新增", "module": "subcompartments"},
+    {"code": "forest.subcompartments.update", "label": "小班台账编辑", "module": "subcompartments"},
+    {"code": "forest.subcompartments.delete", "label": "小班台账删除", "module": "subcompartments"},
+    {"code": "forest.subcompartments.rollback", "label": "小班台账版本回退", "module": "subcompartments"},
+    {"code": "forest.subcompartments.export", "label": "小班台账导出", "module": "subcompartments"},
+    {"code": "forest.surveys.view", "label": "资源调查查看", "module": "resourceSurveys"},
+    {"code": "forest.surveys.manage", "label": "资源调查全权管理", "module": "resourceSurveys"},
+    {"code": "forest.surveys.create", "label": "资源调查与记录新增", "module": "resourceSurveys"},
+    {"code": "forest.surveys.update", "label": "资源调查与记录编辑", "module": "resourceSurveys"},
+    {"code": "forest.surveys.complete", "label": "资源调查完成归档", "module": "resourceSurveys"},
+    {"code": "forest.surveys.delete", "label": "资源调查与记录删除", "module": "resourceSurveys"},
+    {"code": "files.attachments.view", "label": "附件台账查看与下载", "module": "attachments"},
+    {"code": "files.attachments.manage", "label": "附件中心全权管理", "module": "attachments"},
+    {"code": "files.attachments.upload", "label": "附件上传", "module": "attachments"},
+    {"code": "files.attachments.update", "label": "附件元数据编辑", "module": "attachments"},
+    {"code": "files.attachments.delete", "label": "附件软删除", "module": "attachments"},
+    {"code": "files.attachments.restore", "label": "附件恢复", "module": "attachments"},
+    {"code": "files.attachments.export", "label": "附件台账导出", "module": "attachments"},
+    {"code": "files.attachments.link", "label": "附件业务关联", "module": "attachments"},
     {"code": "forest.rights.view", "label": "林权档案查看", "module": "rights"},
     {"code": "forest.rights.manage", "label": "林权档案全权管理", "module": "rights"},
     {"code": "forest.rights.create", "label": "林权档案新增", "module": "rights"},
@@ -641,6 +838,79 @@ EXTRA_PERMISSIONS = [
 
 
 MANAGE_PERMISSION_IMPLICATIONS = {
+    "operations.todos.export": ["operations.todos.view"],
+    "operations.notifications.manage": ["operations.notifications.view"],
+    "operations.notifications.export": ["operations.notifications.view"],
+    "operations.audit.export": ["operations.audit.view"],
+    "mobile.operations.manage": ["mobile.operations.view"],
+    "iot.devices.manage": ["iot.devices.view", "iot.devices.maintain"],
+    "iot.devices.maintain": ["iot.devices.view"],
+    "drone.missions.manage": [
+        "drone.missions.view",
+        "drone.missions.create",
+        "drone.missions.dispatch",
+        "drone.missions.operate",
+        "drone.missions.review",
+    ],
+    "drone.missions.create": ["drone.missions.view"],
+    "drone.missions.dispatch": ["drone.missions.view"],
+    "drone.missions.operate": ["drone.missions.view", "files.attachments.view", "files.attachments.upload", "files.attachments.link"],
+    "drone.missions.review": ["drone.missions.view"],
+    "ai.findings.manage": ["ai.findings.view", "ai.findings.ingest", "ai.findings.review"],
+    "ai.findings.ingest": ["ai.findings.view", "files.attachments.view", "files.attachments.upload", "files.attachments.link"],
+    "ai.findings.review": ["ai.findings.view", "safety.alerts.view"],
+    "ai.models.manage": ["ai.models.view", "files.attachments.view", "files.attachments.upload", "files.attachments.link"],
+    "ai.inference.manage": ["ai.inference.view", "ai.models.view", "files.attachments.view", "files.attachments.upload", "files.attachments.link"],
+    "ai.inference.operate": ["ai.inference.view", "ai.models.view", "ai.findings.ingest", "files.attachments.view", "files.attachments.upload", "files.attachments.link"],
+    "system.basemap.manage": ["system.basemap.view", "forest.blocks.view"],
+    "labor.manage": [
+        "labor.view",
+        "labor.workers.manage",
+        "labor.teams.manage",
+        "labor.jobs.create",
+        "labor.jobs.dispatch",
+        "labor.jobs.operate",
+        "labor.jobs.settle",
+    ],
+    "labor.workers.manage": ["labor.view"],
+    "labor.teams.manage": ["labor.view"],
+    "labor.jobs.create": ["labor.view"],
+    "labor.jobs.dispatch": ["labor.view"],
+    "labor.jobs.operate": ["labor.view"],
+    "labor.jobs.settle": ["labor.view"],
+    "safety.events.manage": [
+        "safety.events.view",
+        "safety.events.create",
+        "safety.events.triage",
+        "safety.events.assign",
+        "safety.events.handle",
+        "safety.events.verify",
+        "safety.events.command",
+        "safety.alerts.view",
+        "safety.alerts.ingest",
+        "safety.alerts.review",
+    ],
+    "safety.events.create": ["safety.events.view"],
+    "safety.events.triage": ["safety.events.view"],
+    "safety.events.assign": ["safety.events.view"],
+    "safety.events.handle": ["safety.events.view"],
+    "safety.events.verify": ["safety.events.view"],
+    "safety.events.command": ["safety.events.view"],
+    "safety.alerts.ingest": ["safety.alerts.view"],
+    "safety.alerts.review": ["safety.alerts.view", "safety.events.view"],
+    "operations.harvest.manage": [
+        "operations.harvest.view",
+        "operations.harvest.create",
+        "operations.harvest.approve",
+        "operations.harvest.operate",
+        "operations.harvest.verify",
+        "operations.harvest.quota",
+    ],
+    "operations.harvest.create": ["operations.harvest.view"],
+    "operations.harvest.approve": ["operations.harvest.view"],
+    "operations.harvest.operate": ["operations.harvest.view"],
+    "operations.harvest.verify": ["operations.harvest.view"],
+    "operations.harvest.quota": ["operations.harvest.view"],
     "forest.blocks.manage": [
         "forest.blocks.view",
         "forest.blocks.create",
@@ -648,6 +918,31 @@ MANAGE_PERMISSION_IMPLICATIONS = {
         "forest.blocks.delete",
         "forest.blocks.restore",
         "forest.blocks.rollback",
+        "forest.blocks.export",
+    ],
+    "forest.subcompartments.manage": [
+        "forest.subcompartments.view",
+        "forest.subcompartments.create",
+        "forest.subcompartments.update",
+        "forest.subcompartments.delete",
+        "forest.subcompartments.rollback",
+        "forest.subcompartments.export",
+    ],
+    "forest.surveys.manage": [
+        "forest.surveys.view",
+        "forest.surveys.create",
+        "forest.surveys.update",
+        "forest.surveys.complete",
+        "forest.surveys.delete",
+    ],
+    "files.attachments.manage": [
+        "files.attachments.view",
+        "files.attachments.upload",
+        "files.attachments.update",
+        "files.attachments.delete",
+        "files.attachments.restore",
+        "files.attachments.export",
+        "files.attachments.link",
     ],
     "forest.rights.manage": [
         "forest.rights.view",
@@ -756,6 +1051,93 @@ MANAGE_PERMISSION_IMPLICATIONS.update(
 
 ROLE_PERMISSION_PRESETS = [
     {
+        "key": "spec-super-admin", "label": "超级管理员", "group": "需求书预置角色",
+        "description": "平台最高管理员，拥有全部菜单和权限；正式启用时应严格限制账号数量。",
+        "allMenuModules": True, "allPermissions": True,
+        "roleCode": "super-admin", "organizationLevel": "platform", "scopeMode": "all",
+        "dataScopes": {"areas": ["*"], "projects": ["*"], "towns": ["*"], "villages": ["*"], "blockCodes": ["*"]},
+    },
+    {
+        "key": "spec-city-leader", "label": "市级领导", "group": "需求书预置角色",
+        "description": "查看全市领导驾驶舱、GIS 一张图、碳汇专题和关键经营指标。",
+        "menuModules": ["leadershipCockpit", "blocks", "carbonEstimates", "performanceDashboards"],
+        "permissions": ["cockpit.leadership.view", "forest.blocks.view", "business.carbonEstimates.view", "business.performanceDashboards.view", "business.enterprises.view", "business.farmers.view", "business.yieldForecasts.view", "business.harvestPlans.view", "business.incomeEstimates.view", "business.tradeMatches.view", "safety.events.view", "drone.missions.view"],
+        "roleCode": "city-leader", "organizationLevel": "city", "scopeMode": "organization",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-county-admin", "label": "区县管理员", "group": "需求书预置角色",
+        "description": "负责本区县资源、权属、作业、事件、无人机和碳汇业务管理。",
+        "menuModules": ["leadershipCockpit", "blocks", "subcompartments", "rights", "imports", "resourceSurveys", "operationsTodos", "laborManagement", "carbonEstimates"],
+        "permissions": ["cockpit.leadership.view", "forest.blocks.manage", "forest.subcompartments.manage", "forest.rights.manage", "forest.surveys.manage", "imports.forestBlocks.manage", "operations.todos.view", "operations.harvest.manage", "labor.manage", "business.carbonEstimates.manage", "safety.events.manage", "drone.missions.manage"],
+        "roleCode": "county-admin", "organizationLevel": "county", "scopeMode": "organization",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-town-station-chief", "label": "乡镇林业站长", "group": "需求书预置角色",
+        "description": "管理本乡镇林班、小班、巡护、采伐、劳务和事件处置。",
+        "menuModules": ["blocks", "subcompartments", "resourceSurveys", "operationsTodos", "laborManagement"],
+        "permissions": ["forest.blocks.view", "forest.subcompartments.manage", "forest.surveys.manage", "business.maintenanceTasks.manage", "operations.harvest.manage", "labor.manage", "safety.events.manage"],
+        "roleCode": "town-forestry-chief", "organizationLevel": "town", "scopeMode": "organization",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-ranger", "label": "护林员", "group": "需求书预置角色",
+        "description": "办理本人责任区巡护任务、现场证据和风险事件上报。",
+        "menuModules": ["operationsTodos", "mobileOperations"],
+        "permissions": ["operations.todos.view", "business.maintenanceTasks.view", "business.maintenanceTasks.update", "mobile.operations.manage", "safety.events.view", "safety.events.create"],
+        "roleCode": "forest-ranger", "organizationLevel": "village", "scopeMode": "assigned-blocks",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-bamboo-farmer", "label": "竹农", "group": "需求书预置角色",
+        "description": "查看本人关联林班、作业服务、政策和碳汇收益信息。",
+        "menuModules": ["blocks", "mobileOperations", "carbonEstimates"],
+        "permissions": ["forest.blocks.view", "mobile.operations.view", "business.materialServices.view", "business.policies.view", "business.carbonEstimates.view"],
+        "roleCode": "bamboo-farmer", "organizationLevel": "subject", "scopeMode": "assigned-blocks",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-enterprise-user", "label": "企业用户", "group": "需求书预置角色",
+        "description": "维护本企业采购、交易、物流和产品追溯业务。",
+        "menuModules": ["tradeMatches", "logisticsTraces", "productQrcodes", "priceIndexes"],
+        "permissions": ["business.tradeMatches.manage", "business.logisticsTraces.manage", "business.productQrcodes.manage", "business.priceIndexes.view"],
+        "roleCode": "enterprise-user", "organizationLevel": "subject", "scopeMode": "projects",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-drone-pilot", "label": "无人机飞手", "group": "需求书预置角色",
+        "description": "接收并执行无人机任务，上传飞行记录和遥感成果。",
+        "menuModules": ["operationsTodos", "attachments", "mobileOperations"],
+        "permissions": ["operations.todos.view", "drone.missions.view", "drone.missions.operate", "imagery.scenes.create", "files.attachments.upload", "mobile.operations.manage"],
+        "roleCode": "drone-pilot", "organizationLevel": "operator", "scopeMode": "assigned-tasks",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-ai-engineer", "label": "AI 工程师", "group": "需求书预置角色",
+        "description": "管理模型、数据集、推理任务和识别结果技术复核。",
+        "menuModules": ["aiModels", "aiInference", "attachments"],
+        "permissions": ["ai.models.manage", "ai.inference.manage", "ai.findings.manage", "files.attachments.manage"],
+        "roleCode": "ai-engineer", "organizationLevel": "platform", "scopeMode": "projects",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-safety-officer", "label": "安全员", "group": "需求书预置角色",
+        "description": "负责安全事件分级、处置、复核和闭环归档。",
+        "menuModules": ["operationsTodos", "operationsAudit", "mobileOperations"],
+        "permissions": ["operations.todos.view", "operations.audit.view", "safety.events.manage", "mobile.operations.view"],
+        "roleCode": "safety-officer", "organizationLevel": "county", "scopeMode": "organization",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
+        "key": "spec-emergency-rescue", "label": "应急救援人员", "group": "需求书预置角色",
+        "description": "接收应急任务、查看事件位置和现场同步救援处置结果。",
+        "menuModules": ["operationsTodos", "mobileOperations", "blocks"],
+        "permissions": ["operations.todos.view", "safety.events.view", "safety.events.update", "forest.blocks.view", "mobile.operations.manage"],
+        "roleCode": "emergency-rescue", "organizationLevel": "operator", "scopeMode": "assigned-tasks",
+        "dataScopes": {"areas": [], "projects": [], "towns": [], "villages": [], "blockCodes": []},
+    },
+    {
         "key": "phase1-data-foundation",
         "label": "第一阶段：数据底座管理员",
         "group": "阶段规划",
@@ -809,6 +1191,7 @@ ROLE_PERMISSION_PRESETS = [
         "permissions": [
             "business.yieldForecasts.manage",
             "business.harvestPlans.manage",
+            "operations.harvest.manage",
             "business.incomeEstimates.manage",
             "business.performanceDashboards.manage",
             "business.carbonEstimates.manage",
@@ -2117,7 +2500,10 @@ def permission_catalog() -> list[dict[str, Any]]:
 
 
 def module_catalog_by_key() -> dict[str, dict[str, str]]:
-    return {module["key"]: module for module in ADMIN_MENU_MODULES}
+    return {
+        module["key"]: module
+        for module in [*ADMIN_MENU_MODULES, *V2_ROLE_MODULES]
+    }
 
 
 def menu_modules_allowed_by_permissions(menu_modules: list[str], permissions: list[str]) -> list[str]:
@@ -2148,7 +2534,7 @@ def permission_matrix() -> list[dict[str, Any]]:
 
     group_order: list[str] = []
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for module in ADMIN_MENU_MODULES:
+    for module in [*ADMIN_MENU_MODULES, *V2_ROLE_MODULES]:
         group = module["group"]
         if group not in grouped:
             grouped[group] = []
@@ -2208,7 +2594,9 @@ def permission_catalog_export_records() -> list[dict[str, Any]]:
 def permission_catalog_coverage() -> dict[str, Any]:
     permissions = permission_catalog()
     matrix = permission_matrix()
-    known_modules = {module["key"] for module in ADMIN_MENU_MODULES}
+    known_modules = {
+        module["key"] for module in [*ADMIN_MENU_MODULES, *V2_ROLE_MODULES]
+    }
     known_codes = {permission["code"] for permission in permissions}
     matrix_modules = [module for group in matrix for module in group.get("modules", [])]
     permission_entries = [entry for module in matrix_modules for entry in module.get("permissionEntries", [])]
@@ -2585,12 +2973,12 @@ def role_permission_presets() -> list[dict[str, Any]]:
     known_permissions = {item["code"] for item in permission_catalog()}
     presets: list[dict[str, Any]] = []
     for preset in ROLE_PERMISSION_PRESETS:
-        menu_modules = [
+        menu_modules = list(modules_by_key) if preset.get("allMenuModules") else [
             module_key
             for module_key in compact_list(preset.get("menuModules") or [])
             if module_key in modules_by_key
         ]
-        permissions = [
+        permissions = sorted(known_permissions) if preset.get("allPermissions") else [
             permission
             for permission in compact_list(preset.get("permissions") or [])
             if permission in known_permissions
@@ -2603,6 +2991,10 @@ def role_permission_presets() -> list[dict[str, Any]]:
                 "label": preset["label"],
                 "group": preset.get("group") or "",
                 "description": preset.get("description") or "",
+                "roleCode": preset.get("roleCode") or "",
+                "organizationLevel": preset.get("organizationLevel") or "",
+                "scopeMode": preset.get("scopeMode") or "",
+                "dataScopes": dict(preset.get("dataScopes") or {}),
                 "menuModules": menu_modules,
                 "permissions": permissions,
                 "expandedPermissions": expanded_permissions,

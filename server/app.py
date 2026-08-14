@@ -20,7 +20,7 @@ from xml.etree import ElementTree
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,6 +38,7 @@ from server.modules.admin_roles import (
 from server.modules.admin_roles import router as admin_roles_router
 from server.modules.admin_roles import effective_permissions_for_context
 from server.modules.admin_users import router as admin_users_router
+from server.modules.basemap_settings import runtime_basemap_settings
 from server.modules.auth import (
     AuthContext,
     bearer_token as unified_bearer_token,
@@ -96,6 +97,7 @@ from server.modules.imports import (
     router as imports_router,
 )
 from server.modules.settings import enforce_production_configuration, get_settings
+from server.v2 import router as v2_router
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -145,6 +147,18 @@ CACHE_DIR = DATA_DIR / "tile-cache"
 THUMBNAIL_DIR = DATA_DIR / "thumbnail-cache"
 TIANDITU_CACHE_DIR = DATA_DIR / "basemap-cache" / "tianditu"
 STATIC_DIR = Path(os.environ.get("REMOTE_SENSING_STATIC_DIR", str(ROOT_DIR))).expanduser().resolve()
+V2_FRONTEND_DIR = Path(
+    os.environ.get(
+        "SMART_BAMBOO_V2_STATIC_DIR",
+        str(ROOT_DIR / "dist" / "web-operations"),
+    )
+).expanduser().resolve()
+MOBILE_FRONTEND_DIR = Path(
+    os.environ.get(
+        "SMART_BAMBOO_MOBILE_STATIC_DIR",
+        str(ROOT_DIR / "dist" / "mobile-field"),
+    )
+).expanduser().resolve()
 SERVE_STATIC = env_bool("REMOTE_SENSING_SERVE_STATIC", True)
 CORS_ORIGINS = env_list("REMOTE_SENSING_CORS_ORIGINS", ["*"])
 IMPORT_DIRS = [Path(item).expanduser().resolve() for item in env_list("REMOTE_SENSING_IMPORT_DIRS", [str(INBOX_DIR)])]
@@ -161,6 +175,10 @@ GEOSERVER_WFS_URL = os.environ.get("REMOTE_SENSING_GEOSERVER_WFS_URL", "").strip
 GEOSERVER_LAYERS = env_list("REMOTE_SENSING_GEOSERVER_LAYERS", [])
 TIANDITU_TK = os.environ.get("REMOTE_SENSING_TIANDITU_TK", "").strip()
 TIANDITU_REFERER = os.environ.get("REMOTE_SENSING_TIANDITU_REFERER", "").strip()
+TIANDITU_UPSTREAM_PROXY_BASE_URL = os.environ.get(
+    "REMOTE_SENSING_TIANDITU_PROXY_BASE_URL",
+    "",
+).strip().rstrip("/")
 TIANDITU_TIMEOUT = max(2, env_int("REMOTE_SENSING_TIANDITU_TIMEOUT", 8))
 BASEMAP_CACHE_MAX_BYTES = max(0, env_int("REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES", 0))
 BASEMAP_CACHE_MAX_AGE_DAYS = max(0.0, env_float("REMOTE_SENSING_BASEMAP_CACHE_MAX_AGE_DAYS", 0))
@@ -275,7 +293,9 @@ async def prevent_stale_application_shells(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.rstrip("/") or "/"
     suffix = Path(path).suffix.lower()
-    if path == "/" or suffix in {".html", ".js", ".css"}:
+    if path.startswith("/v2/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path == "/" or suffix in {".html", ".js", ".css"}:
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -312,6 +332,7 @@ app.include_router(forest_blocks_router)
 app.include_router(forest_rights_router)
 app.include_router(forest_scene_links_router)
 app.include_router(imports_router)
+app.include_router(v2_router)
 
 
 def ensure_dirs() -> None:
@@ -350,6 +371,10 @@ class RegisterSceneRequest(BaseModel):
     areaCode: str = ""
     allowedRoles: list[str] | str | None = None
     allowedUsers: list[str] | str | None = None
+    assetType: str = "orthophoto"
+    missionId: str = ""
+    linkedBlockCodes: list[str] | str | None = None
+    processingStage: str = "ready"
 
 
 class SceneAccessUpdateRequest(BaseModel):
@@ -368,6 +393,10 @@ class SceneUpdateRequest(SceneAccessUpdateRequest):
     bounds: list[float] | str | None = None
     visible: bool | None = None
     opacity: float | None = None
+    assetType: str | None = None
+    missionId: str | None = None
+    linkedBlockCodes: list[str] | str | None = None
+    processingStage: str | None = None
 
 
 class BulkSceneAccessUpdateRequest(SceneAccessUpdateRequest):
@@ -586,7 +615,19 @@ def filter_scenes(
         if keyword:
             text = " ".join(
                 str(scene.get(key) or "")
-                for key in ["id", "name", "fileName", "satellite", "sensor", "capturedAt", "projectId", "areaCode"]
+                for key in [
+                    "id",
+                    "name",
+                    "fileName",
+                    "satellite",
+                    "sensor",
+                    "capturedAt",
+                    "projectId",
+                    "areaCode",
+                    "assetType",
+                    "missionId",
+                    "linkedBlockCodes",
+                ]
             ).lower()
             if keyword not in text:
                 continue
@@ -1644,6 +1685,10 @@ def build_scene_record(
         "areaCode": str(metadata.get("areaCode") or "").strip(),
         "allowedRoles": split_tokens(metadata.get("allowedRoles")),
         "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "assetType": str(metadata.get("assetType") or "orthophoto").strip(),
+        "missionId": str(metadata.get("missionId") or "").strip(),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "processingStage": str(metadata.get("processingStage") or "ready").strip(),
         "resolution": str(metadata.get("resolution") or raster_info["resolution"]).strip(),
         "bounds": raster_info["bounds"],
         "crs": raster_info["crs"],
@@ -1706,6 +1751,10 @@ SCENE_METADATA_UPDATE_FIELDS = [
     "allowedUsers",
     "visible",
     "opacity",
+    "assetType",
+    "missionId",
+    "linkedBlockCodes",
+    "processingStage",
 ]
 
 
@@ -1726,10 +1775,12 @@ def apply_scene_update(
         if not name:
             raise HTTPException(status_code=400, detail="name cannot be empty")
         updated["name"] = name
-    for field in ["satellite", "sensor", "capturedAt", "resolution"]:
+    for field in ["satellite", "sensor", "capturedAt", "resolution", "assetType", "missionId", "processingStage"]:
         value = getattr(payload, field)
         if value is not None:
             updated[field] = value.strip()
+    if payload.linkedBlockCodes is not None:
+        updated["linkedBlockCodes"] = split_tokens(payload.linkedBlockCodes)
     if payload.bounds is not None:
         bounds = parse_bounds(payload.bounds)
         if bounds is None:
@@ -3126,12 +3177,14 @@ def clear_tianditu_cache(layer: str | None = None) -> dict[str, Any]:
 
 
 def tianditu_proxy_config() -> dict[str, Any]:
+    runtime = runtime_basemap_settings()
     return {
         "enabled": True,
         "layers": sorted(TIANDITU_LAYERS),
         "cache": tianditu_cache_stats(),
-        "hasServerTk": bool(TIANDITU_TK),
-        "hasFixedReferer": bool(TIANDITU_REFERER),
+        "hasServerTk": bool(runtime["serverKey"]),
+        "hasUpstreamProxy": bool(runtime["proxyBaseUrl"]),
+        "hasFixedReferer": bool(runtime["referer"]),
         "prewarm": {
             "bounds": TIANDITU_PREWARM_BOUNDS,
             "layers": TIANDITU_PREWARM_LAYERS,
@@ -3176,6 +3229,35 @@ def fetch_tianditu_tile(layer: str, z: int, x: int, y: int, tk: str, referer: st
         raise HTTPException(status_code=502, detail="Tianditu returned an empty tile")
     if "image" not in content_type.lower() and content.lstrip().startswith(b"<"):
         raise HTTPException(status_code=502, detail="Tianditu returned a non-image response")
+    return content
+
+
+def fetch_tianditu_proxy_tile(layer: str, z: int, x: int, y: int) -> bytes:
+    base_url = runtime_basemap_settings()["proxyBaseUrl"]
+    if not base_url:
+        raise HTTPException(status_code=503, detail="Tianditu upstream proxy is not configured")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=503, detail="Tianditu upstream proxy URL is invalid")
+    url = f"{base_url}/api/basemaps/tianditu/{layer}/{z}/{x}/{y}.png"
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SmartBambooTiandituCacheRelay/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TIANDITU_TIMEOUT) as response:
+            status = getattr(response, "status", 200)
+            content_type = response.headers.get("Content-Type", "")
+            content = response.read()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Tianditu upstream proxy failed: {exc}") from exc
+
+    if status >= 400:
+        raise HTTPException(status_code=502, detail=f"Tianditu upstream proxy failed with status {status}")
+    if not content:
+        raise HTTPException(status_code=502, detail="Tianditu upstream proxy returned an empty tile")
+    if "image" not in content_type.lower() and content.lstrip().startswith((b"<", b"{")):
+        raise HTTPException(status_code=502, detail="Tianditu upstream proxy returned a non-image response")
     return content
 
 
@@ -3234,12 +3316,15 @@ def run_tianditu_prewarm_task(task_id: str) -> None:
     task = find_task_record(task_id)
     if task.get("status") == "canceled":
         return
-    if not TIANDITU_TK:
+    basemap = runtime_basemap_settings()
+    server_key = basemap["serverKey"]
+    proxy_base_url = basemap["proxyBaseUrl"]
+    if not server_key and not proxy_base_url:
         update_task(
             task_id,
             status="failed",
             progress=100,
-            message="Tianditu server key is missing",
+            message="Tianditu server key or upstream proxy is missing",
             failedAt=now_iso(),
         )
         return
@@ -3275,7 +3360,11 @@ def run_tianditu_prewarm_task(task_id: str) -> None:
                 if cache_path.exists():
                     cache_hits += 1
                 else:
-                    content = fetch_tianditu_tile(layer, zoom, x, y, TIANDITU_TK)
+                    content = (
+                        fetch_tianditu_tile(layer, zoom, x, y, server_key)
+                        if server_key
+                        else fetch_tianditu_proxy_tile(layer, zoom, x, y)
+                    )
                     write_tianditu_cache_tile(cache_path, content)
                     downloaded += 1
             except Exception as exc:
@@ -3325,10 +3414,14 @@ def create_tianditu_prewarm_task(
     layers: list[str],
     actor: str,
 ) -> dict[str, Any]:
-    if not TIANDITU_TK:
+    basemap = runtime_basemap_settings()
+    if not basemap["serverKey"] and not basemap["proxyBaseUrl"]:
         raise HTTPException(
             status_code=409,
-            detail="Configure REMOTE_SENSING_TIANDITU_TK before starting basemap prewarm.",
+            detail=(
+                "Configure REMOTE_SENSING_TIANDITU_TK or "
+                "REMOTE_SENSING_TIANDITU_PROXY_BASE_URL before starting basemap prewarm."
+            ),
         )
     normalized_layers = list(dict.fromkeys(str(layer).strip() for layer in layers if str(layer).strip()))
     unsupported = [layer for layer in normalized_layers if layer not in TIANDITU_LAYERS]
@@ -3368,7 +3461,8 @@ def create_tianditu_prewarm_task(
 
 
 def schedule_tianditu_startup_prewarm() -> dict[str, Any] | None:
-    if not TIANDITU_TK or len(TIANDITU_PREWARM_BOUNDS) != 4:
+    basemap = runtime_basemap_settings()
+    if (not basemap["serverKey"] and not basemap["proxyBaseUrl"]) or len(TIANDITU_PREWARM_BOUNDS) != 4:
         return None
     try:
         bounds = [float(value) for value in TIANDITU_PREWARM_BOUNDS]
@@ -4262,7 +4356,11 @@ def deployment_readiness_summary(deployment: dict[str, Any]) -> dict[str, Any]:
     blocking_issues.extend(import_dir_issues)
 
     tianditu_proxy = deployment.get("tiandituProxy") or {}
-    if tianditu_proxy.get("enabled") and not tianditu_proxy.get("hasServerTk"):
+    if (
+        tianditu_proxy.get("enabled")
+        and not tianditu_proxy.get("hasServerTk")
+        and not tianditu_proxy.get("hasUpstreamProxy")
+    ):
         warning = readiness_item(
             "tianditu_server_key_missing",
             "天地图服务端密钥缺失",
@@ -4923,6 +5021,10 @@ async def upload_scene(
     allowedRoles: str = Form(""),
     allowedUsers: str = Form(""),
     asyncMode: bool = Form(False),
+    assetType: str = Form("orthophoto"),
+    missionId: str = Form(""),
+    linkedBlockCodes: str = Form(""),
+    processingStage: str = Form("ready"),
 ) -> Any:
     require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
     ensure_dirs()
@@ -4950,6 +5052,10 @@ async def upload_scene(
         "areaCode": areaCode.strip(),
         "allowedRoles": allowedRoles,
         "allowedUsers": allowedUsers,
+        "assetType": assetType.strip() or "orthophoto",
+        "missionId": missionId.strip(),
+        "linkedBlockCodes": linkedBlockCodes,
+        "processingStage": processingStage.strip() or "ready",
     }
     if asyncMode:
         task = create_conversion_task(source_path, metadata, fallback_bounds, "upload", delete_original=True)
@@ -4983,6 +5089,10 @@ def register_scene(payload: RegisterSceneRequest, request: Request) -> JSONRespo
         "areaCode": payload.areaCode.strip(),
         "allowedRoles": payload.allowedRoles,
         "allowedUsers": payload.allowedUsers,
+        "assetType": payload.assetType.strip() or "orthophoto",
+        "missionId": payload.missionId.strip(),
+        "linkedBlockCodes": payload.linkedBlockCodes,
+        "processingStage": payload.processingStage.strip() or "ready",
     }
     task = create_conversion_task(source_path, metadata, fallback_bounds, "register", delete_original=False)
     return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
@@ -5308,34 +5418,53 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
     if z < 0 or z > 22 or x < 0 or y < 0:
         raise HTTPException(status_code=400, detail="Invalid tile coordinate")
 
+    runtime = runtime_basemap_settings()
     browser_token = tk.strip()
-    token = browser_token or TIANDITU_TK
-    if not token:
-        raise HTTPException(status_code=400, detail="Tianditu tk is required. Pass ?tk=... or set REMOTE_SENSING_TIANDITU_TK.")
+    token = browser_token or runtime["serverKey"]
+    if not token and not runtime["proxyBaseUrl"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Tianditu source is required. Pass ?tk=..., set REMOTE_SENSING_TIANDITU_TK, "
+                "or set REMOTE_SENSING_TIANDITU_PROXY_BASE_URL."
+            ),
+        )
 
     cache_path = tianditu_cache_path(layer, z, x, y)
-    if cache_path.exists():
-        return Response(
-            content=cache_path.read_bytes(),
-            media_type="image/png",
-            headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "HIT"},
-        )
+    try:
+        if cache_path.exists():
+            return Response(
+                content=cache_path.read_bytes(),
+                media_type="image/png",
+                headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "HIT"},
+            )
+    except OSError:
+        # A read-only cache must not make the basemap unavailable.
+        pass
 
     referer = ""
     if browser_token:
         referer = (
             request.headers.get("referer")
             or request.headers.get("origin")
-            or TIANDITU_REFERER
+            or runtime["referer"]
         )
-    content = fetch_tianditu_tile(layer, z, x, y, token, referer=referer)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(content)
-    maybe_prune_cache("tianditu", TIANDITU_CACHE_DIR, BASEMAP_CACHE_MAX_BYTES, BASEMAP_CACHE_MAX_AGE_DAYS)
+    content = (
+        fetch_tianditu_tile(layer, z, x, y, token, referer=referer)
+        if token
+        else fetch_tianditu_proxy_tile(layer, z, x, y)
+    )
+    cache_status = "MISS"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(content)
+        maybe_prune_cache("tianditu", TIANDITU_CACHE_DIR, BASEMAP_CACHE_MAX_BYTES, BASEMAP_CACHE_MAX_AGE_DAYS)
+    except OSError:
+        cache_status = "BYPASS"
     return Response(
         content=content,
         media_type="image/png",
-        headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": "MISS"},
+        headers={"Cache-Control": TIANDITU_BROWSER_CACHE_CONTROL, "X-Tianditu-Cache": cache_status},
     )
 
 
@@ -5463,6 +5592,71 @@ def legacy_smart_bamboo_dashboard() -> RedirectResponse:
         status_code=302,
         headers={"Clear-Site-Data": '"cache"'},
     )
+
+
+def v2_frontend_response(path: str = "") -> FileResponse:
+    index_path = V2_FRONTEND_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Bamboo V2 frontend has not been built.",
+        )
+
+    requested_path = path.strip("/")
+    if requested_path:
+        candidate = (V2_FRONTEND_DIR / requested_path).resolve()
+        try:
+            candidate.relative_to(V2_FRONTEND_DIR)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="V2 asset not found.") from exc
+        if candidate.is_file():
+            return FileResponse(candidate)
+        if Path(requested_path).suffix:
+            raise HTTPException(status_code=404, detail="V2 asset not found.")
+    return FileResponse(index_path)
+
+
+@app.get("/v2", include_in_schema=False)
+@app.get("/v2/", include_in_schema=False)
+def smart_bamboo_v2_root() -> FileResponse:
+    return v2_frontend_response()
+
+
+@app.get("/v2/{path:path}", include_in_schema=False)
+def smart_bamboo_v2_spa(path: str) -> FileResponse:
+    return v2_frontend_response(path)
+
+
+def mobile_frontend_response(path: str = "") -> FileResponse:
+    index_path = MOBILE_FRONTEND_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Bamboo mobile field frontend has not been built.",
+        )
+    requested_path = path.strip("/")
+    if requested_path:
+        candidate = (MOBILE_FRONTEND_DIR / requested_path).resolve()
+        try:
+            candidate.relative_to(MOBILE_FRONTEND_DIR)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Mobile asset not found.") from exc
+        if candidate.is_file():
+            return FileResponse(candidate)
+        if Path(requested_path).suffix:
+            raise HTTPException(status_code=404, detail="Mobile asset not found.")
+    return FileResponse(index_path)
+
+
+@app.get("/mobile", include_in_schema=False)
+@app.get("/mobile/", include_in_schema=False)
+def smart_bamboo_mobile_root() -> FileResponse:
+    return mobile_frontend_response()
+
+
+@app.get("/mobile/{path:path}", include_in_schema=False)
+def smart_bamboo_mobile_spa(path: str) -> FileResponse:
+    return mobile_frontend_response(path)
 
 
 if SERVE_STATIC:

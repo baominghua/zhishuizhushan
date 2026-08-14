@@ -1352,40 +1352,108 @@ def test_import_admin_has_batch_ledger_detail_and_row_actions():
     assert "kind=rights" in js
     assert "function handleBatchRowAction" in js
     assert 'data-row-action="view"' in js
-    assert 'data-row-action="edit"' in js
-    assert 'data-row-action="delete"' in js
+    assert 'data-batch-action="complete"' in js
+    assert 'id="deleteImportBatch"' in html
     assert "button.dataset.rowAction" in js
-    assert 'action === "delete"' in js
+    assert "deleteImportBatch(activeBatch())" in js
 
 
-def test_import_batch_row_actions_can_export_report_receipt_and_rollback():
+def test_import_batch_row_actions_prioritize_one_click_completion():
     html = _read("admin-imports.html")
     js = _read("admin-imports.js")
     css = _read("admin.css")
 
     assert "import-batch-table-wrap" in html
     assert "function batchActionButtons" in js
-    assert 'data-batch-action="report"' in js
-    assert 'data-batch-action="receipt"' in js
-    assert 'data-batch-action="rollback"' in js
-    assert 'data-permission="${IMPORT_EXPORT_PERMISSION}"' in js
-    assert 'data-permission="${IMPORT_ROLLBACK_PERMISSION}"' in js
-    assert 'batchButton.dataset.batchAction === "report"' in js
-    assert "downloadImportBatchReport(batch)" in js
-    assert 'batchButton.dataset.batchAction === "receipt"' in js
-    assert "exportImportBatchReceipt(batch)" in js
-    assert 'batchButton.dataset.batchAction === "rollback"' in js
-    assert "rollbackImportBatch(batch)" in js
+    assert "function importBatchCompletionState" in js
+    assert "function completeImportBatch" in js
+    assert 'data-batch-action="complete"' in js
+    assert 'batchButton.dataset.batchAction === "complete"' in js
+    assert "completeImportBatch(batch)" in js
+    assert 'id="completeImportBatch"' in html
+    assert 'id="downloadImportBatchReport"' in html
+    assert 'id="downloadImportBatchReceipt"' in html
+    assert 'id="rollbackImportBatch"' in html
+    assert 'id="deleteImportBatch"' in html
     assert "event.preventDefault()" in js
-    assert "row-actions-extra-wide" in js
+    assert "batch-row-actions" in js
+    assert ".batch-primary-action" in css
     assert ".import-batch-table-wrap" in css
 
 
-def test_import_batch_process_row_action_is_permission_scoped():
+def test_import_batch_completion_action_is_permission_scoped():
     js = _read("admin-imports.js")
 
-    assert 'data-row-action="edit" data-permission-any="${IMPORT_REVIEW_PERMISSION} ${IMPORT_ACCEPTANCE_PERMISSION} ${IMPORT_SCENE_LAYER_LINK_PERMISSION}" aria-label="处理批次" title="处理批次"' in js
-    assert 'data-row-action="edit" aria-label="查看报告" title="查看报告"' not in js
+    assert "permission: IMPORT_REVIEW_PERMISSION" in js
+    assert "allPermissions: IMPORT_ACCEPTANCE_PERMISSION" in js
+    assert 'data-permission="${escapeHtml(completion.permission)}"' in js
+    assert 'data-permission-all="${escapeHtml(completion.allPermissions)}"' in js
+
+
+def test_import_admin_uses_progressive_disclosure_for_advanced_workflows():
+    html = _read("admin-imports.html")
+    common_js = _read("admin-common.js")
+    css = _read("admin.css")
+
+    assert 'id="toggleAdvancedImportTools"' in html
+    assert "data-advanced-tools-toggle" in html
+    assert "advanced-admin-tool" in html
+    assert "人工审核与异常处理" in html
+    assert "高级交付" in html
+    assert "操作记录与技术数据" in html
+    assert "function initAdvancedTools" in common_js
+    assert "advanced-tools-visible" in common_js
+    assert ".advanced-admin-tool" in css
+
+
+def test_complex_admin_pages_share_the_same_advanced_management_pattern():
+    pages = {
+        "admin-imports.html": "toggleAdvancedImportTools",
+        "admin-imagery.html": "toggleAdvancedImageryTools",
+        "admin-map-layers.html": "toggleAdvancedLayerTools",
+        "admin-roles.html": "toggleAdvancedRoleTools",
+        "admin-users.html": "toggleAdvancedUserTools",
+    }
+
+    for file_name, toggle_id in pages.items():
+        html = _read(file_name)
+        assert f'id="{toggle_id}"' in html
+        assert "data-advanced-tools-toggle" in html
+        assert "advanced-admin-tool" in html
+
+
+def test_advanced_management_does_not_hide_primary_ledgers_or_crud_commands():
+    for file_name in (
+        "admin-imports.html",
+        "admin-imagery.html",
+        "admin-map-layers.html",
+        "admin-roles.html",
+        "admin-users.html",
+    ):
+        html = _read(file_name)
+        assert 'data-admin-primary-ledger="true"' in html
+        assert 'data-admin-primary-ledger="true" class="advanced-admin-tool"' not in html
+
+    assert 'id="newLayer"' in _read("admin-map-layers.html")
+    assert 'id="newRole"' in _read("admin-roles.html")
+    assert 'id="newUser"' in _read("admin-users.html")
+    assert 'id="openUploadPanel"' in _read("admin-imagery.html")
+
+
+def test_imagery_admin_supports_one_click_publication_and_delivery():
+    html = _read("admin-imagery.html")
+    js = _read("admin-imagery.js")
+
+    assert 'id="completeSceneWorkflow"' in html
+    assert "发布并完成" in html
+    assert "高级发布与异常处理" in html
+    assert "操作记录与技术数据" in html
+    assert "async function completeSceneWorkflow" in js
+    assert "/publish-layer`" in js
+    assert "/delivery`" in js
+    assert 'status: "delivered"' in js
+    assert "sceneHasOpenQualityIssue(scene)" in js
+    assert 'setCompoundPermission(\n      "#completeSceneWorkflow"' in js
 
 
 def test_import_batch_direct_downloads_use_shared_download_helper():

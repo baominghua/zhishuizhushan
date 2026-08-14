@@ -1970,6 +1970,40 @@ def test_imagery_scene_metadata_can_be_updated_by_manager(isolated_env):
     assert events.json()["items"][0]["actor"] == "mapper"
 
 
+def test_imagery_scene_keeps_asset_type_mission_and_forest_block_relations(isolated_env):
+    app_module = reload_app_module()
+    scene = sample_scene("scene-v2-imagery-fields") | {
+        "assetType": "orthophoto",
+        "missionId": "UAV-2026-001",
+        "linkedBlockCodes": ["35078410620204101020"],
+        "processingStage": "ready",
+    }
+    app_module.save_scene(scene)
+    client = TestClient(app_module.app)
+
+    response = client.patch(
+        "/api/scenes/scene-v2-imagery-fields",
+        json={
+            "assetType": "dsm",
+            "missionId": "UAV-2026-002",
+            "linkedBlockCodes": ["35078410620204101020", "35078410620204101021"],
+            "processingStage": "ready",
+        },
+        headers={"X-RS-Roles": "imagery.scenes.update"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assetType"] == "dsm"
+    assert body["missionId"] == "UAV-2026-002"
+    assert body["linkedBlockCodes"] == ["35078410620204101020", "35078410620204101021"]
+    assert set(body["event"]["changedFields"]) >= {
+        "assetType",
+        "missionId",
+        "linkedBlockCodes",
+    }
+
+
 def test_imagery_action_permissions_control_scene_and_task_workflows(isolated_env):
     app_module = reload_app_module()
     retry_source = isolated_env / "action-retry-source.tif"

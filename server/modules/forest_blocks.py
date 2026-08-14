@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+from shapely.geometry import shape
+from shapely.validation import explain_validity
 
 from .admin_roles import require_permission
 from .auth import (
@@ -657,6 +659,47 @@ def normalize_geometry_for_storage(geometry: dict[str, Any] | None) -> dict[str,
     if geometry_type == "MultiPolygon":
         return {"type": "MultiPolygon", "coordinates": coordinates}
     return None
+
+
+def validate_forest_block_geometry(
+    block_id: str,
+    geometry: dict[str, Any] | None,
+    context: AuthContext,
+) -> None:
+    normalized = normalize_geometry_for_storage(geometry)
+    if geometry is not None and normalized is None:
+        raise HTTPException(status_code=422, detail="林班边界必须是 Polygon 或 MultiPolygon")
+    parent_shape = None
+    if normalized is not None:
+        parent_shape = shape(normalized)
+        if parent_shape.is_empty or not parent_shape.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail=f"林班边界无效：{explain_validity(parent_shape)}",
+            )
+    if not block_id:
+        return
+
+    # Imported lazily because the child module already depends on this module.
+    from .forest_subcompartments import spatial_children_for_parent
+
+    children = spatial_children_for_parent(block_id, context)
+    if not children:
+        return
+    if parent_shape is None:
+        raise HTTPException(status_code=422, detail="该林班已有小班空间边界，不能清空林班边界")
+    outside = []
+    for child in children:
+        child_geometry = normalize_geometry_for_storage(child.get("geometry"))
+        if child_geometry and not parent_shape.covers(shape(child_geometry)):
+            outside.append(str(child.get("subcompartmentCode") or child.get("name") or child.get("id")))
+    if outside:
+        sample = "、".join(outside[:5])
+        suffix = "等" if len(outside) > 5 else ""
+        raise HTTPException(
+            status_code=422,
+            detail=f"调整后的林班边界未完整包含小班：{sample}{suffix}",
+        )
 
 
 def serializable_json(value: Any, default: Any) -> str:
@@ -2137,11 +2180,19 @@ def forest_block_vector_tile(
         geometry_tolerance=simplification_tolerance_for_zoom(float(z)),
     )
     content = encode_forest_vector_tile(blocks, mercator_bounds)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = cache_path.with_name(f"{cache_path.name}.{uuid.uuid4().hex}.tmp")
-    temporary_path.write_bytes(content)
-    temporary_path.replace(cache_path)
-    prune_forest_vector_tile_cache()
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_bytes(content)
+        temporary_path.replace(cache_path)
+        prune_forest_vector_tile_cache()
+    except OSError:
+        # A read-only cache must not make the GIS layer unavailable.
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return content, "BYPASS"
     return content, "MISS"
 
 
@@ -2681,6 +2732,7 @@ def create_forest_block(
 ) -> ForestBlockOut:
     require_permission(context, "forest.blocks.create")
     require_target_block_allowed(context, payload.model_dump())
+    validate_forest_block_geometry("", payload.geometry, context)
     if use_mysql() or use_postgis():
         if block_by_code(payload.blockCode, include_deleted=True):
             raise HTTPException(status_code=409, detail="blockCode already exists")
@@ -2750,6 +2802,7 @@ def rollback_forest_block(
         )
     )
     require_target_block_allowed(context, rolled_back)
+    validate_forest_block_geometry(block_id, rolled_back.get("geometry"), context)
     save_block(rolled_back)
     rollback_version = record_block_version(
         rolled_back,
@@ -2786,6 +2839,7 @@ def patch_forest_block(
             }
         ))
         require_target_block_allowed(context, updated)
+        validate_forest_block_geometry(block_id, updated.get("geometry"), context)
         save_block(updated)
         sync_block_administrative_divisions(updated)
         record_block_version(updated, "update", context)
@@ -2810,6 +2864,7 @@ def patch_forest_block(
             }
         ))
         require_target_block_allowed(context, updated)
+        validate_forest_block_geometry(block_id, updated.get("geometry"), context)
         blocks[index] = updated
         save_blocks(blocks)
         sync_block_administrative_divisions(updated)
@@ -2886,6 +2941,13 @@ def restore_forest_block(
     raise HTTPException(status_code=404, detail="Forest block not found")
 
 
+def require_forest_block_map_view(context: AuthContext) -> None:
+    settings = get_settings()
+    if not settings.auth_required and not settings.human_auth_enabled and not context.roles:
+        return
+    require_permission(context, "forest.blocks.view")
+
+
 @router.get("/map/forest-blocks.geojson")
 def forest_blocks_geojson(
     filters: ForestBlockFilters = Depends(filter_params),
@@ -2893,6 +2955,7 @@ def forest_blocks_geojson(
     zoom: float = Query(default=14, ge=0, le=24),
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
+    require_forest_block_map_view(context)
     return forest_block_feature_collection(filters, context, max_features=maxFeatures, zoom=zoom)
 
 
@@ -2905,6 +2968,7 @@ def forest_blocks_vector_tile(
     maxFeatures: int = Query(default=5000, ge=1, le=10000),
     context: AuthContext = Depends(request_context),
 ) -> Response:
+    require_forest_block_map_view(context)
     content, cache_status = forest_block_vector_tile(
         z,
         x,
@@ -2929,6 +2993,7 @@ def forest_blocks_aggregates(
     filters: ForestBlockFilters = Depends(filter_params),
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
+    require_forest_block_map_view(context)
     return forest_block_aggregates(level, filters, context)
 
 
@@ -2937,6 +3002,7 @@ def forest_blocks_summary(
     filters: ForestBlockFilters = Depends(filter_params),
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
+    require_forest_block_map_view(context)
     return forest_block_summary(filters, context)
 
 
@@ -2945,4 +3011,5 @@ def forest_blocks_facets(
     filters: ForestBlockFilters = Depends(filter_params),
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
+    require_forest_block_map_view(context)
     return forest_block_facets(filters, context)

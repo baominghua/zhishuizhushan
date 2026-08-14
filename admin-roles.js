@@ -511,6 +511,19 @@
     }
     if ($("#menuModules")) $("#menuModules").value = (preset.menuModules || []).join(", ");
     if ($("#permissions")) $("#permissions").value = (preset.permissions || []).join("\n");
+    if ($("#roleCode") && !$("#roleCode").value.trim()) $("#roleCode").value = preset.roleCode || "";
+    if ($("#roleName") && !$("#roleName").value.trim()) $("#roleName").value = preset.label || "";
+    if ($("#dataScopes")) {
+      $("#dataScopes").value = stringifyPretty(preset.dataScopes, { areas: [], projects: [], towns: [], villages: [], blockCodes: [] });
+      syncDataScopesFromJson();
+    }
+    if ($("#roleProperties")) {
+      const properties = parseJson("扩展 JSON", $("#roleProperties").value, {});
+      properties.organizationLevel = preset.organizationLevel || "";
+      properties.scopeMode = preset.scopeMode || "";
+      properties.presetKey = preset.key || "";
+      $("#roleProperties").value = stringifyPretty(properties, {});
+    }
     syncRoleSelectionsFromFields();
     renderRolePresetSummary();
     setStatus("online", `${preset.label || preset.key} 已套用，可继续调整后保存。`);

@@ -1005,8 +1005,28 @@ const AdminCommon = (() => {
     grid.appendChild(details);
   }
 
+  function initAdvancedTools() {
+    document.querySelectorAll("[data-advanced-tools-toggle]").forEach((button) => {
+      if (button.dataset.advancedToolsBound === "true") return;
+      const rootSelector = button.dataset.advancedToolsRoot || ".admin-main";
+      const root = button.closest(rootSelector) || document.querySelector(rootSelector);
+      if (!root) return;
+      const collapsedLabel = button.dataset.collapsedLabel || button.textContent.trim() || "高级管理";
+      const expandedLabel = button.dataset.expandedLabel || "收起高级管理";
+      button.dataset.advancedToolsBound = "true";
+      button.setAttribute("aria-expanded", "false");
+      button.addEventListener("click", () => {
+        const visible = root.classList.toggle("advanced-tools-visible");
+        button.setAttribute("aria-expanded", String(visible));
+        button.textContent = visible ? expandedLabel : collapsedLabel;
+        root.dispatchEvent(new CustomEvent("admin:advanced-tools", { detail: { visible } }));
+      });
+    });
+  }
+
   function initShell() {
     clearLegacyTokenState();
+    initAdvancedTools();
     groupConnectionContextFields();
     const baseInput = $("#apiBase");
     if (baseInput) baseInput.value = initialApiBase();
@@ -1068,6 +1088,7 @@ const AdminCommon = (() => {
     formatArea,
     formatDateTime,
     initShell,
+    initAdvancedTools,
     labelFor,
     parseJson,
     query,

@@ -244,6 +244,50 @@
     return Boolean(batch?.deletedAt) || batch?.status === "deleted";
   }
 
+  function importBatchCompletionState(batch) {
+    const status = String(batch?.status || "");
+    const reviewStatus = String(batch?.reviewStatus || "pending");
+    const acceptanceStatus = String(batch?.acceptanceStatus || "pending");
+    const validRows = Number(batch?.validRows || 0);
+    const invalidRows = Number(batch?.invalidRows || 0);
+    const qualityBlocked = batch?.qualityStatus === "blocked";
+    if (isDeletedBatch(batch) || status === "rolled_back") {
+      return { state: "inactive", label: displayLabel(BATCH_STATUS_LABELS, status), action: "" };
+    }
+    if (status === "failed" || !validRows || invalidRows > 0 || qualityBlocked) {
+      return { state: "attention", label: "处理问题", action: "view", detail: `${validRows} 有效 / ${invalidRows} 无效` };
+    }
+    if (["needs_correction", "rejected"].includes(reviewStatus) || ["needs_correction", "rejected"].includes(acceptanceStatus)) {
+      return { state: "attention", label: "处理问题", action: "view", detail: "存在整改或驳回意见" };
+    }
+    if (acceptanceStatus === "accepted") {
+      return { state: "complete", label: "已完成入库", action: "", detail: "数据已进入正式台账" };
+    }
+    if (reviewStatus === "approved") {
+      return { state: "ready", label: "完成入库", action: "complete", permission: IMPORT_ACCEPTANCE_PERMISSION, detail: "审核已通过，等待最终确认" };
+    }
+    return {
+      state: "ready",
+      label: "审核并入库",
+      action: "complete",
+      permission: IMPORT_REVIEW_PERMISSION,
+      allPermissions: IMPORT_ACCEPTANCE_PERMISSION,
+      detail: "核验通过后一次完成审核与验收",
+    };
+  }
+
+  function importBatchCompletionControl(batch) {
+    const completion = importBatchCompletionState(batch);
+    if (completion.action === "complete") {
+      const allPermissions = completion.allPermissions ? ` data-permission-all="${escapeHtml(completion.allPermissions)}"` : "";
+      return `<button type="button" class="batch-primary-action" data-batch-action="complete" data-permission="${escapeHtml(completion.permission)}"${allPermissions}>${escapeHtml(completion.label)}</button>`;
+    }
+    if (completion.action === "view") {
+      return `<button type="button" class="batch-attention-action" data-row-action="view">${escapeHtml(completion.label)}</button>`;
+    }
+    return `<span class="batch-completion-state ${escapeHtml(completion.state)}">${escapeHtml(completion.label)}</span>`;
+  }
+
   function batchActionButtons(batch) {
     if (isDeletedBatch(batch)) {
       return `
@@ -256,18 +300,10 @@
       `;
     }
     return `
-      <div class="row-actions row-actions-extra-wide" aria-label="批次操作">
+      <div class="row-actions batch-row-actions" aria-label="批次操作">
+        ${importBatchCompletionControl(batch)}
         <button type="button" class="icon-button" data-row-action="view" aria-label="查看报告" title="查看报告">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>
-        </button>
-        <button type="button" class="icon-button" data-row-action="edit" data-permission-any="${IMPORT_REVIEW_PERMISSION} ${IMPORT_ACCEPTANCE_PERMISSION} ${IMPORT_SCENE_LAYER_LINK_PERMISSION}" aria-label="处理批次" title="处理批次">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 20 9-9-4-4-9 9-2 6Z"></path><path d="m15 8 1-1a2.8 2.8 0 0 1 4 4l-1 1"></path></svg>
-        </button>
-        <button type="button" class="icon-button" data-batch-action="report" data-permission="${IMPORT_EXPORT_PERMISSION}" aria-label="导出报告" title="导出报告">${REPORT_ICON}</button>
-        <button type="button" class="icon-button" data-batch-action="receipt" data-permission="${IMPORT_EXPORT_PERMISSION}" aria-label="导出验收回执" title="导出验收回执">${RECEIPT_ICON}</button>
-        <button type="button" class="icon-button" data-batch-action="rollback" data-permission="${IMPORT_ROLLBACK_PERMISSION}" aria-label="撤销入库" title="撤销入库">${ROLLBACK_ICON}</button>
-        <button type="button" class="icon-button danger" data-row-action="delete" data-permission="${IMPORT_DELETE_PERMISSION}" aria-label="删除批次" title="删除批次">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="m19 6-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
         </button>
       </div>
     `;
@@ -633,7 +669,7 @@
   function renderImportBatchRows() {
     const body = $("#importBatchRows");
     if (!state.batches.length) {
-      body.innerHTML = '<tr class="placeholder-row"><td colspan="6">暂无入库批次</td></tr>';
+      body.innerHTML = '<tr class="placeholder-row"><td colspan="5">暂无入库批次</td></tr>';
       return;
     }
     body.innerHTML = state.batches
@@ -641,10 +677,9 @@
         const active = String(batch.id) === String(state.activeBatchId) ? "active" : "";
         return `
           <tr data-id="${escapeHtml(batch.id)}" class="${active}">
-            <td><div class="cell-stack"><strong>${escapeHtml(batch.fileName || batch.id)}</strong><small>${escapeHtml(batch.id || "-")}</small></div></td>
-            <td>${escapeHtml(batch.fileType || "-")}</td>
-            <td><div class="cell-stack"><strong>${escapeHtml(displayLabel(BATCH_STATUS_LABELS, batch.status))}</strong><small>${escapeHtml(displayLabel(REVIEW_STATUS_LABELS, batch.reviewStatus || "pending"))} · ${escapeHtml(displayLabel(ACCEPTANCE_STATUS_LABELS, batch.acceptanceStatus || "pending"))} · ${escapeHtml(displayLabel(BATCH_QUALITY_STATUS_LABELS, batch.qualityStatus || "pending"))} / ${escapeHtml(displayLabel(PUBLISH_RISK_LABELS, batch.publishRiskStatus || "unknown"))} · ${escapeHtml(batch.validRows ?? 0)} 有效 / ${escapeHtml(batch.invalidRows ?? 0)} 无效 / ${escapeHtml(batch.totalRows ?? 0)} 总行</small></div></td>
-            <td>${escapeHtml(batch.createdBy || "-")}</td>
+            <td><div class="cell-stack"><strong>${escapeHtml(batch.fileName || batch.id)}</strong><small>${escapeHtml(batch.fileType || "-")} · ${escapeHtml(batch.id || "-")}</small></div></td>
+            <td><div class="cell-stack"><strong>${Number(batch.invalidRows || 0) ? "发现问题" : "核验通过"}</strong><small>${escapeHtml(batch.validRows ?? 0)} 有效 / ${escapeHtml(batch.invalidRows ?? 0)} 无效 / ${escapeHtml(batch.totalRows ?? 0)} 总行</small></div></td>
+            <td><div class="cell-stack"><strong>${escapeHtml(importBatchCompletionState(batch).label)}</strong><small>${escapeHtml(importBatchCompletionState(batch).detail || `${displayLabel(REVIEW_STATUS_LABELS, batch.reviewStatus || "pending")} · ${displayLabel(ACCEPTANCE_STATUS_LABELS, batch.acceptanceStatus || "pending")}`)}</small></div></td>
             <td>${escapeHtml(formatDateTime(batch.completedAt || batch.createdAt))}</td>
             <td>${batchActionButtons(batch)}</td>
           </tr>
@@ -1603,6 +1638,12 @@
       loadBatchScenes({ silent: true });
     }
     $("#importBatchDetailOutput").textContent = stringifyPretty(batch, {});
+    const completion = importBatchCompletionState(batch);
+    const quickStatus = $("#importBatchQuickStatus");
+    if (quickStatus) {
+      quickStatus.className = `import-batch-quick-status ${completion.state}`;
+      quickStatus.innerHTML = `<strong>${escapeHtml(completion.label)}</strong><span>${escapeHtml(completion.detail || "查看本批次数据核验和入库状态。")}</span>`;
+    }
     panel.classList.remove("hidden");
     panel.setAttribute("aria-hidden", "false");
     applyActionPermissions();
@@ -1634,6 +1675,15 @@
       const reviewBlocked = batch.reviewStatus !== "approved";
       acceptanceButton.disabled = ["rolled_back", "deleted"].includes(String(batch.status || "")) || reviewBlocked;
       acceptanceButton.title = reviewBlocked ? "批次需审核通过后才能记录验收" : "";
+    }
+    const completeButton = $("#completeImportBatch");
+    if (completeButton) {
+      completeButton.textContent = completion.label;
+      completeButton.hidden = completion.action !== "complete";
+      completeButton.disabled = completion.action !== "complete";
+      completeButton.setAttribute("data-permission", completion.permission || IMPORT_ACCEPTANCE_PERMISSION);
+      completeButton.setAttribute("data-permission-all", completion.allPermissions || "");
+      applyActionPermissions();
     }
   }
 
@@ -1892,6 +1942,38 @@
       setStatus("online", "批次验收已记录。");
     } catch (error) {
       setStatus("offline", `批次验收失败：${error.message}`);
+    }
+  }
+
+  async function completeImportBatch(batch = activeBatch()) {
+    if (!batch) return;
+    const completion = importBatchCompletionState(batch);
+    if (completion.action !== "complete") {
+      renderImportBatchDetail(batch);
+      return;
+    }
+    setStatus("busy", "正在完成审核并确认入库...");
+    try {
+      if (batch.reviewStatus !== "approved") {
+        await api(`/api/imports/${encodeURIComponent(batch.id)}/review`, {
+          method: "POST",
+          body: JSON.stringify({ decision: "approved", comment: "自动核验通过，确认进入正式台账。" }),
+        });
+      }
+      await api(`/api/imports/${encodeURIComponent(batch.id)}/acceptance`, {
+        method: "POST",
+        body: JSON.stringify({ status: "accepted", comment: "成果数据已核验并完成入库。" }),
+      });
+      state.activeBatchId = batch.id;
+      await loadImportBatches();
+      await loadImportAuditEvents();
+      await loadQualityIssues();
+      renderImportBatchDetail(activeBatch());
+      setStatus("online", "该批次已完成审核并进入正式台账。");
+    } catch (error) {
+      await loadImportBatches();
+      renderImportBatchDetail(activeBatch());
+      setStatus("offline", `确认入库失败：${error.message}`);
     }
   }
 
@@ -2178,6 +2260,8 @@
       state.activeBatchId = batch.id;
       if (batchButton.dataset.batchAction === "restore") {
         restoreImportBatch(batch);
+      } else if (batchButton.dataset.batchAction === "complete") {
+        completeImportBatch(batch);
       } else if (batchButton.dataset.batchAction === "report") {
         downloadImportBatchReport(batch);
       } else if (batchButton.dataset.batchAction === "receipt") {
@@ -2326,6 +2410,7 @@
     setCompoundPermission("#checkImportBatchPublishReadiness", IMPORT_SCENE_LAYER_LINK_PERMISSION, IMPORT_MAP_LAYER_REQUIRED_PERMISSION, IMPORT_MAP_LAYER_UPSERT_PERMISSIONS);
     $("#reviewImportBatch")?.setAttribute("data-permission", IMPORT_REVIEW_PERMISSION);
     $("#updateImportBatchAcceptance")?.setAttribute("data-permission", IMPORT_ACCEPTANCE_PERMISSION);
+    $("#deleteImportBatch")?.setAttribute("data-permission", IMPORT_DELETE_PERMISSION);
     $("#rollbackImportBatch")?.setAttribute("data-permission", IMPORT_ROLLBACK_PERMISSION);
     $("#downloadImportBatchErrors")?.setAttribute("data-permission", IMPORT_EXPORT_PERMISSION);
     $("#downloadImportBatchReport")?.setAttribute("data-permission", IMPORT_EXPORT_PERMISSION);
@@ -2356,6 +2441,8 @@
     $("#rollbackImportBatch").addEventListener("click", () => rollbackImportBatch(activeBatch()));
     $("#reviewImportBatch").addEventListener("click", () => reviewImportBatch(activeBatch()));
     $("#updateImportBatchAcceptance")?.addEventListener("click", () => updateImportBatchAcceptance(activeBatch()));
+    $("#completeImportBatch")?.addEventListener("click", () => completeImportBatch(activeBatch()));
+    $("#deleteImportBatch")?.addEventListener("click", () => deleteImportBatch(activeBatch()));
     $("#downloadImportBatchErrors").addEventListener("click", () => downloadImportBatchErrors(activeBatch()));
     $("#downloadImportBatchReport").addEventListener("click", () => downloadImportBatchReport(activeBatch()));
     $("#downloadImportBatchReceipt")?.addEventListener("click", () => exportImportBatchReceipt(activeBatch()));

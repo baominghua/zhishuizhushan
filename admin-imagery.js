@@ -811,7 +811,7 @@
   function ensureScenePublishControls() {
     const panel = $("#imageryDetailPanel");
     if (!panel) return;
-    const actions = panel.querySelector(".panel-actions");
+    const actions = $("#sceneAdvancedActions") || panel.querySelector(".panel-actions");
     if (actions && !$("#publishSceneLayer")) {
       const button = document.createElement("button");
       button.id = "publishSceneLayer";
@@ -1161,6 +1161,22 @@
       deliveryButton.disabled = isDeletedScene(scene) || !published;
       deliveryButton.title = published ? "" : "影像需发布图层后才能确认交付";
     }
+    const completionButton = $("#completeSceneWorkflow");
+    if (completionButton) {
+      const cogState = sceneCogState(scene);
+      const qualityBlocked = sceneHasOpenQualityIssue(scene);
+      const completed = sceneDeliveryState(scene) === "complete";
+      const blocked = isDeletedScene(scene) || isArchivedScene(scene) || cogState !== "complete" || qualityBlocked;
+      completionButton.hidden = completed;
+      if (!completionButton.classList.contains("permission-disabled")) completionButton.disabled = blocked;
+      completionButton.title = qualityBlocked
+        ? "请先处理未关闭的影像质量问题"
+        : cogState !== "complete"
+          ? "影像转换完成后才能发布"
+          : blocked
+            ? "当前影像不可发布"
+            : "自动发布图层并将交付状态设为已交付";
+    }
     panel.classList.remove("hidden");
     panel.setAttribute("aria-hidden", "false");
     applyActionPermissions();
@@ -1428,6 +1444,40 @@
       setStatus("online", "影像交付已记录。");
     } catch (error) {
       setStatus("offline", `影像交付失败：${error.message}`);
+    }
+  }
+
+  async function completeSceneWorkflow(scene = activeScene()) {
+    if (!scene) return;
+    if (sceneCogState(scene) !== "complete" || sceneHasOpenQualityIssue(scene) || isDeletedScene(scene) || isArchivedScene(scene)) {
+      setStatus("offline", "当前影像尚未满足发布条件，请先完成转换并处理质量问题。");
+      return;
+    }
+    setStatus("busy", "正在发布图层并完成影像交付...");
+    try {
+      let workingScene = scene;
+      if (!sceneHasPublishedLayer(workingScene)) {
+        const publication = await api(`/api/scenes/${encodeURIComponent(workingScene.id)}/publish-layer`, {
+          method: "POST",
+          body: JSON.stringify(sceneLayerPublishPayload(workingScene)),
+        });
+        workingScene = publication.scene || workingScene;
+      }
+      const delivery = await api(`/api/scenes/${encodeURIComponent(workingScene.id)}/delivery`, {
+        method: "POST",
+        body: JSON.stringify({
+          status: "delivered",
+          comment: $("#sceneDeliveryComment")?.value.trim() || "影像图层已发布并完成交付",
+        }),
+      });
+      state.activeId = delivery.scene?.id || workingScene.id;
+      await loadScenes();
+      await loadSceneEvents();
+      await loadImageryIssues();
+      renderDetail(state.scenes.find((item) => String(item.id) === String(state.activeId)) || delivery.scene || workingScene);
+      setStatus("online", "影像已发布到地图并完成交付。");
+    } catch (error) {
+      setStatus("offline", `影像发布未完成：${error.message}`);
     }
   }
 
@@ -2221,6 +2271,12 @@
     $("#exportSceneDeliveryReceipt")?.setAttribute("data-permission", IMAGERY_SCENE_EXPORT_PERMISSION);
     $("#exportScenePublicationReceipt")?.setAttribute("data-permission", IMAGERY_SCENE_EXPORT_PERMISSION);
     $("#updateSceneDelivery")?.setAttribute("data-permission", IMAGERY_SCENE_DELIVERY_PERMISSION);
+    setCompoundPermission(
+      "#completeSceneWorkflow",
+      IMAGERY_SCENE_DELIVERY_PERMISSION,
+      `${IMAGERY_LAYER_PUBLISH_PERMISSION} ${IMAGERY_MAP_LAYER_REQUIRED_PERMISSION}`,
+      IMAGERY_MAP_LAYER_UPSERT_PERMISSIONS,
+    );
     setCompoundPermission("#publishSceneLayer", IMAGERY_LAYER_PUBLISH_PERMISSION, IMAGERY_MAP_LAYER_REQUIRED_PERMISSION, IMAGERY_MAP_LAYER_UPSERT_PERMISSIONS);
     $("#cancelTask")?.setAttribute("data-permission", IMAGERY_TASK_CANCEL_PERMISSION);
     $("#retryTask")?.setAttribute("data-permission", IMAGERY_TASK_RETRY_PERMISSION);
@@ -2265,6 +2321,7 @@
     $("#exportScenePublicationReceipt")?.addEventListener("click", () => exportScenePublicationReceipt(activeScene()));
     $("#sceneDeliveryReceiptSummary")?.addEventListener("click", handleSceneReceiptSummaryAction);
     $("#updateSceneDelivery")?.addEventListener("click", () => updateSceneDelivery(activeScene()));
+    $("#completeSceneWorkflow")?.addEventListener("click", () => completeSceneWorkflow(activeScene()));
     $("#closeTaskDetail").addEventListener("click", closeTaskDetail);
     $("#cancelTask").addEventListener("click", () => cancelTask(activeTask()));
     $("#retryTask").addEventListener("click", () => retryTask(activeTask()));

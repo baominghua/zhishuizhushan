@@ -26,7 +26,7 @@
       <section class="admin-main">
         <header class="topbar">
           <div class="topbar-copy"><p class="eyebrow">系统配置</p><h2>角色权限管理</h2></div>
-          <div class="topbar-actions"><button id="reloadRoles" type="button">刷新角色</button><button id="newRole" type="button" class="button-ghost" data-permission="system.roles.create">新建角色</button></div>
+          <div class="topbar-actions"><button id="toggleAdvancedRoleTools" type="button" class="button-ghost" data-advanced-tools-toggle aria-expanded="false">高级管理</button><button id="reloadRoles" type="button">刷新角色</button><button id="newRole" type="button" class="button-ghost" data-permission="system.roles.create">新建角色</button></div>
         </header>
         <section class="panel config-panel">
           <div class="field-grid field-grid-wide">
@@ -42,7 +42,7 @@
           </div>
         </section>
 
-        <section class="panel permission-catalog-panel" aria-labelledby="permissionCatalogHealthTitle">
+        <section class="panel permission-catalog-panel advanced-admin-tool" aria-labelledby="permissionCatalogHealthTitle">
           <div class="panel-header">
             <div>
               <p class="eyebrow">目录体检</p>
@@ -63,7 +63,7 @@
           <div id="permissionCatalogIssues" class="catalog-issue-list" aria-live="polite"></div>
         </section>
 
-        <section class="panel permission-closure-panel" aria-labelledby="roleClosureGuidesTitle">
+        <section class="panel permission-closure-panel advanced-admin-tool" aria-labelledby="roleClosureGuidesTitle">
           <div class="panel-header">
             <div>
               <p class="eyebrow">闭环配置包</p>
@@ -79,7 +79,7 @@
           </div>
         </section>
 
-        <section class="panel operation-queue-panel" aria-labelledby="roleOperationQueueTitle">
+        <section class="panel operation-queue-panel advanced-admin-tool" aria-labelledby="roleOperationQueueTitle">
           <div class="panel-header">
             <div>
               <p class="eyebrow">权限队列</p>
@@ -156,14 +156,12 @@
               <p id="roleDetailEmpty" class="detail-empty">从台账选择一个角色查看详情。</p>
               <dl id="roleDetailGrid" class="detail-grid"></dl>
               <div id="rolePermissionReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
-              <div class="task-events"><h3>菜单权限诊断</h3><div id="roleDetailMenuDiagnostics" class="role-menu-preview"></div></div>
-              <div class="task-events"><h3>有效权限覆盖矩阵</h3><div id="roleEffectivePermissionCoverage" class="permission-coverage-list" aria-live="polite"></div></div>
               <div class="task-events"><h3>关联账号</h3><div id="roleAssignedUsersList" class="trace-list"></div></div>
-              <div class="task-events"><h3>变更审计</h3><div id="roleAuditEventList" class="trace-list"></div></div>
+              <details class="detail-progressive-panel"><summary>权限诊断与变更记录</summary><div class="task-events"><h3>菜单权限诊断</h3><div id="roleDetailMenuDiagnostics" class="role-menu-preview"></div></div><div class="task-events"><h3>有效权限覆盖矩阵</h3><div id="roleEffectivePermissionCoverage" class="permission-coverage-list" aria-live="polite"></div></div><div class="task-events"><h3>变更审计</h3><div id="roleAuditEventList" class="trace-list"></div></div></details>
             </div>
           </section>
         </section>
-        <section class="panel table-panel"><div class="panel-header"><div><p class="eyebrow">权限审计</p><h2>角色权限变更事件</h2></div><div class="panel-actions"><button id="refreshRoleEvents" type="button">刷新事件</button><button id="exportRoleEvents" type="button" data-permission="system.roles.export">导出事件</button></div></div><div class="field-grid field-grid-wide"><label><span>关键词</span><input id="roleEventKeyword" type="search" placeholder="角色、权限、菜单、人员" /></label><label><span>动作</span><input id="roleEventActionFilter" type="search" placeholder="新建、更新、删除、恢复" /></label><label><span>角色编码</span><input id="roleEventRoleFilter" type="search" placeholder="输入角色编码" /></label></div><div class="table-wrap"><table><thead><tr><th>事件</th><th>角色</th><th>动作</th><th>变更字段</th><th>人员</th><th>时间</th></tr></thead><tbody id="roleEventRows"><tr class="placeholder-row"><td colspan="6">等待加载角色权限变更事件</td></tr></tbody></table></div></section>
+        <section class="panel table-panel advanced-admin-tool"><div class="panel-header"><div><p class="eyebrow">权限审计</p><h2>角色权限变更事件</h2></div><div class="panel-actions"><button id="refreshRoleEvents" type="button">刷新事件</button><button id="exportRoleEvents" type="button" data-permission="system.roles.export">导出事件</button></div></div><div class="field-grid field-grid-wide"><label><span>关键词</span><input id="roleEventKeyword" type="search" placeholder="角色、权限、菜单、人员" /></label><label><span>动作</span><input id="roleEventActionFilter" type="search" placeholder="新建、更新、删除、恢复" /></label><label><span>角色编码</span><input id="roleEventRoleFilter" type="search" placeholder="输入角色编码" /></label></div><div class="table-wrap"><table><thead><tr><th>事件</th><th>角色</th><th>动作</th><th>变更字段</th><th>人员</th><th>时间</th></tr></thead><tbody id="roleEventRows"><tr class="placeholder-row"><td colspan="6">等待加载角色权限变更事件</td></tr></tbody></table></div></section>
       </section>
     </main>
     <datalist id="menuModuleOptions"></datalist>

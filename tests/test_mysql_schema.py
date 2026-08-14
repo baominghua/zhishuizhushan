@@ -43,3 +43,39 @@ def test_mysql_schema_contains_normalized_cross_business_links():
         "FOREIGN KEY (target_record_id) REFERENCES business_records(id)"
         in sql
     )
+
+
+def test_mysql_schema_contains_iot_drone_and_ai_traceability_tables():
+    sql = "\n".join(mysql_platform_schema_statements())
+
+    for table_name in (
+        "iot_devices",
+        "iot_device_block_links",
+        "iot_device_maintenance",
+        "drone_missions",
+        "drone_mission_block_links",
+        "drone_mission_timeline",
+        "ai_findings",
+        "ai_finding_block_links",
+        "ai_finding_timeline",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+    assert "CONSTRAINT fk_drone_mission_device" in sql
+    assert "CONSTRAINT fk_ai_finding_mission" in sql
+    assert "CONSTRAINT fk_ai_finding_device" in sql
+    assert "CONSTRAINT fk_ai_finding_alert" in sql
+
+
+def test_mysql_schema_contains_formal_subcompartment_tables_and_parent_relation():
+    sql = "\n".join(mysql_platform_schema_statements())
+
+    for table_name in (
+        "forest_subcompartments",
+        "forest_subcompartment_geometries",
+        "forest_subcompartment_versions",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table_name}" in sql
+    assert "CONSTRAINT fk_forest_subcompartment_block" in sql
+    assert "FOREIGN KEY (forest_block_id) REFERENCES forest_blocks(id)" in sql
+    assert "SPATIAL INDEX idx_forest_subcompartment_geometry" in sql
+    assert "UNIQUE KEY uq_forest_subcompartments_code" in sql

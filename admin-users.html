@@ -26,7 +26,7 @@
       <section class="admin-main">
         <header class="topbar">
           <div class="topbar-copy"><p class="eyebrow">系统配置</p><h2>用户账号管理</h2></div>
-          <div class="topbar-actions"><button id="reloadUsers" type="button">刷新账号</button><button id="newUser" type="button" class="button-ghost" data-permission="system.users.create">新建账号</button></div>
+          <div class="topbar-actions"><button id="toggleAdvancedUserTools" type="button" class="button-ghost" data-advanced-tools-toggle aria-expanded="false">高级管理</button><button id="reloadUsers" type="button">刷新账号</button><button id="newUser" type="button" class="button-ghost" data-permission="system.users.create">新建账号</button></div>
         </header>
         <section class="panel config-panel">
           <div class="field-grid field-grid-wide">
@@ -41,7 +41,7 @@
           </div>
         </section>
 
-        <section class="panel operation-queue-panel" aria-labelledby="userOperationQueueTitle">
+        <section class="panel operation-queue-panel advanced-admin-tool" aria-labelledby="userOperationQueueTitle">
           <div class="panel-header">
             <div>
               <p class="eyebrow">授权队列</p>
@@ -89,13 +89,13 @@
                   <label><span>可见村代码</span><input id="userDataScopeVillages" type="text" placeholder="350703101001" /></label>
                   <label class="field-span-2"><span>可见林班编号</span><input id="userDataScopeBlockCodes" type="text" placeholder="FB-001, FB-002" /></label>
                   <label class="field-span-2"><span>数据范围 JSON</span><textarea id="userDataScopes" rows="4" spellcheck="false">{ "areas": [] }</textarea></label>
-                  <div class="field-span-2 role-selection-panel">
-                    <span>草稿权限预览</span>
+                  <details class="field-span-2 role-selection-panel detail-progressive-panel">
+                    <summary>权限预览与技术数据</summary>
                     <div class="form-command"><button id="refreshUserDraftPermissionPreview" type="button" class="button-ghost">预览草稿权限</button></div>
                     <div id="userDraftPermissionReceipt" class="permission-receipt-shell" aria-live="polite"></div>
                     <div id="userDraftPermissionCoverage" class="permission-coverage-list"></div>
                     <div id="userDraftPermissionPreview" class="role-menu-preview"></div>
-                  </div>
+                  </details>
                   <label class="field-span-2"><span>扩展 JSON</span><textarea id="userProperties" rows="5" spellcheck="false">{}</textarea></label>
                 </div>
               </fieldset>
@@ -103,17 +103,21 @@
           </form>
           <section id="userDetailPanel" class="crud-modal detail-modal hidden" aria-hidden="true">
             <div class="panel detail-panel detail-drawer-panel">
-              <div class="panel-header"><div><p class="eyebrow">账号详情</p><h2 id="userDetailTitle">选择账号查看详情</h2></div><div class="panel-actions"><button id="setTemporaryPassword" type="button" class="button-ghost" data-permission="system.users.setPassword">设置临时密码</button><button id="revokeUserSessions" type="button" class="button-ghost" data-permission="system.users.revokeSessions">撤销会话</button><button id="exportUserAccessReceipt" type="button" class="button-ghost" data-permission="system.users.export">导出回执</button><button id="closeUserDetail" type="button" class="button-ghost">关闭</button></div></div>
+              <div class="panel-header"><div><p class="eyebrow">账号详情</p><h2 id="userDetailTitle">选择账号查看详情</h2></div><div class="panel-actions"><button id="setTemporaryPassword" type="button" class="button-ghost" data-permission="system.users.setPassword">设置临时密码</button><button id="revokeUserSessions" type="button" class="button-ghost" data-permission="system.users.revokeSessions">撤销会话</button><button id="closeUserDetail" type="button" class="button-ghost">关闭</button></div></div>
               <p id="userDetailEmpty" class="detail-empty">从台账选择一条账号记录查看详情。</p>
               <dl id="userDetailGrid" class="detail-grid"></dl>
               <div id="userAccessReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
-              <div class="task-events">
-                <h3>有效权限预览</h3>
-                <div id="userPermissionReceipt" class="permission-receipt-shell" aria-live="polite"></div>
-                <div id="userEffectivePermissionCoverage" class="permission-coverage-list"></div>
-                <div id="userEffectivePermissionPreview" class="role-menu-preview"></div>
-              </div>
-              <div class="task-events"><h3>变更审计</h3><div id="userAuditEventList" class="trace-list"></div></div>
+              <details class="detail-progressive-panel">
+                <summary>权限明细与变更记录</summary>
+                <div class="advanced-action-stack"><button id="exportUserAccessReceipt" type="button" class="button-ghost" data-permission="system.users.export">导出权限回执</button></div>
+                <div class="task-events">
+                  <h3>有效权限预览</h3>
+                  <div id="userPermissionReceipt" class="permission-receipt-shell" aria-live="polite"></div>
+                  <div id="userEffectivePermissionCoverage" class="permission-coverage-list"></div>
+                  <div id="userEffectivePermissionPreview" class="role-menu-preview"></div>
+                </div>
+                <div class="task-events"><h3>变更审计</h3><div id="userAuditEventList" class="trace-list"></div></div>
+              </details>
             </div>
           </section>
           <section id="temporaryPasswordDialog" class="crud-modal hidden" role="dialog" aria-modal="true" aria-labelledby="temporaryPasswordTitle" aria-hidden="true">
@@ -125,7 +129,7 @@
             </form>
           </section>
         </section>
-        <section class="panel table-panel">
+        <section class="panel table-panel advanced-admin-tool">
           <div class="panel-header">
             <div><p class="eyebrow">账号审计</p><h2>用户账号变更事件</h2></div>
             <div class="panel-actions"><button id="refreshUserEvents" type="button">刷新事件</button><button id="exportUserEvents" type="button" data-permission="system.users.export">导出事件</button></div>

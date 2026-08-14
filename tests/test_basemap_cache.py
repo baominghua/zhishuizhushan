@@ -67,6 +67,69 @@ def test_deployment_readiness_warns_when_tianditu_proxy_has_no_server_key(monkey
     assert all(item["key"] != "tianditu_server_key_missing" for item in ready["warnings"])
 
 
+def test_tianditu_tiles_can_reuse_a_central_cache_without_distributing_the_key(
+    app_client,
+    monkeypatch,
+    tmp_path,
+):
+    import server.app as app_module
+
+    cache_dir = tmp_path / "tianditu-relay"
+    monkeypatch.setattr(app_module, "TIANDITU_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(app_module, "TIANDITU_TK", "")
+    monkeypatch.setattr(
+        app_module,
+        "TIANDITU_UPSTREAM_PROXY_BASE_URL",
+        "https://tiles.example.test",
+    )
+    fetched = []
+
+    def fake_proxy_fetch(layer, z, x, y):
+        fetched.append((layer, z, x, y))
+        return b"\x89PNG\r\n\x1a\nrelayed"
+
+    monkeypatch.setattr(app_module, "fetch_tianditu_proxy_tile", fake_proxy_fetch)
+
+    first = app_client.get("/api/basemaps/tianditu/img_w/9/1/2.png")
+    second = app_client.get("/api/basemaps/tianditu/img_w/9/1/2.png")
+
+    assert first.status_code == 200
+    assert first.headers["x-tianditu-cache"] == "MISS"
+    assert second.status_code == 200
+    assert second.headers["x-tianditu-cache"] == "HIT"
+    assert fetched == [("img_w", 9, 1, 2)]
+    assert (cache_dir / "img_w" / "9" / "1" / "2.png").exists()
+
+
+def test_tianditu_tiles_still_render_when_the_local_cache_is_read_only(
+    app_client,
+    monkeypatch,
+    tmp_path,
+):
+    import server.app as app_module
+
+    blocked_cache_root = tmp_path / "cache-file"
+    blocked_cache_root.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(app_module, "TIANDITU_CACHE_DIR", blocked_cache_root)
+    monkeypatch.setattr(app_module, "TIANDITU_TK", "")
+    monkeypatch.setattr(
+        app_module,
+        "TIANDITU_UPSTREAM_PROXY_BASE_URL",
+        "https://tiles.example.test",
+    )
+    monkeypatch.setattr(
+        app_module,
+        "fetch_tianditu_proxy_tile",
+        lambda *_args: b"\x89PNG\r\n\x1a\nrelayed",
+    )
+
+    response = app_client.get("/api/basemaps/tianditu/img_w/9/1/2.png")
+
+    assert response.status_code == 200
+    assert response.content == b"\x89PNG\r\n\x1a\nrelayed"
+    assert response.headers["x-tianditu-cache"] == "BYPASS"
+
+
 def test_tianditu_prewarm_task_populates_missing_tiles_and_reports_cache_hits(
     app_client,
     monkeypatch,

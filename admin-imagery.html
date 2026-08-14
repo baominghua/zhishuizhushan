@@ -33,6 +33,7 @@
             <h2>影像管理</h2>
           </div>
           <div class="topbar-actions">
+            <button id="toggleAdvancedImageryTools" type="button" class="button-ghost" data-advanced-tools-toggle aria-expanded="false">高级管理</button>
             <button id="reloadScenes" type="button">刷新影像</button>
             <button id="openUploadPanel" type="button" class="button-ghost" data-permission="imagery.scenes.create">影像入库</button>
           </div>
@@ -77,7 +78,7 @@
           </div>
         </section>
 
-        <section class="panel workflow-summary-panel" aria-labelledby="imageryWorkflowSummaryTitle">
+        <section class="panel workflow-summary-panel advanced-admin-tool" aria-labelledby="imageryWorkflowSummaryTitle">
           <div class="panel-header">
             <div><p class="eyebrow">影像闭环</p><h2 id="imageryWorkflowSummaryTitle">影像入库与发布摘要</h2></div>
             <div class="panel-actions"><button id="exportImageryWorkflowSummary" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出摘要</button><button id="refreshImageryWorkflowSummary" type="button" class="button-ghost">刷新摘要</button></div>
@@ -87,7 +88,7 @@
           </div>
         </section>
 
-        <section class="panel operation-queue-panel" aria-labelledby="imageryOperationQueueTitle">
+        <section class="panel operation-queue-panel advanced-admin-tool" aria-labelledby="imageryOperationQueueTitle">
           <div class="panel-header">
             <div><p class="eyebrow">影像队列</p><h2 id="imageryOperationQueueTitle">影像入库操作队列</h2></div>
             <div class="panel-actions"><button id="refreshImageryOperationQueue" type="button" class="button-ghost">刷新队列</button></div>
@@ -115,9 +116,7 @@
               <div class="panel-header">
                 <div><p class="eyebrow">影像详情</p><h2 id="imageryDetailTitle">选择影像查看详情</h2></div>
                 <div class="panel-actions">
-                  <button id="publishSceneLayer" type="button" class="button-ghost" data-permission="imagery.layers.publish" data-permission-all="map.layers.publish" data-permission-any="map.layers.create map.layers.update">发布图层</button>
-                  <button id="exportScenePublicationReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出发布回执</button>
-                  <button id="exportSceneDeliveryReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出交付回执</button>
+                  <button id="completeSceneWorkflow" type="button" data-permission="imagery.scenes.delivery" data-permission-all="imagery.layers.publish map.layers.publish" data-permission-any="map.layers.create map.layers.update">发布并完成</button>
                   <button id="closeImageryDetail" type="button" class="button-ghost">关闭</button>
                 </div>
               </div>
@@ -131,35 +130,46 @@
               </figure>
               <dl id="imageryDetailGrid" class="detail-grid"></dl>
               <div id="sceneDeliveryReceiptSummary" class="receipt-summary-grid" aria-live="polite"></div>
-              <div id="sceneLayerPublishConfig" class="task-events scene-publish-config">
-                <h3>图层发布配置</h3>
-                <div class="field-grid scene-publish-grid">
-                  <label><span>图层名称</span><input id="sceneLayerName" type="text" placeholder="默认使用影像名称" /></label>
-                  <label><span>图层层级</span><input id="sceneLayerZIndex" type="number" step="1" placeholder="留空沿用后端默认" /></label>
-                  <label class="field-span-2"><span>关联林班编号</span><input id="sceneLayerLinkedBlockCodes" type="text" placeholder="多个编号用逗号分隔" /></label>
-                  <label class="field-span-2"><span>关联林权档案编号</span><input id="sceneLayerLinkedRightArchiveCodes" type="text" placeholder="多个档案编号用逗号分隔" /></label>
-                  <label>
-                    <span>大屏可见</span>
-                    <select id="sceneLayerVisibleOnDashboard">
-                      <option value="true">发布到大屏</option>
-                      <option value="false">仅后台管理</option>
-                    </select>
-                  </label>
+              <details class="detail-progressive-panel">
+                <summary>高级发布与异常处理</summary>
+                <div id="sceneAdvancedActions" class="advanced-action-stack">
+                  <button id="publishSceneLayer" type="button" class="button-ghost" data-permission="imagery.layers.publish" data-permission-all="map.layers.publish" data-permission-any="map.layers.create map.layers.update">仅发布图层</button>
+                  <button id="exportScenePublicationReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出发布回执</button>
+                  <button id="exportSceneDeliveryReceipt" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出交付回执</button>
                 </div>
-              </div>
-              <div class="task-events scene-delivery-config">
-                <h3>交付状态</h3>
-                <div class="field-grid scene-publish-grid">
-                  <label><span>交付结论</span><select id="sceneDeliveryStatus"><option value="pending">待交付</option><option value="delivered">已交付</option><option value="needs_correction">需整改</option><option value="rejected">交付驳回</option></select></label>
-                  <label class="field-span-2"><span>交付意见</span><input id="sceneDeliveryComment" type="text" placeholder="填写影像、切片、图层和入库追溯交付意见" /></label>
-                  <div class="form-command"><button id="updateSceneDelivery" type="button" class="button-ghost" data-permission="imagery.scenes.delivery">确认交付</button></div>
+                <div id="sceneLayerPublishConfig" class="task-events scene-publish-config">
+                  <h3>图层发布配置</h3>
+                  <div class="field-grid scene-publish-grid">
+                    <label><span>图层名称</span><input id="sceneLayerName" type="text" placeholder="默认使用影像名称" /></label>
+                    <label><span>图层层级</span><input id="sceneLayerZIndex" type="number" step="1" placeholder="留空沿用后端默认" /></label>
+                    <label class="field-span-2"><span>关联林班编号</span><input id="sceneLayerLinkedBlockCodes" type="text" placeholder="多个编号用逗号分隔" /></label>
+                    <label class="field-span-2"><span>关联林权档案编号</span><input id="sceneLayerLinkedRightArchiveCodes" type="text" placeholder="多个档案编号用逗号分隔" /></label>
+                    <label>
+                      <span>大屏可见</span>
+                      <select id="sceneLayerVisibleOnDashboard">
+                        <option value="true">发布到大屏</option>
+                        <option value="false">仅后台管理</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
-              </div>
-              <div id="sceneOperationResult" class="operation-result-shell" aria-live="polite"></div>
-              <div class="task-events"><h3>发布记录</h3><div id="scenePublishEventList" class="trace-list"></div></div>
-              <div class="task-events"><h3>交付记录</h3><div id="sceneDeliveryEventList" class="trace-list"></div></div>
-              <div class="task-events"><h3>生命周期</h3><div id="sceneLifecycleEventList" class="trace-list"></div></div>
-              <div class="task-events"><h3>入库批次追溯</h3><div id="sceneImportBatchLinksList" class="trace-list"></div></div>
+                <div class="task-events scene-delivery-config">
+                  <h3>人工交付结论</h3>
+                  <div class="field-grid scene-publish-grid">
+                    <label><span>交付结论</span><select id="sceneDeliveryStatus"><option value="pending">待交付</option><option value="delivered">已交付</option><option value="needs_correction">需整改</option><option value="rejected">交付驳回</option></select></label>
+                    <label class="field-span-2"><span>交付意见</span><input id="sceneDeliveryComment" type="text" placeholder="异常或补充说明" /></label>
+                    <div class="form-command"><button id="updateSceneDelivery" type="button" class="button-ghost" data-permission="imagery.scenes.delivery">保存人工结论</button></div>
+                  </div>
+                </div>
+              </details>
+              <details class="detail-progressive-panel">
+                <summary>操作记录与技术数据</summary>
+                <div id="sceneOperationResult" class="operation-result-shell" aria-live="polite"></div>
+                <div class="task-events"><h3>发布记录</h3><div id="scenePublishEventList" class="trace-list"></div></div>
+                <div class="task-events"><h3>交付记录</h3><div id="sceneDeliveryEventList" class="trace-list"></div></div>
+                <div class="task-events"><h3>生命周期</h3><div id="sceneLifecycleEventList" class="trace-list"></div></div>
+                <div class="task-events"><h3>入库批次追溯</h3><div id="sceneImportBatchLinksList" class="trace-list"></div></div>
+              </details>
             </div>
           </section>
 
@@ -223,7 +233,7 @@
           </section>
         </section>
 
-        <section class="panel table-panel">
+        <section class="panel table-panel advanced-admin-tool">
           <div class="panel-header">
             <div><p class="eyebrow">影像审计</p><h2>影像事件流</h2></div>
             <div class="panel-actions"><button id="exportSceneEvents" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出事件</button><button id="refreshSceneEvents" type="button">刷新事件</button></div>
@@ -250,7 +260,7 @@
           </div>
         </section>
 
-        <section class="panel table-panel">
+        <section class="panel table-panel advanced-admin-tool">
           <div class="panel-header">
             <div><p class="eyebrow">转换状态</p><h2>影像任务</h2></div>
             <div class="panel-actions">
@@ -298,7 +308,7 @@
           </div>
         </section>
 
-        <section class="panel table-panel">
+        <section class="panel table-panel advanced-admin-tool">
           <div class="panel-header">
             <div><p class="eyebrow">任务审计</p><h2>任务事件流</h2></div>
             <div class="panel-actions"><button id="exportTaskEvents" type="button" class="button-ghost" data-permission="imagery.scenes.export">导出事件</button><button id="refreshTaskEvents" type="button">刷新事件</button></div>
@@ -327,7 +337,7 @@
           </div>
         </section>
 
-        <section class="panel table-panel">
+        <section class="panel table-panel advanced-admin-tool">
           <div class="panel-header">
             <div><p class="eyebrow">影像异常</p><h2>影像异常问题台账</h2></div>
             <div class="panel-actions">
