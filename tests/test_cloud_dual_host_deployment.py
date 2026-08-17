@@ -105,6 +105,38 @@ def test_versioned_port_activation_only_recreates_nginx():
     assert "up -d db-primary" not in script
 
 
+def test_secure_v2_password_login_uses_an_isolated_https_entry():
+    compose = read_text("ops/compose.v2-secure.yml")
+    nginx = read_text("ops/nginx/smart-bamboo-v2-secure.conf")
+    script = read_text("ops/scripts/enable-v2-test-password-login.sh")
+
+    assert '"0.0.0.0:18443:443"' in compose
+    assert "app-v2-secure:" in compose
+    assert 'SMART_BAMBOO_HUMAN_AUTH_ENABLED: "1"' in compose
+    assert "ports: !reset []" in compose
+    assert "nginx-v2-secure:" in compose
+    assert "listen 443 ssl default_server;" in nginx
+    assert "proxy_set_header X-Forwarded-Proto https;" in nginx
+    assert "location /v2/" in nginx
+    assert "location /api/" in nginx
+    assert "return 404;" in nginx
+    assert "read -r -s -p \"Custom password: \" password" in script
+    assert "bootstrap-admin-password.py" in script
+    assert 'c[\"mustChangePassword\"]=False' in script
+    assert "configure-v2-password-env.py" in script
+    assert "up -d --no-deps app-v2-secure" in script
+    assert "force-recreate app" not in script
+    assert "SMART_BAMBOO_V2_PASSWORD_LOGIN_READY" in script
+
+
+def test_secure_v2_environment_writer_only_updates_tls_paths():
+    script = read_text("ops/scripts/configure-v2-password-env.py")
+
+    assert '"SMART_BAMBOO_TLS_ENABLED": "1"' in script
+    assert '"SMART_BAMBOO_HUMAN_AUTH_ENABLED"' not in script
+    assert "os.replace(temporary, path)" in script
+
+
 def test_standby_compose_stays_dormant_until_manual_failover():
     compose = read_text("ops/compose.standby.yml")
 

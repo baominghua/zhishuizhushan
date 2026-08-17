@@ -235,6 +235,15 @@ curl -fsS http://127.0.0.1:8010/api/health
 
 本手册的初始 Compose 是 HTTP 准备模式，`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 时 `verify-cluster.sh primary --allow-human-auth-pending` 只允许 `human_auth_pending_https` 这一预期 warning。不得在这个阶段使用要求 `ready` 的验证命令。
 
+没有域名和正式证书时，可为测试验收启用独立的 V2 HTTPS 入口。先在移动云安全组开放 TCP `18443`，再从交互式远程终端执行：
+
+```bash
+cd /opt/smart-bamboo
+bash ops/scripts/enable-v2-test-password-login.sh
+```
+
+脚本静默读取两次自定义密码，创建或更新管理员凭据，生成仅用于测试的 IP 自签名证书，并启动隔离的 `app-v2-secure` 与 `nginx-v2-secure`。V1 的 app、`18080` 和令牌认证不变；V2 密码后台使用 `https://36.140.138.117:18443/v2/workspace`。浏览器首次访问会提示自签名证书不受信任，人工核对目标 IP 后才能继续。该入口只用于域名和正式证书就绪前的测试，不得作为最终生产 TLS 方案。
+
 密码认证上线前，必须把真实、已批准域名的证书和私钥放入 `/srv/smart-bamboo/tls/`，在受保护的 `primary.env` 设置 `SMART_BAMBOO_TLS_ENABLED=1`、`SMART_BAMBOO_TLS_CERT_PATH` 和 `SMART_BAMBOO_TLS_KEY_PATH`，然后执行：
 
 ```bash
