@@ -84,6 +84,7 @@ def test_nginx_separates_v1_and_v2_public_entry_ports():
 
     assert "listen 80 default_server;" in nginx
     assert "listen 81;" in nginx
+    assert "absolute_redirect off;" in nginx
     assert "return 302 /v2/workspace;" in nginx
     assert "return 302 /admin-login.html?returnTo=/v2/workspace;" in nginx
     assert "location /v2/" in nginx
