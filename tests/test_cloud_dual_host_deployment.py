@@ -70,11 +70,38 @@ def test_primary_compose_exposes_only_nginx_publicly():
     assert '"127.0.0.1:8010:8010"' in compose
     assert '"127.0.0.1:8080:8080"' in compose
     assert '"0.0.0.0:80:80"' in compose
+    assert '"0.0.0.0:18080:80"' in compose
+    assert '"0.0.0.0:18081:81"' in compose
     assert "/srv/smart-bamboo/mysql:/var/lib/mysql" in compose
     assert "/srv/smart-bamboo/data:/app/data" in compose
     assert "/srv/smart-bamboo/geoserver:/opt/geoserver_data" in compose
     assert "3307:3306" not in compose
     assert "8080:8080" not in compose.replace('"127.0.0.1:8080:8080"', "")
+
+
+def test_nginx_separates_v1_and_v2_public_entry_ports():
+    nginx = read_text("ops/nginx/smart-bamboo.conf")
+
+    assert "listen 80 default_server;" in nginx
+    assert "listen 81;" in nginx
+    assert "return 302 /v2/workspace;" in nginx
+    assert "return 302 /admin-login.html?returnTo=/v2/workspace;" in nginx
+    assert "location /v2/" in nginx
+    assert "location /api/" in nginx
+    assert "location = /admin-login.html" in nginx
+    assert "location / {\n        return 404;\n    }" in nginx
+
+
+def test_versioned_port_activation_only_recreates_nginx():
+    script = read_text("ops/scripts/activate-versioned-http-ports.sh")
+
+    assert 'up -d --no-deps --force-recreate nginx' in script
+    assert "http://127.0.0.1:18080/zhushan-bigdata.html" in script
+    assert "http://127.0.0.1:18081/v2/workspace" in script
+    assert "/admin-login.html?returnTo=/v2/workspace" in script
+    assert "SMART_BAMBOO_VERSIONED_HTTP_PORTS_READY" in script
+    assert "up -d app" not in script
+    assert "up -d db-primary" not in script
 
 
 def test_standby_compose_stays_dormant_until_manual_failover():
@@ -86,6 +113,8 @@ def test_standby_compose_stays_dormant_until_manual_failover():
     assert 'profiles: ["failover"]' in compose
     assert '"127.0.0.1:8010:8010"' in compose
     assert '"0.0.0.0:80:80"' in compose
+    assert '"0.0.0.0:18080:80"' in compose
+    assert '"0.0.0.0:18081:81"' in compose
     assert "3306:3306" not in compose
 
 
