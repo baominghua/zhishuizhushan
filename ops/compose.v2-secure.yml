@@ -1,7 +1,7 @@
 services:
   app-v2-secure:
     extends:
-      file: compose.primary.yml
+      file: ops/compose.primary.yml
       service: app
     environment:
       SMART_BAMBOO_HUMAN_AUTH_ENABLED: "1"

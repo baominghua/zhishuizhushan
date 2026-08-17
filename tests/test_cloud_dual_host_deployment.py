@@ -110,6 +110,7 @@ def test_secure_v2_password_login_uses_an_isolated_https_entry():
     nginx = read_text("ops/nginx/smart-bamboo-v2-secure.conf")
     script = read_text("ops/scripts/enable-v2-test-password-login.sh")
 
+    assert "file: ops/compose.primary.yml" in compose
     assert '"0.0.0.0:18443:443"' in compose
     assert "app-v2-secure:" in compose
     assert 'SMART_BAMBOO_HUMAN_AUTH_ENABLED: "1"' in compose
