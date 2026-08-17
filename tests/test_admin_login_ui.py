@@ -48,6 +48,18 @@ def test_login_script_uses_relative_session_auth_endpoints_and_clears_password()
     assert '18080' not in script
 
 
+def test_login_page_allows_safe_return_to_v2_deep_links():
+    script = (project_root() / "admin-login.js").read_text(encoding="utf-8")
+    shell = (
+        project_root() / "apps" / "web-operations" / "src" / "components" / "AppShell.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert 'target.pathname === "/v2" || target.pathname.startsWith("/v2/")' in script
+    assert 'return `${target.pathname}${target.search}${target.hash}`' in script
+    assert "returnTo=${encodeURIComponent(returnTo)}" in shell
+    assert "returnUrl=" not in shell
+
+
 def test_https_requirement_keeps_the_password_submit_control_disabled():
     script = (project_root() / "admin-login.js").read_text(encoding="utf-8")
 

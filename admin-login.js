@@ -14,8 +14,12 @@
       const target = new URL(value || "admin.html", window.location.origin);
       const fileName = target.pathname.split("/").pop() || "";
       const isAdminPage = /^admin(?:-[a-z0-9-]+)?\.html$/i.test(fileName);
-      if (target.origin !== window.location.origin || !isAdminPage || fileName === "admin-login.html") {
+      const isV2Page = target.pathname === "/v2" || target.pathname.startsWith("/v2/");
+      if (target.origin !== window.location.origin || (!isAdminPage && !isV2Page) || fileName === "admin-login.html") {
         return "admin.html";
+      }
+      if (isV2Page) {
+        return `${target.pathname}${target.search}${target.hash}`;
       }
       return `${fileName}${target.search}${target.hash}`;
     } catch (error) {

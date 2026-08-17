@@ -94,7 +94,8 @@ function pageTitle(pathname: string) {
 }
 
 function loginUrl() {
-  return `/admin-login.html?returnUrl=${encodeURIComponent(window.location.pathname)}`;
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return `/admin-login.html?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 export function AppShell() {
