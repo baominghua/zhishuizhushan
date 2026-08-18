@@ -96,11 +96,13 @@ export function MapPage() {
   const filterFacets = useQuery({
     queryKey: ["forest-block-filter-facets"],
     queryFn: api.forestBlockFacets,
+    enabled: filtersOpen,
     staleTime: 60_000,
   });
   const blocks = useQuery({
     queryKey: ["map-blocks", query, appliedFilters],
     queryFn: () => api.forestBlocks({ q: query, ...appliedFilters, limit: 100 }),
+    enabled: resultsOpen,
     staleTime: 30_000,
   });
   const filterPreview = useQuery({
