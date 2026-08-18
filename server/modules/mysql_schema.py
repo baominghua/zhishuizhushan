@@ -67,6 +67,7 @@ PLATFORM_MYSQL_TABLES = [
     "admin_role_permissions",
     "admin_role_menu_modules",
     "admin_users",
+    "admin_organizations",
     "admin_user_roles",
     "admin_user_credentials",
     "admin_sessions",
@@ -1457,6 +1458,31 @@ def mysql_schema_statements() -> list[str]:
             UNIQUE KEY uq_admin_users_username (username),
             KEY idx_admin_users_status (status),
             KEY idx_admin_users_deleted (deleted_at)
+        ) {table_options}
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS admin_organizations (
+            id CHAR(36) PRIMARY KEY,
+            organization_code VARCHAR(96) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            short_name VARCHAR(120),
+            parent_id CHAR(36),
+            organization_type VARCHAR(40) NOT NULL DEFAULT 'department',
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
+            sort_order INT NOT NULL DEFAULT 0,
+            leader VARCHAR(120),
+            phone VARCHAR(64),
+            address VARCHAR(500),
+            administrative_division_code VARCHAR(32),
+            data_scopes JSON,
+            properties JSON,
+            created_at DATETIME(6) NOT NULL,
+            updated_at DATETIME(6) NOT NULL,
+            deleted_at DATETIME(6),
+            UNIQUE KEY uq_admin_organizations_code (organization_code),
+            KEY idx_admin_organizations_parent (parent_id, sort_order),
+            KEY idx_admin_organizations_status (status, deleted_at),
+            CONSTRAINT fk_admin_organization_parent FOREIGN KEY (parent_id) REFERENCES admin_organizations(id) ON DELETE SET NULL
         ) {table_options}
         """,
         f"""

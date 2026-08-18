@@ -310,6 +310,10 @@ def admin_users_json_path() -> Path:
     return get_data_dir() / "admin" / "users.json"
 
 
+def admin_organizations_json_path() -> Path:
+    return get_data_dir() / "admin" / "organizations.json"
+
+
 def admin_credentials_json_path() -> Path:
     return get_data_dir() / "admin" / "credentials.json"
 
@@ -970,4 +974,29 @@ def init_platform_schema() -> None:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_users_status ON admin_users (status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_users_roles ON admin_users USING GIN (roles)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_users_data_scopes ON admin_users USING GIN (data_scopes)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_organizations (
+                    id uuid PRIMARY KEY,
+                    organization_code text UNIQUE NOT NULL,
+                    name text NOT NULL,
+                    short_name text,
+                    parent_id uuid REFERENCES admin_organizations(id) ON DELETE SET NULL,
+                    organization_type text NOT NULL DEFAULT 'department',
+                    status text NOT NULL DEFAULT 'active',
+                    sort_order integer NOT NULL DEFAULT 0,
+                    leader text,
+                    phone text,
+                    address text,
+                    administrative_division_code text,
+                    data_scopes jsonb DEFAULT '{}'::jsonb,
+                    properties jsonb DEFAULT '{}'::jsonb,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    updated_at timestamptz NOT NULL DEFAULT now(),
+                    deleted_at timestamptz
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_organizations_parent ON admin_organizations (parent_id, sort_order)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_admin_organizations_status ON admin_organizations (status, deleted_at)")
         conn.commit()

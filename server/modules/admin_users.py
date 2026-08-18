@@ -950,10 +950,27 @@ def data_scopes_for_user(username: str) -> dict[str, list[str]]:
     user = user_by_username(username)
     if user is None or user.get("status") not in ("active", None, ""):
         return {}
-    scopes = user.get("dataScopes") or {}
-    if not isinstance(scopes, dict):
-        return {}
-    return {str(key): sorted(split_header_list(value)) for key, value in scopes.items() if split_header_list(value)}
+    scopes: dict[str, list[str]] = {}
+    direct_scopes = user.get("dataScopes") or {}
+    if isinstance(direct_scopes, dict):
+        for key, value in direct_scopes.items():
+            scopes[str(key)] = sorted(split_header_list(value))
+    properties = user.get("properties") if isinstance(user.get("properties"), dict) else {}
+    organization_ids = split_header_list(properties.get("organizationIds"))
+    primary_organization_id = str(properties.get("organizationId") or "").strip()
+    if primary_organization_id:
+        organization_ids.add(primary_organization_id)
+    try:
+        from .admin_organizations import data_scopes_for_organization_ids
+
+        for key, values in data_scopes_for_organization_ids(organization_ids).items():
+            current = scopes.setdefault(key, [])
+            for value in values:
+                if value not in current:
+                    current.append(value)
+    except Exception:
+        pass
+    return {key: sorted(value) for key, value in scopes.items() if value}
 
 
 @router.get("/users")
@@ -1155,7 +1172,7 @@ def user_access_receipt(user: dict[str, Any]) -> dict[str, Any]:
         username=username,
         status=str(user.get("status") or "active"),
         roles=compact_list(user.get("roles") or []),
-        data_scopes=user.get("dataScopes") or {},
+        data_scopes=data_scopes_for_user(username),
     )
     return {
         "receiptType": "user-effective-access",
@@ -1304,7 +1321,7 @@ def user_operation_queue(limit: int = 5) -> dict[str, Any]:
             username=str(user.get("username") or ""),
             status=str(user.get("status") or "active"),
             roles=compact_list(user.get("roles") or []),
-            data_scopes=user.get("dataScopes") or {},
+            data_scopes=data_scopes_for_user(str(user.get("username") or "")),
         )
         stage_key = user_operation_stage_key(user, effective_access)
         stage = user_operation_stage_by_key(stage_key)
@@ -1381,7 +1398,7 @@ def get_user_effective_permissions(user_id: str, context: AuthContext = Depends(
         username=username,
         status=str(user.get("status") or "active"),
         roles=compact_list(user.get("roles") or []),
-        data_scopes=user.get("dataScopes") or {},
+        data_scopes=data_scopes_for_user(username),
     )
 
 

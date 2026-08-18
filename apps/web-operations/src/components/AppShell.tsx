@@ -29,6 +29,10 @@ import {
   UsersRound,
   Leaf,
   LayoutDashboard,
+  Building2,
+  UserRoundCog,
+  ShieldCheck,
+  KeyRound,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -62,9 +66,19 @@ const MODULE_ICONS = {
   "carbon-estimates": Leaf,
   "leadership-cockpit": LayoutDashboard,
   "basemap-settings": Settings2,
+  "system-overview": Settings2,
+  organizations: Building2,
+  users: UserRoundCog,
+  roles: ShieldCheck,
+  permissions: KeyRound,
 };
 
 function pageTitle(pathname: string) {
+  if (pathname.includes("/system/overview")) return "系统管理";
+  if (pathname.includes("/system/organizations")) return "组织架构";
+  if (pathname.includes("/system/users")) return "用户账号";
+  if (pathname.includes("/system/roles")) return "角色管理";
+  if (pathname.includes("/system/permissions")) return "权限目录";
   if (pathname.includes("/cockpit/leadership")) return "领导驾驶舱";
   if (pathname.includes("/operations/todos")) return "我的待办";
   if (pathname.includes("/system/notifications")) return "消息中心";

@@ -48,6 +48,11 @@ const BasemapSettingsPage = lazy(async () => ({ default: (await import("./pages/
 const CarbonEstimatesPage = lazy(async () => ({ default: (await import("./pages/CarbonEstimatesPage")).CarbonEstimatesPage }));
 const LeadershipCockpitPage = lazy(async () => ({ default: (await import("./pages/LeadershipCockpitPage")).LeadershipCockpitPage }));
 const DisplayDashboardPage = lazy(async () => ({ default: (await import("./pages/DisplayDashboardPage")).DisplayDashboardPage }));
+const SystemOverviewPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).SystemOverviewPage }));
+const OrganizationsPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).OrganizationsPage }));
+const UsersPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).UsersPage }));
+const RolesPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).RolesPage }));
+const PermissionsPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).PermissionsPage }));
 
 const rootRoute = createRootRoute({ component: AppShell });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", beforeLoad: () => { throw redirect({ to: "/workspace" }); } });
@@ -78,8 +83,13 @@ const basemapSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path
 const carbonEstimatesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/carbon/estimates", component: CarbonEstimatesPage });
 const leadershipCockpitRoute = createRoute({ getParentRoute: () => rootRoute, path: "/cockpit/leadership", component: LeadershipCockpitPage });
 const displayDashboardRoute = createRoute({ getParentRoute: () => rootRoute, path: "/display", component: DisplayDashboardPage });
+const systemOverviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/overview", component: SystemOverviewPage });
+const organizationsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/organizations", component: OrganizationsPage });
+const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/users", component: UsersPage });
+const rolesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/roles", component: RolesPage });
+const permissionsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/permissions", component: PermissionsPage });
 
-const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, equipmentRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, equipmentRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
 
 export const router = createRouter({ routeTree, basepath: "/v2", defaultPreload: "intent" });
 

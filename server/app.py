@@ -38,6 +38,7 @@ from server.modules.admin_roles import (
 from server.modules.admin_roles import router as admin_roles_router
 from server.modules.admin_roles import effective_permissions_for_context
 from server.modules.admin_users import router as admin_users_router
+from server.modules.admin_organizations import router as admin_organizations_router
 from server.modules.basemap_settings import runtime_basemap_settings
 from server.modules.auth import (
     AuthContext,
@@ -324,6 +325,7 @@ except Exception as exc:
     record_startup_error("dictionary_seed_failed", "系统字典初始化失败", exc)
 app.include_router(admin_roles_router)
 app.include_router(admin_users_router)
+app.include_router(admin_organizations_router)
 app.include_router(dictionaries_router)
 app.include_router(auth_router)
 app.include_router(human_auth_router)

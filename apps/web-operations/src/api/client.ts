@@ -85,6 +85,13 @@ import type {
   CarbonEstimateQuery,
   CarbonEstimateRecord,
   LeadershipCockpitResponse,
+  AdminOrganization,
+  AdminOrganizationPayload,
+  AdminUser,
+  AdminUserPayload,
+  AdminRole,
+  AdminRolePayload,
+  PermissionCatalogResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -154,6 +161,35 @@ function queryString(values: object) {
 }
 
 export const api = {
+  adminOrganizations: (query: { q?: string; status?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<AdminOrganization>>(`/api/admin/organizations?${queryString(query)}`),
+  createAdminOrganization: (payload: AdminOrganizationPayload) =>
+    request<AdminOrganization>("/api/admin/organizations", { method: "POST", body: JSON.stringify(payload) }),
+  updateAdminOrganization: (id: string, payload: Partial<AdminOrganizationPayload>) =>
+    request<AdminOrganization>(`/api/admin/organizations/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAdminOrganization: (id: string) =>
+    request<{ ok: boolean; deleted: string }>(`/api/admin/organizations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  adminUsers: (query: { q?: string; status?: string; role?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<AdminUser>>(`/api/admin/users?${queryString(query)}`),
+  createAdminUser: (payload: AdminUserPayload) =>
+    request<AdminUser>("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }),
+  updateAdminUser: (id: string, payload: Partial<Omit<AdminUserPayload, "username">>) =>
+    request<AdminUser>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAdminUser: (id: string) =>
+    request<{ ok: boolean; deleted: string }>(`/api/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setAdminUserPassword: (id: string, temporaryPassword: string) =>
+    request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/set-password`, { method: "POST", body: JSON.stringify({ temporaryPassword }) }),
+  revokeAdminUserSessions: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/revoke-sessions`, { method: "POST" }),
+  adminRoles: (query: { q?: string; status?: string; permission?: string; menuModule?: string; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<AdminRole>>(`/api/admin/roles?${queryString(query)}`),
+  createAdminRole: (payload: AdminRolePayload) =>
+    request<AdminRole>("/api/admin/roles", { method: "POST", body: JSON.stringify(payload) }),
+  updateAdminRole: (id: string, payload: Partial<Omit<AdminRolePayload, "roleCode">>) =>
+    request<AdminRole>(`/api/admin/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteAdminRole: (id: string) =>
+    request<{ ok: boolean; deleted: string }>(`/api/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  permissionCatalog: () => request<PermissionCatalogResponse>("/api/admin/permission-catalog"),
   leadershipCockpit: () => request<LeadershipCockpitResponse>("/api/v2/cockpit/leadership"),
   capabilities: () => request<CapabilitiesResponse>("/api/v2/system/capabilities"),
   workspaceSummary: () => request<WorkspaceSummary>("/api/v2/workspace/summary"),

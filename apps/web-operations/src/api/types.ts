@@ -25,7 +25,12 @@ export interface V2Module {
     | "safety-events"
     | "mobile-operations"
     | "carbon-estimates"
-    | "basemap-settings";
+    | "basemap-settings"
+    | "system-overview"
+    | "organizations"
+    | "users"
+    | "roles"
+    | "permissions";
   label: string;
   path: string;
   requiredPermission: string;
@@ -43,6 +48,90 @@ export interface CapabilitiesResponse {
   };
   modules: V2Module[];
   permissions: string[];
+}
+
+export interface AdminOrganization {
+  id: string;
+  organizationCode: string;
+  name: string;
+  shortName: string | null;
+  parentId: string | null;
+  organizationType: "platform" | "government" | "department" | "town" | "village" | "enterprise" | "cooperative" | "project" | "team";
+  status: string;
+  sortOrder: number;
+  leader: string | null;
+  phone: string | null;
+  address: string | null;
+  administrativeDivisionCode: string | null;
+  dataScopes: Record<string, unknown>;
+  properties: Record<string, unknown>;
+  userCount: number;
+  childCount: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export type AdminOrganizationPayload = Omit<AdminOrganization, "id" | "userCount" | "childCount" | "createdAt" | "updatedAt" | "deletedAt">;
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  displayName: string;
+  status: string;
+  roles: string[];
+  dataScopes: Record<string, string[]>;
+  properties: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export type AdminUserPayload = Pick<AdminUser, "username" | "displayName" | "status" | "roles" | "dataScopes" | "properties">;
+
+export interface AdminRole {
+  id: string;
+  roleCode: string;
+  name: string;
+  status: string;
+  permissions: string[];
+  menuModules: string[];
+  dataScopes: Record<string, string[]>;
+  properties: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export type AdminRolePayload = Pick<AdminRole, "roleCode" | "name" | "status" | "permissions" | "menuModules" | "dataScopes" | "properties">;
+
+export interface PermissionCatalogItem {
+  code: string;
+  label: string;
+  module?: string;
+  kind: string;
+  kindLabel: string;
+  apiScopes: string[];
+  impliedPermissions?: string[];
+}
+
+export interface PermissionMenuModule {
+  key: string;
+  label: string;
+  group: string;
+  href: string;
+  permission: string;
+  permissions?: PermissionCatalogItem[];
+}
+
+export interface PermissionCatalogResponse {
+  menuModules: PermissionMenuModule[];
+  v2MenuModules?: PermissionMenuModule[];
+  permissions: PermissionCatalogItem[];
+  groups: string[];
+  permissionImplications: Record<string, string[]>;
+  rolePresets: Array<{ key: string; label: string; description?: string; permissions: string[]; menuModules: string[]; dataScopes?: Record<string, string[]> }>;
+  coverage: Record<string, number>;
 }
 
 export interface WorkspaceSummary {

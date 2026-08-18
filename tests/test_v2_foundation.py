@@ -66,6 +66,11 @@ def test_v2_capabilities_expose_versioned_modules(app_client):
         "safety-events",
         "mobile-operations",
         "carbon-estimates",
+        "system-overview",
+        "organizations",
+        "users",
+        "roles",
+        "permissions",
         "basemap-settings",
     ]
     assert all(item["visible"] for item in payload["modules"])
