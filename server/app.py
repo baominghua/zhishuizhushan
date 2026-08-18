@@ -189,6 +189,9 @@ TIANDITU_PREWARM_BOUNDS = env_list("REMOTE_SENSING_TIANDITU_PREWARM_BOUNDS", [])
 TIANDITU_PREWARM_LAYERS = env_list("REMOTE_SENSING_TIANDITU_PREWARM_LAYERS", ["img_w", "cia_w"])
 TIANDITU_PREWARM_MIN_ZOOM = max(0, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM", 8))
 TIANDITU_PREWARM_MAX_ZOOM = min(18, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM", 13))
+TIANDITU_DETAIL_PREWARM_BOUNDS = env_list("REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_BOUNDS", [])
+TIANDITU_DETAIL_PREWARM_MIN_ZOOM = max(0, env_int("REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MIN_ZOOM", 14))
+TIANDITU_DETAIL_PREWARM_MAX_ZOOM = min(18, env_int("REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MAX_ZOOM", 16))
 TIANDITU_PREWARM_MAX_TILES = max(1, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES", 10000))
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff", ".geotiff"}
 IMAGERY_SCENE_VIEW_PERMISSION = "imagery.scenes.view"
@@ -3462,21 +3465,37 @@ def create_tianditu_prewarm_task(
     return task
 
 
-def schedule_tianditu_startup_prewarm() -> dict[str, Any] | None:
+def schedule_tianditu_startup_prewarm() -> list[dict[str, Any]]:
     basemap = runtime_basemap_settings()
-    if (not basemap["serverKey"] and not basemap["proxyBaseUrl"]) or len(TIANDITU_PREWARM_BOUNDS) != 4:
-        return None
-    try:
-        bounds = [float(value) for value in TIANDITU_PREWARM_BOUNDS]
-    except ValueError:
-        return None
-    return create_tianditu_prewarm_task(
-        bounds=bounds,
-        min_zoom=TIANDITU_PREWARM_MIN_ZOOM,
-        max_zoom=TIANDITU_PREWARM_MAX_ZOOM,
-        layers=TIANDITU_PREWARM_LAYERS,
-        actor="system-startup",
+    if not basemap["serverKey"] and not basemap["proxyBaseUrl"]:
+        return []
+
+    profiles = (
+        (TIANDITU_PREWARM_BOUNDS, TIANDITU_PREWARM_MIN_ZOOM, TIANDITU_PREWARM_MAX_ZOOM),
+        (
+            TIANDITU_DETAIL_PREWARM_BOUNDS,
+            TIANDITU_DETAIL_PREWARM_MIN_ZOOM,
+            TIANDITU_DETAIL_PREWARM_MAX_ZOOM,
+        ),
     )
+    tasks: list[dict[str, Any]] = []
+    for raw_bounds, min_zoom, max_zoom in profiles:
+        if len(raw_bounds) != 4:
+            continue
+        try:
+            bounds = [float(value) for value in raw_bounds]
+        except ValueError:
+            continue
+        tasks.append(
+            create_tianditu_prewarm_task(
+                bounds=bounds,
+                min_zoom=min_zoom,
+                max_zoom=max_zoom,
+                layers=TIANDITU_PREWARM_LAYERS,
+                actor="system-startup",
+            )
+        )
+    return tasks
 
 
 def geoserver_wms_url() -> str:
@@ -4644,6 +4663,14 @@ def public_browser_runtime_config() -> Response:
         content=body,
         media_type="application/javascript",
         headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
+    )
+
+
+@app.get("/api/health/live", include_in_schema=False)
+def health_live() -> Response:
+    return JSONResponse(
+        content={"ok": True, "status": "live"},
+        headers={"Cache-Control": "no-store, max-age=0"},
     )
 
 

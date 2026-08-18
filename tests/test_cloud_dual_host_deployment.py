@@ -93,6 +93,19 @@ def test_nginx_separates_v1_and_v2_public_entry_ports():
     assert "location / {\n        return 404;\n    }" in nginx
 
 
+def test_nginx_compresses_v2_text_assets_on_http_and_https_edges():
+    for path in (
+        "ops/nginx/smart-bamboo.conf",
+        "ops/nginx/smart-bamboo-v2-secure.conf",
+    ):
+        nginx = read_text(path)
+        assert "gzip on;" in nginx
+        assert "gzip_vary on;" in nginx
+        assert "gzip_proxied any;" in nginx
+        assert "application/javascript" in nginx
+        assert "application/json" in nginx
+
+
 def test_versioned_port_activation_only_recreates_nginx():
     script = read_text("ops/scripts/activate-versioned-http-ports.sh")
 
@@ -1311,7 +1324,11 @@ def test_primary_compose_schedules_project_basemap_prewarm_without_blocking_star
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_LAYERS"] == "img_w,cia_w"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM"] == "8"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM"] == "13"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_BOUNDS"] == "117.675,27.495,117.75,27.59"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MIN_ZOOM"] == "14"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MAX_ZOOM"] == "16"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES"] == "10000"
+    assert "/api/health/live" in read_text("ops/compose.primary.yml")
 
 
 def test_standby_failover_inherits_project_basemap_prewarm_settings():
@@ -1321,7 +1338,20 @@ def test_standby_failover_inherits_project_basemap_prewarm_settings():
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_LAYERS"] == "img_w,cia_w"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MIN_ZOOM"] == "8"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_ZOOM"] == "13"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_BOUNDS"] == "117.675,27.495,117.75,27.59"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MIN_ZOOM"] == "14"
+    assert environment["REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MAX_ZOOM"] == "16"
     assert environment["REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES"] == "10000"
+    assert "/api/health/live" in read_text("ops/compose.standby.yml")
+
+
+def test_v2_map_defaults_to_2d_and_keeps_cesium_lazy_loaded():
+    map_page = read_text("apps/web-operations/src/pages/MapPage.tsx")
+    map_canvas = read_text("apps/web-operations/src/components/MapCanvas.tsx")
+
+    assert 'getItem(MAP_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d"' in map_page
+    assert 'const CesiumGlobe = lazy(async () =>' in map_canvas
+    assert 'await import("./CesiumGlobe")' in map_canvas
 
 
 def test_tianditu_key_configurator_updates_only_key_without_logging_it(tmp_path):

@@ -203,3 +203,33 @@ def test_tianditu_prewarm_rejects_excessive_tile_requests(app_client, monkeypatc
     assert exc_info.value.status_code == 422
     assert "2 tiles" in str(exc_info.value.detail)
     assert "maximum is 1" in str(exc_info.value.detail)
+
+
+def test_startup_prewarm_schedules_overview_and_close_detail_profiles(app_client, monkeypatch):
+    import server.app as app_module
+
+    monkeypatch.setattr(
+        app_module,
+        "runtime_basemap_settings",
+        lambda: {"serverKey": "configured", "proxyBaseUrl": ""},
+    )
+    monkeypatch.setattr(app_module, "TIANDITU_PREWARM_BOUNDS", [117.5, 26.3, 119.4, 27.6])
+    monkeypatch.setattr(app_module, "TIANDITU_PREWARM_MIN_ZOOM", 8)
+    monkeypatch.setattr(app_module, "TIANDITU_PREWARM_MAX_ZOOM", 13)
+    monkeypatch.setattr(app_module, "TIANDITU_DETAIL_PREWARM_BOUNDS", [117.675, 27.495, 117.75, 27.59])
+    monkeypatch.setattr(app_module, "TIANDITU_DETAIL_PREWARM_MIN_ZOOM", 14)
+    monkeypatch.setattr(app_module, "TIANDITU_DETAIL_PREWARM_MAX_ZOOM", 16)
+    scheduled = []
+
+    def fake_create(**kwargs):
+        scheduled.append(kwargs)
+        return {"id": f"task-{len(scheduled)}", **kwargs}
+
+    monkeypatch.setattr(app_module, "create_tianditu_prewarm_task", fake_create)
+
+    tasks = app_module.schedule_tianditu_startup_prewarm()
+
+    assert len(tasks) == 2
+    assert [(item["min_zoom"], item["max_zoom"]) for item in scheduled] == [(8, 13), (14, 16)]
+    assert scheduled[1]["bounds"] == [117.675, 27.495, 117.75, 27.59]
+    assert all(item["actor"] == "system-startup" for item in scheduled)

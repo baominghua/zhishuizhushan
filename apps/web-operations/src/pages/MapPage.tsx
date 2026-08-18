@@ -63,7 +63,7 @@ function filterQueryString(filters: MapFilterValues) {
 }
 
 function initialMapMode(): MapViewMode {
-  return window.localStorage.getItem(MAP_MODE_STORAGE_KEY) === "2d" ? "2d" : "3d";
+  return window.localStorage.getItem(MAP_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d";
 }
 
 export function MapPage() {

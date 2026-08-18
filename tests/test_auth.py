@@ -408,6 +408,23 @@ def test_health_reports_unified_auth_configuration(app_client):
     }
 
 
+def test_liveness_health_is_small_and_skips_deployment_audit(app_client, monkeypatch):
+    import server.app as app_module
+
+    monkeypatch.setattr(
+        app_module,
+        "deployment_health_payload",
+        lambda: (_ for _ in ()).throw(AssertionError("full deployment audit must not run")),
+    )
+
+    response = app_client.get("/api/health/live")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "status": "live"}
+    assert response.headers["cache-control"] == "no-store, max-age=0"
+    assert len(response.content) < 64
+
+
 def test_json_string_service_profile_preserves_legacy_global_admin_scope(app_client, monkeypatch):
     import server.modules.settings as settings
 
