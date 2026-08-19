@@ -261,6 +261,36 @@ V2_ROLE_MODULES = [
     },
 ]
 
+V2_ROLE_MODULES.extend(
+    [
+        {
+            "key": "resourceIntelligence", "label": "资源专题分析", "href": "/v2/resources/intelligence",
+            "permission": "forest.analytics.view", "group": "空间与资源", "dataDomain": "forest-resources",
+            "apiScopes": ["/api/v2/intelligence/resources", "/api/v2/intelligence/growth", "/api/v2/intelligence/pest"],
+        },
+        {
+            "key": "costManagement", "label": "经营成本", "href": "/v2/operations/costs",
+            "permission": "costs.view", "group": "运营管护", "dataDomain": "operation-costs",
+            "apiScopes": ["/api/v2/costs"],
+        },
+        {
+            "key": "integrationHub", "label": "集成与联调", "href": "/v2/integrations",
+            "permission": "integrations.view", "group": "设备与智能", "dataDomain": "external-integrations",
+            "apiScopes": ["/api/v2/integrations", "/api/v2/iot/telemetry", "/api/v2/iot/commands", "/api/v2/drone/routes", "/api/v2/ai/lifecycle"],
+        },
+        {
+            "key": "workforceDevelopment", "label": "劳务培训与资质", "href": "/v2/workforce",
+            "permission": "labor.view", "group": "运营管护", "dataDomain": "labor",
+            "apiScopes": ["/api/v2/labor/companies", "/api/v2/labor/training"],
+        },
+        {
+            "key": "systemGovernance", "label": "系统治理", "href": "/v2/system/governance",
+            "permission": "system.accessRequests.view", "group": "系统管理", "dataDomain": "identity-access",
+            "apiScopes": ["/api/v2/governance"],
+        },
+    ]
+)
+
 MODULE_RESOURCE_PROFILES = {
     "overview": {
         "dataDomain": "platform-overview",
@@ -864,6 +894,22 @@ EXTRA_PERMISSIONS = [
     {"code": "business.mobileServiceChannels.manage", "label": "移动端服务", "module": "mobileServiceChannels"},
 ]
 
+EXTRA_PERMISSIONS.extend(
+    [
+        {"code": "forest.analytics.view", "label": "资源专题分析查看", "module": "resourceIntelligence"},
+        {"code": "forest.analytics.manage", "label": "资源监测与变化检测管理", "module": "resourceIntelligence"},
+        {"code": "costs.view", "label": "经营成本查看", "module": "costManagement"},
+        {"code": "costs.manage", "label": "经营成本核算管理", "module": "costManagement"},
+        {"code": "costs.export", "label": "经营成本报表导出", "module": "costManagement"},
+        {"code": "integrations.view", "label": "外部集成状态查看", "module": "integrationHub"},
+        {"code": "integrations.manage", "label": "外部协议与联调管理", "module": "integrationHub"},
+        {"code": "system.accessRequests.view", "label": "跨区查询申请查看", "module": "systemGovernance"},
+        {"code": "system.accessRequests.create", "label": "跨区查询申请创建", "module": "systemGovernance"},
+        {"code": "system.accessRequests.approve", "label": "跨区查询申请审批", "module": "systemGovernance"},
+        {"code": "operations.audit.manage", "label": "审计保留与归档管理", "module": "systemGovernance"},
+    ]
+)
+
 
 MANAGE_PERMISSION_IMPLICATIONS = {
     "operations.todos.export": ["operations.todos.view"],
@@ -1088,6 +1134,19 @@ MANAGE_PERMISSION_IMPLICATIONS.update(
     }
 )
 
+MANAGE_PERMISSION_IMPLICATIONS.update(
+    {
+        "forest.analytics.manage": ["forest.analytics.view", "forest.subcompartments.view", "forest.surveys.view"],
+        "costs.manage": ["costs.view", "forest.blocks.view", "labor.view"],
+        "costs.export": ["costs.view"],
+        "integrations.manage": ["integrations.view", "iot.devices.view", "drone.missions.view", "ai.models.view"],
+        "system.accessRequests.create": ["system.accessRequests.view"],
+        "system.accessRequests.approve": ["system.accessRequests.view"],
+        "operations.audit.manage": ["operations.audit.view"],
+    }
+)
+
+
 ROLE_PERMISSION_PRESETS = [
     {
         "key": "spec-super-admin", "label": "超级管理员", "group": "需求书预置角色",
@@ -1280,6 +1339,23 @@ ROLE_PERMISSION_PRESETS = [
         "permissions": ["system.roles.manage", "system.users.manage", "system.deployment.view"],
     },
 ]
+
+for _preset in ROLE_PERMISSION_PRESETS:
+    _role_code = str(_preset.get("roleCode") or "")
+    if _role_code == "city-leader":
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.view", "costs.view"])
+    elif _role_code == "county-admin":
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "integrationHub", "workforceDevelopment", "systemGovernance"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage", "costs.export", "integrations.manage", "system.accessRequests.approve", "operations.audit.manage"])
+    elif _role_code == "town-forestry-chief":
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "workforceDevelopment"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage"])
+    elif _role_code in {"forest-ranger", "bamboo-farmer", "drone-pilot", "emergency-rescue"}:
+        _preset.setdefault("permissions", []).append("system.accessRequests.create")
+    elif _role_code == "ai-engineer":
+        _preset.setdefault("menuModules", []).append("integrationHub")
+        _preset.setdefault("permissions", []).append("integrations.manage")
 
 PERMISSION_CLOSURES = [
     {

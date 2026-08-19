@@ -92,6 +92,14 @@ import type {
   AdminRole,
   AdminRolePayload,
   PermissionCatalogResponse,
+  ExtensionRecord,
+  CostRate,
+  CostMaterial,
+  CostEntry,
+  CostMonthlyReport,
+  ResourceStatisticsResponse,
+  CockpitTopicsResponse,
+  RequirementsBaseline,
 } from "./types";
 
 export class ApiError extends Error {
@@ -191,6 +199,45 @@ export const api = {
     request<{ ok: boolean; deleted: string }>(`/api/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" }),
   permissionCatalog: () => request<PermissionCatalogResponse>("/api/admin/permission-catalog"),
   leadershipCockpit: () => request<LeadershipCockpitResponse>("/api/v2/cockpit/leadership"),
+  cockpitTopics: () => request<CockpitTopicsResponse>("/api/v2/cockpit/topics"),
+  costRates: () => request<LedgerResponse<CostRate>>("/api/v2/costs/rates?limit=1000"),
+  createCostRate: (payload: { workType: string; name: string; unit: string; rate: number; effectiveFrom: string; effectiveTo?: string; areaCode?: string; notes?: string }) =>
+    request<CostRate>("/api/v2/costs/rates", { method: "POST", body: JSON.stringify(payload) }),
+  costMaterials: () => request<{ items: CostMaterial[]; total: number }>("/api/v2/costs/materials"),
+  createCostMaterial: (payload: { materialCode: string; name: string; unit: string; openingQuantity: number; openingUnitCost: number; areaCode?: string }) =>
+    request<CostMaterial>("/api/v2/costs/materials", { method: "POST", body: JSON.stringify(payload) }),
+  receiveCostMaterial: (id: string, payload: { quantity: number; unitCost: number; receivedAt: string; documentNo: string; note?: string }, idempotencyKey: string) =>
+    request<ExtensionRecord>(`/api/v2/costs/materials/${encodeURIComponent(id)}/receipts`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload) }),
+  costEntries: (query: { period?: string; blockCode?: string; costType?: string } = {}) =>
+    request<LedgerResponse<CostEntry>>(`/api/v2/costs/entries?${queryString({ ...query, limit: 1000 })}`),
+  createCostEntry: (payload: Record<string, unknown>, idempotencyKey: string) =>
+    request<CostEntry>("/api/v2/costs/entries", { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload) }),
+  costPeriods: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/costs/periods"),
+  applyCostPeriodAction: (period: string, action: "open" | "close" | "reopen" | "recalculate") =>
+    request<ExtensionRecord & { created?: number; skipped?: number }>("/api/v2/costs/periods/actions", { method: "POST", body: JSON.stringify({ period, action }) }),
+  costBudgets: (period = "") => request<{ items: ExtensionRecord[]; total: number; alerts: unknown[] }>(`/api/v2/costs/budgets?${queryString({ period })}`),
+  createCostBudget: (payload: { period: string; blockCode: string; amount: number; yellowThresholdPct?: number; redThresholdPct?: number }) =>
+    request<ExtensionRecord>("/api/v2/costs/budgets", { method: "POST", body: JSON.stringify(payload) }),
+  costMonthlyReport: (period: string) => request<CostMonthlyReport>(`/api/v2/costs/reports/monthly?${queryString({ period })}`),
+  exportCostMonthlyReport: (period: string) => downloadFile(`/api/v2/costs/reports/monthly.csv?${queryString({ period })}`, `cost-report-${period}.csv`),
+  resourceStatistics: (query: { groupBy?: string; bambooSpecies?: string; ageGroup?: string; slopeMin?: number; slopeMax?: number; countyCode?: string; townCode?: string } = {}) =>
+    request<ResourceStatisticsResponse>(`/api/v2/intelligence/resources/statistics?${queryString(query)}`),
+  resourceChangeJobs: (status = "") => request<{ items: ExtensionRecord[]; total: number }>(`/api/v2/intelligence/resources/change-jobs?${queryString({ status })}`),
+  growthObservations: (month = "", anomalyOnly = false) => request<{ items: ExtensionRecord[]; total: number }>(`/api/v2/intelligence/growth/observations?${queryString({ month, anomalyOnly })}`),
+  integrationAdapters: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/integrations/adapters"),
+  createIntegrationAdapter: (payload: Record<string, unknown>) => request<ExtensionRecord>("/api/v2/integrations/adapters", { method: "POST", body: JSON.stringify(payload) }),
+  telemetryLedger: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/iot/telemetry?limit=200"),
+  commandLedger: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/iot/commands"),
+  modelDeployments: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/ai/lifecycle/deployments"),
+  laborCompanies: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/labor/companies"),
+  createLaborCompany: (payload: Record<string, unknown>) => request<ExtensionRecord>("/api/v2/labor/companies", { method: "POST", body: JSON.stringify(payload) }),
+  trainingCourses: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/labor/training/courses"),
+  createTrainingCourse: (payload: Record<string, unknown>) => request<ExtensionRecord>("/api/v2/labor/training/courses", { method: "POST", body: JSON.stringify(payload) }),
+  trainingCertificates: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/labor/training/certificates"),
+  requirementsBaseline: () => request<RequirementsBaseline>("/api/v2/governance/requirements-baseline"),
+  accessRequests: () => request<{ items: ExtensionRecord[]; total: number }>("/api/v2/governance/access-requests"),
+  createAccessRequest: (payload: Record<string, unknown>) => request<ExtensionRecord>("/api/v2/governance/access-requests", { method: "POST", body: JSON.stringify(payload) }),
+  auditRetention: () => request<{ items: ExtensionRecord[]; total: number; minimumRetentionMonths: number }>("/api/v2/governance/audit-retention"),
   capabilities: () => request<CapabilitiesResponse>("/api/v2/system/capabilities"),
   workspaceSummary: () => request<WorkspaceSummary>("/api/v2/workspace/summary"),
   operationsTodos: (query: { q?: string; module?: string; limit?: number; offset?: number } = {}) =>

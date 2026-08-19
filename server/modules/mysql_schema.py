@@ -4,6 +4,7 @@ from typing import Any
 
 
 PLATFORM_MYSQL_TABLES = [
+    "v2_extension_records",
     "forest_blocks",
     "forest_block_geometries",
     "forest_block_versions",
@@ -211,6 +212,24 @@ def apply_mysql_schema_upgrades(cur: Any) -> None:
 def mysql_schema_statements() -> list[str]:
     table_options = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
     return [
+        f"""
+        CREATE TABLE IF NOT EXISTS v2_extension_records (
+            collection_key VARCHAR(64) NOT NULL,
+            id CHAR(36) NOT NULL,
+            area_code VARCHAR(32),
+            version_no INT UNSIGNED NOT NULL DEFAULT 1,
+            idempotency_key VARCHAR(191),
+            record_json JSON NOT NULL,
+            created_at DATETIME(6) NOT NULL,
+            updated_at DATETIME(6) NOT NULL,
+            deleted_at DATETIME(6),
+            PRIMARY KEY (collection_key,id),
+            UNIQUE KEY uq_v2_extension_idempotency (collection_key,idempotency_key),
+            KEY idx_v2_extension_area (collection_key,area_code,deleted_at),
+            KEY idx_v2_extension_updated (collection_key,updated_at),
+            KEY idx_v2_extension_deleted (deleted_at)
+        ) {table_options}
+        """,
         f"""
         CREATE TABLE IF NOT EXISTS forest_blocks (
             id CHAR(36) PRIMARY KEY,

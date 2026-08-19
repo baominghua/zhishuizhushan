@@ -19,6 +19,11 @@ from .attachments import router as attachments_router
 from .operations_center import router as operations_center_router
 from .carbon import router as carbon_router
 from .cockpit import router as cockpit_router
+from .cockpit_topics import router as cockpit_topics_router
+from .costs import router as costs_router
+from .governance import router as governance_router
+from .intelligence import router as intelligence_router
+from .roadmap_extensions import router as roadmap_extensions_router
 
 
 router = APIRouter(prefix="/api/v2")
@@ -41,3 +46,8 @@ router.include_router(mobile_router)
 router.include_router(operations_center_router)
 router.include_router(carbon_router)
 router.include_router(cockpit_router)
+router.include_router(cockpit_topics_router)
+router.include_router(costs_router)
+router.include_router(governance_router)
+router.include_router(intelligence_router)
+router.include_router(roadmap_extensions_router)

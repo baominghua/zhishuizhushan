@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from server.modules.admin_roles import require_permission
 from server.modules.auth import AuthContext, request_context
 from server.modules.forest_blocks import block_by_code, require_target_block_allowed
+from server.modules.extension_store import save_extension_record
 from server.modules.labor import (
     create_job,
     job_by_id,
@@ -123,6 +124,10 @@ class LaborAction(BaseModel):
     workHours: float | None = Field(default=None, ge=0, le=24)
     workQuantity: float | None = Field(default=None, ge=0)
     attendanceStatus: str = "present"
+    helmetDetected: bool | None = None
+    gpsValid: bool | None = None
+    insideGeofence: bool | None = None
+    verificationEvidence: dict[str, Any] = Field(default_factory=dict)
     actualQuantity: float | None = Field(default=None, ge=0)
     settlementAmount: float | None = Field(default=None, ge=0)
     evidenceUrls: list[str] = Field(default_factory=list)
@@ -612,14 +617,39 @@ def apply_job_action(job_id: str, action: str, payload: LaborAction, context: Au
         if payload.workHours is None:
             raise HTTPException(status_code=422, detail="请填写有效工时。")
         now = utc_now()
+        factors_provided = all(
+            value is not None
+            for value in (payload.helmetDetected, payload.gpsValid, payload.insideGeofence)
+        )
+        factor_passed = bool(
+            payload.helmetDetected and payload.gpsValid and payload.insideGeofence
+        ) if factors_provided else None
+        attendance_status = (
+            "verified" if factor_passed else "exception" if factors_provided
+            else (payload.attendanceStatus.strip() or "present")
+        )
         attendance = {
             "id": str(uuid.uuid4()), "workerId": worker["id"], "workerNo": worker["workerNo"], "workerName": worker["name"],
             "workDate": work_date, "checkInAt": parse_timestamp(payload.checkInAt, "签到时间"),
             "checkOutAt": parse_timestamp(payload.checkOutAt, "签退时间"), "workHours": payload.workHours,
-            "workQuantity": payload.workQuantity, "status": payload.attendanceStatus.strip() or "present",
+            "workQuantity": payload.workQuantity, "status": attendance_status,
             "verifierName": context.user, "note": note, "createdBy": context.user, "createdAt": now, "updatedAt": now,
         }
-        return update_job(record, timeline_entry(action, status, status, context.user, note or f"已登记 {worker['name']} 的 {work_date} 考勤。", {"workerId": worker["id"], "workDate": work_date, "workHours": payload.workHours}), attendance)
+        updated = update_job(record, timeline_entry(action, status, status, context.user, note or f"已登记 {worker['name']} 的 {work_date} 考勤。", {"workerId": worker["id"], "workDate": work_date, "workHours": payload.workHours}), attendance)
+        if factors_provided:
+            save_extension_record(
+                "labor-attendance-verifications",
+                {
+                    "id": str(uuid.uuid4()), "attendanceId": attendance["id"], "laborJobId": record["id"],
+                    "workerId": worker["id"], "workDate": work_date, "helmetDetected": payload.helmetDetected,
+                    "gpsValid": payload.gpsValid, "insideGeofence": payload.insideGeofence,
+                    "evidence": payload.verificationEvidence, "status": attendance_status,
+                    "reviewStatus": "pending" if attendance_status == "exception" else "not-required",
+                    "version": 1, "createdBy": context.user, "createdAt": now, "updatedAt": now, "deletedAt": None,
+                },
+                create=True,
+            )
+        return updated
     if action == "submit":
         if status != "working":
             raise HTTPException(status_code=409, detail="只有作业中的任务可以提交验收。")

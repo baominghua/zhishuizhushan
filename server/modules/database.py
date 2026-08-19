@@ -84,6 +84,7 @@ def get_data_dir() -> Path:
     (data_dir / "iot").mkdir(parents=True, exist_ok=True)
     (data_dir / "drone").mkdir(parents=True, exist_ok=True)
     (data_dir / "ai").mkdir(parents=True, exist_ok=True)
+    (data_dir / "v2-extensions").mkdir(parents=True, exist_ok=True)
     (data_dir / "mobile" / "evidence").mkdir(parents=True, exist_ok=True)
     return data_dir
 
@@ -412,6 +413,17 @@ def mobile_upload_sessions_json_path() -> Path:
 
 def operations_notification_reads_json_path() -> Path:
     return get_data_dir() / "operations" / "notification_reads.json"
+
+
+def v2_extension_json_path(collection: str) -> Path:
+    """Return the JSON fallback path for a controlled V2 extension collection."""
+    normalized = "".join(
+        character for character in str(collection).lower()
+        if character.isalnum() or character in {"-", "_"}
+    )
+    if not normalized or normalized != collection:
+        raise ValueError("Invalid V2 extension collection key")
+    return get_data_dir() / "v2-extensions" / f"{normalized}.json"
 
 
 def mobile_upload_chunks_dir() -> Path:

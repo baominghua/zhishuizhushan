@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Activity, Building2, CircleDollarSign, Leaf, MonitorUp, Plane, RefreshCw, ShieldAlert, Trees, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Building2, CircleDollarSign, Leaf, MonitorUp, Plane, RefreshCw, ShieldAlert, Trees, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
-import type { CockpitMetric, CockpitRankingItem } from "../api/types";
+import type { CockpitMetric, CockpitRankingItem, CockpitTopic } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
 const overviewMetrics: Array<[string, string, LucideIcon]> = [
@@ -19,27 +19,31 @@ const carbonMetrics: Array<[string, string, LucideIcon]> = [
 ];
 
 export function LeadershipCockpitPage() {
-  const [tab, setTab] = useState<"overview" | "carbon">("overview");
+  const [tab, setTab] = useState<"overview" | "emergency" | "harvest" | "drone" | "cost" | "carbon">("overview");
   const query = useQuery({ queryKey: ["leadership-cockpit"], queryFn: api.leadershipCockpit, refetchInterval: 60_000 });
+  const topicsQuery = useQuery({ queryKey: ["leadership-cockpit-topics"], queryFn: api.cockpitTopics, refetchInterval: 60_000 });
   const data = query.data;
   const metrics = tab === "overview" ? overviewMetrics : carbonMetrics;
+  const selectedTopic = topicsQuery.data?.topics.find((topic) => topic.key === tab);
   const focusMetric = (tab === "overview" ? data?.overview.forestBlockCount : data?.carbon.projectCount) as CockpitMetric | undefined;
   return <div className="cockpit-page">
     <header className="cockpit-hero">
       <div><span className="cockpit-kicker"><i />南平市智慧竹山 · 实时决策中枢</span><h1>领导驾驶舱</h1><p>资源、经营、安全与碳汇数据统一态势感知</p></div>
-      <div className="cockpit-hero-actions"><Link className="cockpit-display-link" to="/display"><MonitorUp aria-hidden="true" />大屏模式</Link><span className="cockpit-live"><i />数据在线</span><time>{data ? new Date(data.asOf).toLocaleString("zh-CN", { hour12: false }) : "同步中"}</time><button type="button" title="刷新数据" aria-label="刷新数据" onClick={() => query.refetch()}><RefreshCw aria-hidden="true" /></button></div>
+      <div className="cockpit-hero-actions"><Link className="cockpit-display-link" to="/display"><MonitorUp aria-hidden="true" />大屏模式</Link><span className="cockpit-live"><i />数据在线</span><time>{data ? new Date(data.asOf).toLocaleString("zh-CN", { hour12: false }) : "同步中"}</time><button type="button" title="刷新数据" aria-label="刷新数据" onClick={() => { query.refetch(); topicsQuery.refetch(); }}><RefreshCw aria-hidden="true" /></button></div>
     </header>
-    <nav className="cockpit-tabs" aria-label="驾驶舱专题"><button className={tab === "overview" ? "active" : ""} type="button" onClick={() => setTab("overview")}>综合态势</button><button className={tab === "carbon" ? "active" : ""} type="button" onClick={() => setTab("carbon")}>碳汇专题</button><span className={tab} /></nav>
-    <QueryState loading={query.isLoading} error={query.error}>{data && <div key={tab} className="cockpit-scene">
+    <nav className="cockpit-tabs cockpit-topic-tabs" aria-label="驾驶舱专题"><button className={tab === "overview" ? "active" : ""} type="button" onClick={() => setTab("overview")}>综合态势</button><button className={tab === "emergency" ? "active" : ""} type="button" onClick={() => setTab("emergency")}>灾害应急</button><button className={tab === "harvest" ? "active" : ""} type="button" onClick={() => setTab("harvest")}>采伐监管</button><button className={tab === "drone" ? "active" : ""} type="button" onClick={() => setTab("drone")}>无人机运营</button><button className={tab === "cost" ? "active" : ""} type="button" onClick={() => setTab("cost")}>成本效益</button><button className={tab === "carbon" ? "active" : ""} type="button" onClick={() => setTab("carbon")}>碳汇专题</button></nav>
+    {tab !== "overview" && tab !== "carbon" ? <QueryState loading={topicsQuery.isLoading} error={topicsQuery.error}>{selectedTopic && <TopicScene topic={selectedTopic} policy={topicsQuery.data?.metricPolicy || ""} />}</QueryState> : <QueryState loading={query.isLoading} error={query.error}>{data && <div key={tab} className="cockpit-scene">
       <section className="cockpit-kpis">{metrics.map(([key, label, icon], index) => <Metric key={key} label={label} metric={(tab === "overview" ? data.overview[key] : data.carbon[key]) as CockpitMetric} icon={icon} index={index} />)}</section>
       <section className="cockpit-main-grid">
         <div className="cockpit-focus"><div className="focus-rings"><span /><span /><span /><Trees aria-hidden="true" /></div><small>{tab === "overview" ? "林班空间底座" : "碳汇核算底座"}</small><AnimatedNumber value={Number(focusMetric?.value || 0)} /><em>{tab === "overview" ? "个正式林班" : "个碳汇项目"}</em><p>{tab === "overview" ? "空间边界、资源属性与经营主体持续汇聚" : "核算边界、方法学、核证结果与收益统一管理"}</p></div>
         {tab === "overview" ? <Operations data={data.operations} availability={data.availability} /> : <CarbonRanking items={data.carbon.districtRanking as CockpitRankingItem[]} />}
       </section>
       <footer className="cockpit-footer"><span>当前数据范围：{data.scope.areas.includes("*") ? "全市" : data.scope.areas.join("、") || "未配置"}</span><span>数据源：正式业务台账</span><Link to="/carbon/estimates">进入碳汇项目台账</Link></footer>
-    </div>}</QueryState>
+    </div>}</QueryState>}
   </div>;
 }
+
+function TopicScene({ topic, policy }: { topic: CockpitTopic; policy: string }) { const icon = topic.key === "emergency" ? ShieldAlert : topic.key === "harvest" ? Trees : topic.key === "drone" ? Plane : WalletCards; const Icon = icon; return <div key={topic.key} className="cockpit-scene cockpit-topic-scene"><section className="cockpit-topic-heading"><span><Icon /><small>专题驾驶舱</small><h2>{topic.label}</h2></span><time>更新时间 {new Date(topic.asOf).toLocaleString("zh-CN", { hour12: false })}</time></section><section className="cockpit-kpis">{topic.metrics.map((metric, index) => <article className="cockpit-metric" key={metric.key} style={{ animationDelay: `${index * 70}ms` }}><div><Activity /><span>{metric.label}</span></div>{metric.available ? <><AnimatedNumber value={Number(metric.value || 0)} /><small>{metric.unit} · {metric.source}</small></> : <><strong className="unavailable">未接入</strong><small>{metric.source}</small></>}<p>{metric.definition}</p><a href={metric.drilldown}>查看明细</a></article>)}</section>{topic.featureGates && <section className="cockpit-feature-gate"><ShieldAlert /><span><strong>视频会商：{topic.featureGates.videoConference ? "已启用" : "待协议接通"}</strong><small>{String(topic.featureGates.reason || "")}</small></span></section>}<footer className="cockpit-footer"><span>{policy}</span><span>行政层级下钻与明细入口已启用</span></footer></div>; }
 
 function AnimatedNumber({ value }: { value: number }) { const [shown, setShown] = useState(0); useEffect(() => { const start = performance.now(); const frame = (now: number) => { const p = Math.min((now - start) / 900, 1); setShown(value * (1 - Math.pow(1 - p, 3))); if (p < 1) requestAnimationFrame(frame); }; const id = requestAnimationFrame(frame); return () => cancelAnimationFrame(id); }, [value]); return <strong>{Math.round(shown).toLocaleString("zh-CN")}</strong>; }
 function Metric({ label, metric, icon: Icon, index }: { label: string; metric?: CockpitMetric; icon: LucideIcon; index: number }) { return <article className="cockpit-metric" style={{ animationDelay: `${index * 70}ms` }}><div><Icon aria-hidden="true" /><span>{label}</span></div>{metric?.available ? <><AnimatedNumber value={Number(metric.value || 0)} /><small>{metric.unit} · {metric.source}</small></> : <><strong className="unavailable">未接入</strong><small>等待正式数据源</small></>}</article>; }

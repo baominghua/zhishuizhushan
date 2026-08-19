@@ -19,6 +19,13 @@ from pydantic import BaseModel, Field
 from server.modules.admin_roles import require_permission
 from server.modules.auth import AuthContext, has_admin_role, request_context
 from server.modules.database import mobile_evidence_dir, mobile_upload_chunks_dir
+from server.modules.forest_blocks import block_by_code, require_target_block_allowed
+from server.modules.forest_subcompartments import (
+    ForestSubcompartmentFilters,
+    list_forest_subcompartments,
+    list_forest_subcompartment_versions,
+)
+from server.modules.harvest import list_applications
 from server.modules.mobile_sync import (
     begin_operation,
     complete_operation,
@@ -247,6 +254,48 @@ def mobile_bootstrap(
         }
         for item in conflicts[:20]
     ]
+    linked_block_codes = sorted({
+        str(code) for task in tasks for code in task.get("linkedBlockCodes") or [] if str(code)
+    })
+    offline_subcompartments: list[dict[str, Any]] = []
+    offline_history: dict[str, list[dict[str, Any]]] = {}
+    for block_code in linked_block_codes:
+        block = block_by_code(block_code)
+        if not block:
+            continue
+        try:
+            require_target_block_allowed(context, block)
+            page = list_forest_subcompartments(
+                ForestSubcompartmentFilters(forestBlockId=str(block["id"]), limit=200), context,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
+        offline_subcompartments.extend(page["items"])
+        for subcompartment in page["items"]:
+            try:
+                versions = list_forest_subcompartment_versions(str(subcompartment["id"]), context)
+                offline_history[str(subcompartment["id"])] = list(versions.get("items") or [])[:20]
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
+    harvest_forms: list[dict[str, Any]] = []
+    try:
+        for application in list_applications():
+            codes = [str(link.get("code") or "") for link in application.get("blocks") or []]
+            if not set(codes).intersection(linked_block_codes) or application.get("status") not in {"approved", "operating", "submitted"}:
+                continue
+            harvest_forms.append({
+                "applicationId": application["id"], "applicationNo": application.get("applicationNo"),
+                "status": application.get("status"), "linkedBlockCodes": codes,
+                "approvedQuantity": application.get("approvedQuantity"), "approvedGeometry": application.get("approvedGeometry"),
+                "requiredEvidence": ["现场边界", "定位轨迹", "作业前照片", "作业后照片"],
+                "idempotencyScope": f"mobile-harvest:{application['id']}",
+            })
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
     return {
         "serverTime": utc_now(),
         "principal": {
@@ -258,6 +307,15 @@ def mobile_bootstrap(
         "tasks": tasks,
         "operations": operations,
         "messages": messages,
+        "offlineResources": {
+            "subcompartments": offline_subcompartments,
+            "subcompartmentHistory": offline_history,
+            "harvestBoundaryForms": harvest_forms,
+            "eventForm": {
+                "fields": ["title", "severity", "description", "longitude", "latitude", "evidenceIds"],
+                "supportsOffline": True, "syncEntityType": "safety", "syncAction": "sos",
+            },
+        },
         "syncCursor": operations[0]["receivedAt"] if operations else "",
     }
 
@@ -269,7 +327,17 @@ def mobile_offline_package(
 ) -> dict[str, Any]:
     payload = mobile_bootstrap(limit=limit, context=context)
     manifest = json.dumps(
-        [{"id": item["id"], "version": item["version"]} for item in payload["tasks"]],
+        {
+            "tasks": [{"id": item["id"], "version": item["version"]} for item in payload["tasks"]],
+            "subcompartments": [
+                {"id": item["id"], "version": item.get("version")}
+                for item in payload.get("offlineResources", {}).get("subcompartments", [])
+            ],
+            "harvestForms": [
+                {"id": item["applicationId"], "status": item.get("status")}
+                for item in payload.get("offlineResources", {}).get("harvestBoundaryForms", [])
+            ],
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

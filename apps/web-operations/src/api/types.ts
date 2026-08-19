@@ -1871,3 +1871,127 @@ export interface OperationsAuditEvent {
   targetPath: string;
   read?: boolean;
 }
+
+export interface ExtensionRecord {
+  id: string;
+  version: number;
+  status?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+}
+
+export interface CostRate extends ExtensionRecord {
+  workType: string;
+  name: string;
+  unit: string;
+  rateCents: number;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+}
+
+export interface CostMaterial extends ExtensionRecord {
+  materialCode: string;
+  name: string;
+  unit: string;
+  stockQuantity: string;
+  stockValueCents: number;
+  movingAverageUnitCostCents: number;
+}
+
+export interface CostEntry extends ExtensionRecord {
+  costType: "labor" | "material" | "adjustment";
+  blockCode: string;
+  amountCents: number;
+  occurredOn: string;
+  period: string;
+  sourceType: string;
+  sourceId: string;
+}
+
+export interface CostReportRow {
+  blockCode: string;
+  laborCents: number;
+  materialCents: number;
+  adjustmentCents: number;
+  totalCents: number;
+  entryCount: number;
+}
+
+export interface CostAlert {
+  budgetId: string;
+  period: string;
+  blockCode: string;
+  budgetCents: number;
+  actualCents: number;
+  varianceCents: number;
+  variancePct: number;
+  level: "normal" | "yellow" | "red";
+}
+
+export interface CostMonthlyReport {
+  period: string;
+  asOf: string;
+  currency: "CNY";
+  amountScale: 2;
+  items: CostReportRow[];
+  total: number;
+  grandTotalCents: number;
+  alerts: CostAlert[];
+}
+
+export interface ResourceStatisticRow {
+  name: string;
+  count: number;
+  areaMu: number;
+}
+
+export interface ResourceStatisticsResponse {
+  source: string;
+  asOf: string;
+  groupBy: "bambooSpecies" | "ageGroup" | "slope" | "town";
+  filters: Record<string, string | number | null>;
+  items: ResourceStatisticRow[];
+  total: number;
+  totalAreaMu: number;
+}
+
+export interface CockpitMetricDefinition {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: string;
+  available: boolean;
+  source: string;
+  definition: string;
+  drilldown: string;
+}
+
+export interface CockpitTopic {
+  key: "overview" | "emergency" | "harvest" | "drone" | "cost";
+  label: string;
+  available: boolean;
+  asOf: string;
+  metrics: CockpitMetricDefinition[];
+  featureGates?: Record<string, string | boolean>;
+  alerts?: CostAlert[];
+}
+
+export interface CockpitTopicsResponse {
+  source: "live";
+  asOf: string;
+  scope: { user: string; roles: string[]; areas: string[] };
+  topics: CockpitTopic[];
+  metricPolicy: string;
+}
+
+export interface RequirementsBaseline {
+  baselineCommit: string;
+  scopeVersion: string;
+  packages: Array<{ key: string; priority: string; delivery: string; status: string; entry?: string; reuse?: string[] }>;
+  roleCount: number;
+  roleCodes: string[];
+  nonDuplicateRule: string;
+  externalAcceptanceDisclaimer: string;
+}

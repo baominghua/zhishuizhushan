@@ -34,6 +34,11 @@ import {
   ShieldCheck,
   KeyRound,
   X,
+  ChartNoAxesCombined,
+  WalletCards,
+  Cable,
+  GraduationCap,
+  ShieldEllipsis,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -71,9 +76,19 @@ const MODULE_ICONS = {
   users: UserRoundCog,
   roles: ShieldCheck,
   permissions: KeyRound,
+  "resource-intelligence": ChartNoAxesCombined,
+  "cost-management": WalletCards,
+  "integration-hub": Cable,
+  "workforce-development": GraduationCap,
+  "system-governance": ShieldEllipsis,
 };
 
 function pageTitle(pathname: string) {
+  if (pathname.includes("/system/governance")) return "系统治理";
+  if (pathname.includes("/resources/intelligence")) return "资源专题分析";
+  if (pathname.includes("/operations/costs")) return "经营成本";
+  if (pathname.includes("/integrations")) return "集成与联调";
+  if (pathname.includes("/workforce")) return "劳务培训与资质";
   if (pathname.includes("/system/overview")) return "系统管理";
   if (pathname.includes("/system/organizations")) return "组织架构";
   if (pathname.includes("/system/users")) return "用户账号";
