@@ -79,10 +79,12 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "maximumLevel: 19" in cesium
     assert "maximumLevel: config.maximumLevel" in cesium
     assert "viewer.useBrowserRecommendedResolution = false" in cesium
-    assert "viewer.resolutionScale = sharpResolutionScale()" in cesium
-    assert "return Math.min(1.25, 2 / devicePixelRatio)" in cesium
-    assert "viewer.scene.globe.maximumScreenSpaceError = 0.5" in cesium
-    assert "viewer.scene.globe.preloadSiblings = true" in cesium
+    assert "viewer.resolutionScale = performanceResolutionScale()" in cesium
+    assert "return Math.min(1.1, 1.25 / devicePixelRatio)" in cesium
+    assert "viewer.scene.globe.maximumScreenSpaceError = 2" in cesium
+    assert "viewer.scene.globe.preloadSiblings = false" in cesium
+    assert "labelLayerRef.current.show = false" in cesium
+    assert "}, 1_500);" in cesium
     assert "targetHeight" in cesium
     assert 'zoomRequest.direction === "in"' in cesium
     assert "FAR_VIEW_PITCH_RESET_HEIGHT = 300_000" in cesium

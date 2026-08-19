@@ -92,11 +92,11 @@ function restoreFarViewPitch(viewer: Viewer, height: number) {
   return true;
 }
 
-function sharpResolutionScale() {
+function performanceResolutionScale() {
   const devicePixelRatio = Math.max(window.devicePixelRatio || 1, 1);
-  // Give standard-density displays a modest supersampling boost while keeping
-  // the effective output at or below 2 physical pixels per CSS pixel.
-  return Math.min(1.25, 2 / devicePixelRatio);
+  // Keep enough physical pixels for crisp parcel outlines without asking the
+  // globe to refine imagery at the full density of a high-DPI display.
+  return Math.min(1.1, 1.25 / devicePixelRatio);
 }
 
 type ForestBlockLabelProperties = Record<string, unknown>;
@@ -249,6 +249,8 @@ export function CesiumGlobe({
   const viewerRef = useRef<Viewer | null>(null);
   const imageryLayerRef = useRef<ImageryLayer | null>(null);
   const labelLayerRef = useRef<ImageryLayer | null>(null);
+  const labelLayerReadyRef = useRef(false);
+  const labelsVisibleRef = useRef(layers.labels);
   const droneImageryLayersRef = useRef<ImageryLayer[]>([]);
   const blockDataSourceRef = useRef<GeoJsonDataSource | null>(null);
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
@@ -299,20 +301,19 @@ export function CesiumGlobe({
       timeline: false,
     });
     viewerRef.current = viewer;
-    // Let Cesium honor the display pixel ratio, then add limited supersampling
-    // on standard-density screens. The previous setting ignored the device
-    // pixel ratio and made the globe soft when the canvas was enlarged.
+    // Cap the effective render density so a high-DPI client does not multiply
+    // the number of imagery tiles needed for the first useful frame.
     viewer.useBrowserRecommendedResolution = false;
-    viewer.resolutionScale = sharpResolutionScale();
+    viewer.resolutionScale = performanceResolutionScale();
     viewer.scene.requestRenderMode = true;
     viewer.scene.maximumRenderTimeChange = Number.POSITIVE_INFINITY;
     viewer.scene.backgroundColor = Color.fromCssColorString("#03130f");
     viewer.scene.globe.baseColor = Color.fromCssColorString("#0a211d");
     viewer.scene.globe.showGroundAtmosphere = true;
-    viewer.scene.globe.maximumScreenSpaceError = 0.5;
-    viewer.scene.globe.tileCacheSize = 500;
+    viewer.scene.globe.maximumScreenSpaceError = 2;
+    viewer.scene.globe.tileCacheSize = 250;
     viewer.scene.globe.preloadAncestors = true;
-    viewer.scene.globe.preloadSiblings = true;
+    viewer.scene.globe.preloadSiblings = false;
     viewer.scene.fog.enabled = true;
     // Tianditu imagery currently ends at level 18. This limit allows forestry
     // parcel inspection while preventing meaningless over-zoom beyond it.
@@ -336,7 +337,16 @@ export function CesiumGlobe({
           tilingScheme: new WebMercatorTilingScheme(),
         }),
       );
+      // Give the satellite layer the connection first. Labels are useful, but
+      // they should not double the critical-path requests for the first frame.
+      labelLayerRef.current.show = false;
     }
+
+    const labelLayerTimer = window.setTimeout(() => {
+      labelLayerReadyRef.current = true;
+      if (labelLayerRef.current) labelLayerRef.current.show = labelsVisibleRef.current;
+      viewer.scene.requestRender();
+    }, 1_500);
 
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(
@@ -387,7 +397,7 @@ export function CesiumGlobe({
     viewer.scene.globe.tileLoadProgressEvent.addEventListener(requestSharpFrame);
 
     const observer = new ResizeObserver(() => {
-      viewer.resolutionScale = sharpResolutionScale();
+      viewer.resolutionScale = performanceResolutionScale();
       viewer.resize();
       viewer.scene.requestRender();
     });
@@ -395,11 +405,13 @@ export function CesiumGlobe({
 
     return () => {
       observer.disconnect();
+      window.clearTimeout(labelLayerTimer);
       viewer.scene.globe.tileLoadProgressEvent.removeEventListener(requestSharpFrame);
       viewer.camera.moveEnd.removeEventListener(reportViewport);
       viewerRef.current = null;
       imageryLayerRef.current = null;
       labelLayerRef.current = null;
+      labelLayerReadyRef.current = false;
       blockDataSourceRef.current = null;
       droneImageryLayersRef.current = [];
       if (!viewer.isDestroyed()) viewer.destroy();
@@ -408,7 +420,10 @@ export function CesiumGlobe({
 
   useEffect(() => {
     if (imageryLayerRef.current) imageryLayerRef.current.show = layers.imagery;
-    if (labelLayerRef.current) labelLayerRef.current.show = layers.labels;
+    labelsVisibleRef.current = layers.labels;
+    if (labelLayerRef.current && labelLayerReadyRef.current) {
+      labelLayerRef.current.show = layers.labels;
+    }
     forestBlocksVisibleRef.current = layers.forestBlocks;
     if (blockDataSourceRef.current) blockDataSourceRef.current.show = layers.forestBlocks;
     viewerRef.current?.scene.requestRender();
