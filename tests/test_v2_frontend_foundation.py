@@ -139,6 +139,18 @@ def test_v2_basemap_settings_are_managed_server_side():
     assert "?tk=" not in cesium
 
 
+def test_v2_api_client_sends_and_recovers_human_session_csrf_tokens():
+    client = (
+        ROOT_DIR / "apps" / "web-operations" / "src" / "api" / "client.ts"
+    ).read_text(encoding="utf-8")
+
+    assert 'const CSRF_COOKIE_NAME = "smart_bamboo_session_csrf"' in client
+    assert 'headers["X-CSRF-Token"] = csrfToken()' in client
+    assert 'fetch("/api/auth/session"' in client
+    assert 'headers["X-CSRF-Token"] = freshToken' in client
+    assert 'isCsrfFailure(response, responseBody)' in client
+
+
 def test_v2_mobile_operations_page_exposes_sync_tracks_and_evidence_ledgers():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     router = (web_root / "router.tsx").read_text(encoding="utf-8")
