@@ -13,4 +13,6 @@ reportlab>=4.2
 shapely>=2.0
 pyogrio>=0.9
 mapbox-vector-tile>=2.1
+laspy[lazrs]>=2.5
+py3dtiles>=11.0
 argon2-cffi>=23.1,<26

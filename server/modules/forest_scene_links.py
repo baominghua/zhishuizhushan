@@ -436,6 +436,79 @@ def delete_scene_links_for_scene(scene_id: str) -> int:
     return deleted
 
 
+def replace_scene_links_for_scene(scene_id: str, records: list[dict[str, Any]]) -> None:
+    """Replace coverage relations after the operator confirms spatial matching."""
+    normalized = [
+        {
+            "forestBlockId": str(item.get("forestBlockId") or ""),
+            "sceneId": scene_id,
+            "relationType": "coverage",
+            "capturedAt": item.get("capturedAt") or None,
+            "confidence": item.get("confidence"),
+        }
+        for item in records
+        if str(item.get("forestBlockId") or "").strip()
+    ]
+    if use_mysql():
+        with mysql_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM forest_block_scene_links WHERE scene_id = %s AND relation_type = %s",
+                        (scene_id, "coverage"),
+                    )
+                    if normalized:
+                        cur.executemany(
+                            MYSQL_SCENE_LINK_UPSERT_SQL,
+                            [mysql_scene_link_values(item) for item in normalized],
+                        )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return
+    if use_postgis():
+        database_url = get_settings().database_url
+        with connect_postgis(database_url, "forest scene links PostGIS database") as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM forest_block_scene_links WHERE scene_id = %s AND relation_type = %s",
+                        (scene_id, "coverage"),
+                    )
+                    for item in normalized:
+                        cur.execute(
+                            """
+                            INSERT INTO forest_block_scene_links (
+                                forest_block_id, scene_id, relation_type, captured_at, confidence
+                            )
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (forest_block_id, scene_id, relation_type) DO UPDATE
+                            SET captured_at = EXCLUDED.captured_at,
+                                confidence = EXCLUDED.confidence,
+                                created_at = now()
+                            """,
+                            (
+                                item["forestBlockId"],
+                                item["sceneId"],
+                                item["relationType"],
+                                item["capturedAt"],
+                                item["confidence"],
+                            ),
+                        )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return
+    existing = [
+        item
+        for item in load_scene_links()
+        if item.get("sceneId") != scene_id or item.get("relationType") != "coverage"
+    ]
+    save_scene_links([*existing, *normalized])
+
+
 def scene_links_for_block(block_id: str) -> list[dict[str, Any]]:
     if use_mysql():
         return list_scene_links_mysql(block_id)

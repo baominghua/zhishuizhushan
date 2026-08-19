@@ -4,6 +4,8 @@
 
 - 接收 GeoTIFF/TIFF
 - 使用 GDAL/rasterio 转为 COG
+- 按 GeoTIFF 的 NoData/透明通道提取有效像素轮廓，自动计算与多个林班的交叠面积及比例
+- 批量接收 LAS/LAZ，支持分片续传、服务器/NAS 目录注册，并生成 COPC 与 3D Tiles
 - 提供 COG 场景目录
 - 提供 OpenLayers 可直接加载的 XYZ PNG 瓦片
 - 提供后台转换任务与任务进度查询
@@ -39,6 +41,11 @@ http://服务器IP:8010/api/health
 - `GET /api/health`：依赖、TiTiler、部署配置状态。
 - `POST /api/scenes/upload`：上传 GeoTIFF/TIFF 并转 COG。
 - `POST /api/scenes/register`：注册服务器/NAS 已有 GeoTIFF/TIFF，创建后台转换任务。
+- `POST /api/scenes/{id}/coverage/confirm`：人工确认自动分析出的一个或多个覆盖林班，并同步正式关系表。
+- `POST /api/point-clouds/upload-sessions`：创建一次航飞任务的 LAS/LAZ 分片上传会话。
+- `PUT /api/point-clouds/upload-sessions/{id}/files/{file_index}/chunks/{chunk_index}`：幂等上传点云分片。
+- `POST /api/point-clouds/upload-sessions/{id}/complete`：完成上传并创建 COPC/3D Tiles 转换任务。
+- `POST /api/point-clouds/register`：递归注册服务器/NAS 中的一批 LAS/LAZ；自动排除 `.temp` 等隐藏工作目录。
 - `GET /api/tasks`：查询后台转换任务列表。
 - `GET /api/tasks/{task_id}`：查询单个后台转换任务。
 - `GET /api/geoserver/config`：查看 GeoServer 配置。
@@ -66,6 +73,9 @@ http://服务器IP:8010/api/health
 | `REMOTE_SENSING_PORT` | 服务端口 | `8010` |
 | `REMOTE_SENSING_IMPORT_DIRS` | 允许注册入库的服务器/NAS 文件目录，多个用英文逗号分隔 | `data/remote-sensing/inbox` |
 | `REMOTE_SENSING_TASK_WORKERS` | 后台 COG 转换任务并发数 | `1` |
+| `REMOTE_SENSING_POINT_CLOUD_CHUNK_SIZE` | LAS/LAZ 断点续传分片大小（字节，限制为 5–128MB） | `16777216` |
+| `REMOTE_SENSING_PDAL_EXECUTABLE` | 生成 COPC 的 PDAL 命令路径 | `pdal` |
+| `REMOTE_SENSING_3DTILES_EXECUTABLE` | 生成 3D Tiles 的 py3dtiles 命令路径 | `py3dtiles` |
 | `REMOTE_SENSING_CATALOG_BACKEND` | 目录库类型，正式环境使用 `mysql`，本地兼容 `json`，保留 `postgis` 迁移路径 | 本地 `json` / Docker `mysql` |
 | `REMOTE_SENSING_DATABASE_URL` | MySQL 8 正式数据库连接串；兼容模式可传 PostGIS 连接串 | 空 |
 | `REMOTE_SENSING_TILE_CACHE` | 是否启用瓦片落盘缓存，`1`/`0` | `1` |
@@ -109,6 +119,8 @@ $env:REMOTE_SENSING_PORT = "8010"
 ```text
 data/remote-sensing/
   uploads/      原始上传 GeoTIFF/TIFF
+  point-cloud-upload-sessions/  LAS/LAZ 分片及续传清单
+  point-clouds/ 点云源文件、COPC 和 3D Tiles 成果
   inbox/        服务器/NAS 已有文件注册入库目录
   cogs/         转换后的 COG
   tile-cache/   PNG 瓦片缓存
@@ -116,7 +128,7 @@ data/remote-sensing/
   catalog.json 影像目录
 ```
 
-300G 级遥感影像测试时，建议把 `REMOTE_SENSING_DATA_DIR` 指向独立 SSD/NAS 数据盘，并预留至少 2-3 倍原始影像大小的空间。
+300G 级遥感影像或点云测试时，建议把 `REMOTE_SENSING_DATA_DIR` 指向独立 SSD/NAS 数据盘，并预留至少 2-3 倍原始数据大小的空间。1GB 以上 GeoTIFF 和多文件点云优先放入 `REMOTE_SENSING_IMPORT_DIRS` 后走“服务器 / NAS 目录”，避免浏览器重复传输。
 
 ## Docker Compose 部署
 

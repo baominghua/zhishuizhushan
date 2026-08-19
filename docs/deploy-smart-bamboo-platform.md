@@ -30,6 +30,9 @@ REMOTE_SENSING_CATALOG_BACKEND=mysql
 REMOTE_SENSING_DATABASE_URL=mysql://smart_bamboo:replace-with-url-encoded-password@db:3306/smart_bamboo?charset=utf8mb4
 REMOTE_SENSING_DATA_DIR=/app/data/remote-sensing
 REMOTE_SENSING_IMPORT_DIRS=/app/data/remote-sensing/inbox
+REMOTE_SENSING_POINT_CLOUD_CHUNK_SIZE=16777216
+REMOTE_SENSING_PDAL_EXECUTABLE=pdal
+REMOTE_SENSING_3DTILES_EXECUTABLE=py3dtiles
 REMOTE_SENSING_AUTH_REQUIRED=1
 REMOTE_SENSING_API_TOKENS={"replace-with-random-token":{"user":"admin","roles":["admin"],"projects":["*"],"areas":["*"]}}
 REMOTE_SENSING_CORS_ORIGINS=https://bamboo.example.gov.cn
@@ -110,7 +113,7 @@ http://127.0.0.1:8010/api/health
 | `REMOTE_SENSING_CATALOG_BACKEND` | 遥感影像目录与任务存储方式，正式环境为 `mysql` |
 | `REMOTE_SENSING_DATABASE_URL` | 遥感目录与转换任务使用的 MySQL 8 连接串 |
 | `REMOTE_SENSING_DATA_DIR` | 遥感源文件、COG、瓦片缓存和 inbox 挂载目录 |
-| `REMOTE_SENSING_IMPORT_DIRS` | 允许注册入库的服务器/NAS 影像目录 |
+| `REMOTE_SENSING_IMPORT_DIRS` | 允许注册入库的服务器/NAS GeoTIFF、LAS/LAZ 目录 |
 | `REMOTE_SENSING_PORT` | FastAPI 容器监听端口，默认 `8010` |
 | `REMOTE_SENSING_SERVE_STATIC` | 是否由 FastAPI 托管静态页面，默认 `1` |
 
@@ -119,6 +122,9 @@ http://127.0.0.1:8010/api/health
 | 变量 | 作用 |
 | --- | --- |
 | `SMART_BAMBOO_DB_PORT` | 宿主机暴露的 MySQL 端口，默认 `3307` |
+| `REMOTE_SENSING_POINT_CLOUD_CHUNK_SIZE` | 点云断点续传分片大小，默认 16MB，服务端限制 5–128MB |
+| `REMOTE_SENSING_PDAL_EXECUTABLE` | COPC 转换命令，镜像默认安装为 `pdal` |
+| `REMOTE_SENSING_3DTILES_EXECUTABLE` | 3D Tiles 转换命令，镜像默认由 Python 包提供 `py3dtiles` |
 | `SMART_BAMBOO_MYSQL_WRITE_BATCH_SIZE` | 林班 MySQL 批量写入分组大小，默认 `500`；单次导入仍在一个事务内提交 |
 | `SMART_BAMBOO_IDENTITY_LOOKUP_BATCH_SIZE` | 导入前按林班编号查询既有记录的分组大小，默认 `500` |
 | `SMART_BAMBOO_VECTOR_TILE_CACHE_TTL_SECONDS` | 林班矢量瓦片热缓存 TTL，默认 `300` 秒 |
@@ -133,7 +139,9 @@ http://127.0.0.1:8010/api/health
 | `GEOSERVER_ADMIN_USER` | GeoServer 管理员用户名 |
 | `GEOSERVER_ADMIN_PASSWORD` | GeoServer 管理员密码 |
 
-项目根目录的 `./data` 会挂载到容器内 `/app/data`。遥感源文件、上传文件、生成后的 COG、瓦片缓存和待入库 inbox 都保存在 `/app/data/remote-sensing/` 下。MySQL 保存可检索元数据和业务关系，不保存大型影像二进制文件。
+项目根目录的 `./data` 会挂载到容器内 `/app/data`。遥感源文件、上传文件、生成后的 COG、COPC、3D Tiles、瓦片缓存和待入库 inbox 都保存在 `/app/data/remote-sensing/` 下。MySQL 保存可检索元数据和业务关系，不保存大型空间二进制文件。
+
+大文件建议先由运维复制或挂载到 `/app/data/remote-sensing/inbox`，再在 V2“影像与点云成果”选择“服务器 / NAS 目录”：GeoTIFF 填文件路径，点云填一次航飞任务的目录。点云会递归接收 `.las/.laz`，自动排除 `.temp` 等隐藏工作目录；上传或注册完成后先计算跨林班交叠，只有业务人员确认后才写入正式林班关系。
 
 ## 6. Nginx 反向代理
 

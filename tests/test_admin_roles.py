@@ -2307,9 +2307,11 @@ def test_forest_block_and_right_permission_catalog_exposes_action_permissions(ap
         "forest.blocks.delete",
         "forest.blocks.restore",
         "forest.blocks.rollback",
+        "forest.blocks.export",
     ]
     assert [entry["kind"] for entry in modules["blocks"]["permissionEntries"]] == [
         "page",
+        "action",
         "action",
         "action",
         "action",

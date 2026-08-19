@@ -602,11 +602,17 @@ def iter_geometry_points(geometry: dict[str, Any] | None) -> list[tuple[float, f
         return []
     coordinates = geometry.get("coordinates") or []
     points: list[tuple[float, float]] = []
-    for polygon in coordinates:
-        for ring in polygon:
-            for point in ring:
-                if len(point) >= 2:
-                    points.append((float(point[0]), float(point[1])))
+
+    def collect(value: Any) -> None:
+        if not isinstance(value, (list, tuple)):
+            return
+        if len(value) >= 2 and all(isinstance(item, (int, float)) for item in value[:2]):
+            points.append((float(value[0]), float(value[1])))
+            return
+        for item in value:
+            collect(item)
+
+    collect(coordinates)
     return points
 
 

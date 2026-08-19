@@ -43,6 +43,8 @@ import type {
   ImageryAsset,
   ImageryAssetResponse,
   ImageryUploadPayload,
+  PointCloudUploadSession,
+  SpatialAssetTask,
   LedgerResponse,
   LaborActionPayload,
   LaborJob,
@@ -676,9 +678,55 @@ export const api = {
     body.append("resolution", payload.resolution || "");
     body.append("linkedBlockCodes", payload.linkedBlockCodes.join(","));
     body.append("processingStage", "ready");
-    body.append("asyncMode", "false");
-    return request<ImageryAsset>("/api/scenes/upload", { method: "POST", body });
+    body.append("asyncMode", "true");
+    return request<{ accepted: true; task: SpatialAssetTask }>("/api/scenes/upload", { method: "POST", body });
   },
+  registerImageryAsset: (path: string, payload: ImageryUploadPayload) =>
+    request<{ accepted: true; task: SpatialAssetTask }>("/api/scenes/register", {
+      method: "POST",
+      body: JSON.stringify({ path, ...payload, processingStage: "ready" }),
+    }),
+  imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
+  spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
+  confirmImageryCoverage: (id: string, blockCodes: string[]) =>
+    request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}/coverage/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ blockCodes }),
+    }),
+  createPointCloudUploadSession: (payload: { name: string; missionId: string; capturedAt: string; files: File[]; outputs: Array<"copc" | "3dtiles"> }) =>
+    request<PointCloudUploadSession>("/api/point-clouds/upload-sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        name: payload.name,
+        missionId: payload.missionId,
+        capturedAt: payload.capturedAt,
+        outputs: payload.outputs,
+        files: payload.files.map((file) => ({ name: file.name, size: file.size, lastModified: file.lastModified })),
+      }),
+    }),
+  pointCloudUploadSession: (id: string) =>
+    request<PointCloudUploadSession>(`/api/point-clouds/upload-sessions/${encodeURIComponent(id)}`),
+  uploadPointCloudChunk: async (sessionId: string, fileIndex: number, chunkIndex: number, blob: Blob, totalBytes: number, start: number) => {
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())))
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    return request<{ ok: true; session: PointCloudUploadSession }>(
+      `/api/point-clouds/upload-sessions/${encodeURIComponent(sessionId)}/files/${fileIndex}/chunks/${chunkIndex}`,
+      {
+        method: "PUT",
+        body: blob,
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Range": `bytes ${start}-${start + blob.size - 1}/${totalBytes}`,
+          "X-Chunk-SHA256": digest,
+        },
+      },
+    );
+  },
+  completePointCloudUploadSession: (id: string) =>
+    request<{ accepted: true; task: SpatialAssetTask }>(`/api/point-clouds/upload-sessions/${encodeURIComponent(id)}/complete`, { method: "POST" }),
+  registerPointCloud: (payload: { path: string; name: string; missionId: string; capturedAt: string; recursive: boolean; outputs: Array<"copc" | "3dtiles"> }) =>
+    request<{ accepted: true; task: SpatialAssetTask }>("/api/point-clouds/register", { method: "POST", body: JSON.stringify(payload) }),
   updateImageryAsset: (id: string, payload: Partial<ImageryUploadPayload> & { visible?: boolean; opacity?: number }) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteImageryAsset: (id: string) =>

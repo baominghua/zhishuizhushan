@@ -22,6 +22,7 @@ RUN apt-get update \
         curl \
         gdal-bin \
         libgdal-dev \
+        pdal \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

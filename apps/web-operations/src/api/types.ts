@@ -195,6 +195,32 @@ export interface MapConfigResponse {
 
 export type ImageryAssetType = "orthophoto" | "dsm" | "dtm" | "oblique3d" | "pointcloud" | "flight-photos";
 
+export interface SpatialCoverageMatch {
+  blockId: string;
+  blockCode: string;
+  blockName: string;
+  location: string;
+  blockAreaMu: number | null;
+  intersectionAreaHa: number;
+  blockCoveragePercent: number;
+  imageryCoveragePercent: number;
+  suggested: boolean;
+}
+
+export interface SpatialCoverageAnalysis {
+  algorithmVersion: string;
+  analyzedAt: string;
+  effectiveAreaHa?: number;
+  footprintBounds?: [number, number, number, number];
+  matches: SpatialCoverageMatch[];
+  suggestedBlockCodes: string[];
+  requiresConfirmation: boolean;
+  confirmedAt?: string | null;
+  confirmedBy?: string;
+  confirmedBlockCodes?: string[];
+  error?: string;
+}
+
 export interface ImageryAsset {
   id: string;
   name: string;
@@ -222,6 +248,15 @@ export interface ImageryAsset {
   tileUrl: string;
   tileJsonUrl: string;
   thumbnailUrl: string;
+  coverageAnalysis?: SpatialCoverageAnalysis;
+  footprint?: { type: string; coordinates: unknown };
+  pointCount?: number;
+  pointCloudFileCount?: number;
+  pointCloudVersions?: string[];
+  pointCloudFormats?: number[];
+  nativeBounds?: [number, number, number, number, number, number];
+  copcUrl?: string;
+  tilesetUrl?: string;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
@@ -242,6 +277,44 @@ export interface ImageryUploadPayload {
   capturedAt?: string;
   resolution?: string;
   linkedBlockCodes: string[];
+}
+
+export interface SpatialAssetTask {
+  id: string;
+  type: string;
+  status: "queued" | "running" | "completed" | "failed" | "canceled" | string;
+  progress: number;
+  message: string;
+  sceneId: string;
+  assetType?: ImageryAssetType;
+  sceneUrl?: string;
+  scene?: ImageryAsset;
+}
+
+export interface PointCloudUploadFileState {
+  index: number;
+  name: string;
+  size: number;
+  chunkSize: number;
+  totalChunks: number;
+  receivedChunks: number[];
+  uploadedBytes: number;
+}
+
+export interface PointCloudUploadSession {
+  id: string;
+  name: string;
+  missionId: string;
+  capturedAt: string;
+  status: string;
+  outputs: Array<"copc" | "3dtiles">;
+  files: PointCloudUploadFileState[];
+  uploadedBytes: number;
+  totalBytes: number;
+  progress: number;
+  taskId: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BasemapSettingsResponse {

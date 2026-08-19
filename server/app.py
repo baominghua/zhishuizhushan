@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import csv
+import hashlib
 import io
 import math
 import os
@@ -22,7 +23,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 try:
     from fastapi.routing import iter_route_contexts as fastapi_iter_route_contexts
@@ -87,10 +88,14 @@ from server.modules.mysql_schema import REMOTE_SENSING_MYSQL_TABLES, mysql_catal
 from server.modules.forest_blocks import (
     FOREST_BLOCK_IDENTITY_LOOKUP_BATCH_SIZE,
     FOREST_BLOCK_MYSQL_WRITE_BATCH_SIZE,
+    ForestBlockFilters,
+    block_by_code,
+    filtered_forest_blocks,
+    find_block,
     router as forest_blocks_router,
 )
 from server.modules.forest_rights import router as forest_rights_router
-from server.modules.forest_scene_links import delete_scene_links_for_scene
+from server.modules.forest_scene_links import delete_scene_links_for_scene, replace_scene_links_for_scene
 from server.modules.forest_scene_links import router as forest_scene_links_router
 from server.modules.imports import (
     import_workflow_summary,
@@ -98,6 +103,14 @@ from server.modules.imports import (
     router as imports_router,
 )
 from server.modules.settings import enforce_production_configuration, get_settings
+from server.modules.spatial_assets import (
+    SUPPORTED_POINT_CLOUD_EXTENSIONS,
+    convert_point_cloud_to_3dtiles,
+    convert_point_cloud_to_copc,
+    coverage_analysis,
+    effective_raster_footprint,
+    point_cloud_collection_metadata,
+)
 from server.v2 import router as v2_router
 
 
@@ -142,6 +155,8 @@ DATA_DIR = Path(os.environ.get("REMOTE_SENSING_DATA_DIR", str(ROOT_DIR / "data" 
 UPLOAD_DIR = DATA_DIR / "uploads"
 COG_DIR = DATA_DIR / "cogs"
 INBOX_DIR = DATA_DIR / "inbox"
+POINT_CLOUD_DIR = DATA_DIR / "point-clouds"
+POINT_CLOUD_UPLOAD_SESSION_DIR = DATA_DIR / "point-cloud-upload-sessions"
 CATALOG_PATH = DATA_DIR / "catalog.json"
 TASKS_PATH = DATA_DIR / "tasks.json"
 CACHE_DIR = DATA_DIR / "tile-cache"
@@ -194,6 +209,14 @@ TIANDITU_DETAIL_PREWARM_MIN_ZOOM = max(0, env_int("REMOTE_SENSING_TIANDITU_DETAI
 TIANDITU_DETAIL_PREWARM_MAX_ZOOM = min(18, env_int("REMOTE_SENSING_TIANDITU_DETAIL_PREWARM_MAX_ZOOM", 16))
 TIANDITU_PREWARM_MAX_TILES = max(1, env_int("REMOTE_SENSING_TIANDITU_PREWARM_MAX_TILES", 10000))
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff", ".geotiff"}
+POINT_CLOUD_CHUNK_SIZE = min(
+    128 * 1024 * 1024,
+    max(5 * 1024 * 1024, env_int("REMOTE_SENSING_POINT_CLOUD_CHUNK_SIZE", 16 * 1024 * 1024)),
+)
+POINT_CLOUD_PDAL_EXECUTABLE = os.environ.get("REMOTE_SENSING_PDAL_EXECUTABLE", "pdal").strip() or "pdal"
+POINT_CLOUD_3DTILES_EXECUTABLE = (
+    os.environ.get("REMOTE_SENSING_3DTILES_EXECUTABLE", "py3dtiles").strip() or "py3dtiles"
+)
 IMAGERY_SCENE_VIEW_PERMISSION = "imagery.scenes.view"
 IMAGERY_MANAGE_PERMISSION = "imagery.scenes.manage"
 IMAGERY_SCENE_CREATE_PERMISSION = "imagery.scenes.create"
@@ -257,6 +280,8 @@ SCENE_DELIVERY_STATUSES = {"pending", "delivered", "needs_correction", "rejected
 CATALOG_LOCK = threading.RLock()
 TASK_LOCK = threading.RLock()
 CACHE_PRUNE_LOCK = threading.RLock()
+POINT_CLOUD_SESSION_LOCK = threading.RLock()
+POINT_CLOUD_FILE_LOCKS: dict[str, threading.RLock] = {}
 CACHE_LAST_PRUNE: dict[str, float] = {}
 TASK_EXECUTOR = ThreadPoolExecutor(max_workers=TASK_WORKERS)
 
@@ -344,6 +369,8 @@ def ensure_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     COG_DIR.mkdir(parents=True, exist_ok=True)
     INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    POINT_CLOUD_DIR.mkdir(parents=True, exist_ok=True)
+    POINT_CLOUD_UPLOAD_SESSION_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
     TIANDITU_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -380,6 +407,33 @@ class RegisterSceneRequest(BaseModel):
     missionId: str = ""
     linkedBlockCodes: list[str] | str | None = None
     processingStage: str = "ready"
+
+
+class CoverageConfirmationRequest(BaseModel):
+    blockCodes: list[str] = Field(min_length=1)
+
+
+class PointCloudFileManifest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+    lastModified: int | None = None
+
+
+class PointCloudUploadSessionRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    missionId: str = Field(default="", max_length=128)
+    capturedAt: str = ""
+    files: list[PointCloudFileManifest] = Field(min_length=1, max_length=500)
+    outputs: list[str] = Field(default_factory=lambda: ["copc", "3dtiles"])
+
+
+class PointCloudRegisterRequest(BaseModel):
+    path: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=255)
+    missionId: str = Field(default="", max_length=128)
+    capturedAt: str = ""
+    recursive: bool = True
+    outputs: list[str] = Field(default_factory=lambda: ["copc", "3dtiles"])
 
 
 class SceneAccessUpdateRequest(BaseModel):
@@ -1717,6 +1771,77 @@ def build_scene_record(
     }
 
 
+def coverage_blocks_for_footprint(
+    footprint_bounds: list[float],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    bbox = ",".join(str(float(value)) for value in footprint_bounds)
+    return filtered_forest_blocks(
+        ForestBlockFilters(bbox=bbox, limit=1000),
+        platform_auth_context(context),
+        limit=5000,
+    )
+
+
+def apply_scene_coverage_analysis(
+    scene: dict[str, Any],
+    footprint: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    analysis = coverage_analysis(
+        footprint["geometry"],
+        coverage_blocks_for_footprint(footprint["bounds"], context),
+    )
+    analysis.update(
+        {
+            "analyzedAt": now_iso(),
+            "sourceCrs": footprint.get("sourceCrs") or scene.get("crs") or "",
+            "confirmedAt": None,
+            "confirmedBy": "",
+            "confirmedBlockCodes": [],
+        }
+    )
+    confirmed_codes = split_tokens(scene.get("linkedBlockCodes"))
+    if confirmed_codes:
+        analysis.update(
+            {
+                "requiresConfirmation": False,
+                "confirmedAt": now_iso(),
+                "confirmedBy": str(context.get("user") or ""),
+                "confirmedBlockCodes": confirmed_codes,
+            }
+        )
+        scene["processingStage"] = "ready"
+    else:
+        scene["processingStage"] = "coverage-review"
+    scene["coverageAnalysis"] = analysis
+    scene["footprint"] = footprint["geometry"]
+    scene["updatedAt"] = now_iso()
+    return scene
+
+
+def analyze_raster_scene_coverage(
+    scene: dict[str, Any],
+    cog_path: Path,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        footprint = effective_raster_footprint(cog_path)
+        return apply_scene_coverage_analysis(scene, footprint, context)
+    except Exception as exc:
+        scene["processingStage"] = "coverage-review"
+        scene["coverageAnalysis"] = {
+            "algorithmVersion": "effective-footprint-v1",
+            "analyzedAt": now_iso(),
+            "requiresConfirmation": True,
+            "matches": [],
+            "suggestedBlockCodes": [],
+            "error": str(exc),
+        }
+        scene["updatedAt"] = now_iso()
+        return scene
+
+
 def save_scene(scene: dict[str, Any]) -> None:
     if use_mysql_catalog():
         mysql_upsert_scene(scene)
@@ -1831,11 +1956,22 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
     tile_url = f"{base_url}/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
+    is_point_cloud = str(scene.get("assetType") or "") == "pointcloud"
     return {
         **scene,
-        "tileUrl": tile_url,
-        "tileJsonUrl": f"{base_url}/api/scenes/{scene_id}/tilejson.json{token_query}",
-        "thumbnailUrl": f"{base_url}/api/scenes/{scene_id}/thumbnail.png{token_query}",
+        "tileUrl": "" if is_point_cloud else tile_url,
+        "tileJsonUrl": "" if is_point_cloud else f"{base_url}/api/scenes/{scene_id}/tilejson.json{token_query}",
+        "thumbnailUrl": "" if is_point_cloud else f"{base_url}/api/scenes/{scene_id}/thumbnail.png{token_query}",
+        "copcUrl": (
+            f"{base_url}/api/scenes/{scene_id}/point-cloud/copc{token_query}"
+            if str(scene.get("copcPath") or "").strip()
+            else ""
+        ),
+        "tilesetUrl": (
+            f"{base_url}/api/scenes/{scene_id}/point-cloud/tiles/tileset.json{token_query}"
+            if str(scene.get("tilesetPath") or "").strip()
+            else ""
+        ),
         "metadataUrl": f"{base_url}/api/scenes/{scene_id}{token_query}",
     }
 
@@ -3569,6 +3705,10 @@ def run_conversion_task(task_id: str) -> None:
         "areaCode": task.get("areaCode") or "",
         "allowedRoles": task.get("allowedRoles") or [],
         "allowedUsers": task.get("allowedUsers") or [],
+        "assetType": task.get("assetType") or "orthophoto",
+        "missionId": task.get("missionId") or "",
+        "linkedBlockCodes": task.get("linkedBlockCodes") or [],
+        "processingStage": task.get("processingStage") or "ready",
     }
 
     try:
@@ -3576,6 +3716,12 @@ def run_conversion_task(task_id: str) -> None:
         convert_to_cog(source_path, cog_path)
         update_task(task_id, progress=88, message="Reading raster metadata")
         scene = build_scene_record(scene_id, source_path, cog_path, metadata, fallback_bounds, delete_original)
+        update_task(task_id, progress=91, message="Matching effective footprint to forest blocks")
+        scene = analyze_raster_scene_coverage(
+            scene,
+            cog_path,
+            dict(task.get("analysisContext") or {}),
+        )
         update_task(task_id, progress=94, message="Writing catalog")
         save_scene(scene)
         update_task(
@@ -3596,6 +3742,7 @@ def create_conversion_task(
     fallback_bounds: list[float] | None,
     task_type: str,
     delete_original: bool,
+    analysis_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_dirs()
     scene_id = f"cog-{uuid.uuid4().hex[:12]}"
@@ -3621,6 +3768,17 @@ def create_conversion_task(
         "areaCode": str(metadata.get("areaCode") or ""),
         "allowedRoles": split_tokens(metadata.get("allowedRoles")),
         "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "assetType": str(metadata.get("assetType") or "orthophoto"),
+        "missionId": str(metadata.get("missionId") or ""),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "processingStage": str(metadata.get("processingStage") or "ready"),
+        "analysisContext": {
+            "user": str((analysis_context or {}).get("user") or ""),
+            "roles": sorted((analysis_context or {}).get("roles") or []),
+            "projects": sorted((analysis_context or {}).get("projects") or []),
+            "areas": sorted((analysis_context or {}).get("areas") or []),
+            "principalType": str((analysis_context or {}).get("principalType") or "user"),
+        },
         "bounds": fallback_bounds,
         "deleteOriginalOnSceneDelete": delete_original,
         "createdAt": now_iso(),
@@ -3639,6 +3797,328 @@ def create_conversion_task(
     return task
 
 
+def point_cloud_outputs(values: list[str] | None) -> list[str]:
+    outputs = sorted({str(value).strip().lower() for value in (values or []) if str(value).strip()})
+    unsupported = [value for value in outputs if value not in {"copc", "3dtiles"}]
+    if unsupported:
+        raise HTTPException(status_code=422, detail=f"Unsupported point-cloud outputs: {', '.join(unsupported)}")
+    if not outputs:
+        raise HTTPException(status_code=422, detail="At least one point-cloud output is required")
+    return outputs
+
+
+def point_cloud_session_dir(session_id: str) -> Path:
+    if not re.fullmatch(r"pc-upload-[a-f0-9]{12}", session_id):
+        raise HTTPException(status_code=404, detail="Point-cloud upload session not found")
+    return (POINT_CLOUD_UPLOAD_SESSION_DIR / session_id).resolve()
+
+
+def point_cloud_session_manifest_path(session_id: str) -> Path:
+    return point_cloud_session_dir(session_id) / "session.json"
+
+
+def load_point_cloud_session(session_id: str) -> dict[str, Any]:
+    path = point_cloud_session_manifest_path(session_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Point-cloud upload session not found")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=500, detail="Point-cloud upload session is corrupted") from exc
+
+
+def save_point_cloud_session(session: dict[str, Any]) -> None:
+    path = point_cloud_session_manifest_path(str(session["id"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def public_point_cloud_session(session: dict[str, Any]) -> dict[str, Any]:
+    files = []
+    uploaded_total = 0
+    expected_total = 0
+    for item in session.get("files") or []:
+        expected = int(item.get("size") or 0)
+        uploaded = min(expected, int(item.get("uploadedBytes") or 0))
+        expected_total += expected
+        uploaded_total += uploaded
+        files.append(
+            {
+                "index": item.get("index"),
+                "name": item.get("name"),
+                "size": expected,
+                "chunkSize": item.get("chunkSize"),
+                "totalChunks": item.get("totalChunks"),
+                "receivedChunks": item.get("receivedChunks") or [],
+                "uploadedBytes": uploaded,
+            }
+        )
+    return {
+        "id": session.get("id"),
+        "name": session.get("name"),
+        "missionId": session.get("missionId"),
+        "capturedAt": session.get("capturedAt"),
+        "status": session.get("status"),
+        "outputs": session.get("outputs") or [],
+        "files": files,
+        "uploadedBytes": uploaded_total,
+        "totalBytes": expected_total,
+        "progress": round(uploaded_total / expected_total * 100, 2) if expected_total else 0,
+        "taskId": session.get("taskId") or "",
+        "createdAt": session.get("createdAt"),
+        "updatedAt": session.get("updatedAt"),
+    }
+
+
+def require_point_cloud_session_access(
+    session: dict[str, Any],
+    context: dict[str, Any],
+) -> None:
+    owner = str(session.get("createdBy") or "").strip()
+    current_user = str(context.get("user") or "").strip()
+    if owner and owner != current_user and not platform_has_admin_role(platform_auth_context(context)):
+        raise HTTPException(status_code=403, detail="Point-cloud upload session belongs to another user")
+
+
+def point_cloud_file_lock(session_id: str, file_index: int) -> threading.RLock:
+    key = f"{session_id}:{file_index}"
+    with POINT_CLOUD_SESSION_LOCK:
+        return POINT_CLOUD_FILE_LOCKS.setdefault(key, threading.RLock())
+
+
+def resolve_point_cloud_import_sources(path_value: str, *, recursive: bool) -> list[Path]:
+    if not path_value.strip():
+        raise HTTPException(status_code=400, detail="Point-cloud import path is required")
+    source = Path(path_value).expanduser()
+    if not source.is_absolute():
+        source = INBOX_DIR / source
+    resolved = source.resolve()
+    import_root = next((directory.resolve() for directory in IMPORT_DIRS if is_relative_to(resolved, directory.resolve())), None)
+    if import_root is None:
+        raise HTTPException(status_code=403, detail="Point-cloud path is outside REMOTE_SENSING_IMPORT_DIRS")
+    if any(part.startswith(".") for part in resolved.relative_to(import_root).parts):
+        raise HTTPException(status_code=422, detail="Hidden point-cloud working directories cannot be registered")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Point-cloud import path not found")
+    if resolved.is_file():
+        candidates = [resolved]
+    else:
+        iterator = resolved.rglob("*") if recursive else resolved.glob("*")
+        candidates = [item for item in iterator if item.is_file()]
+    result = sorted({
+        item.resolve()
+        for item in candidates
+        if item.suffix.lower() in SUPPORTED_POINT_CLOUD_EXTENSIONS
+        and is_relative_to(item.resolve(), import_root)
+        and not any(part.startswith(".") for part in item.resolve().relative_to(import_root).parts)
+    })
+    if not result:
+        raise HTTPException(status_code=422, detail="Import path does not contain LAS/LAZ files")
+    if len(result) > 500:
+        raise HTTPException(status_code=422, detail="One point-cloud dataset cannot contain more than 500 files")
+    return result
+
+
+def build_point_cloud_scene_record(
+    scene_id: str,
+    dataset_dir: Path,
+    source_paths: list[Path],
+    metadata: dict[str, Any],
+    point_cloud: dict[str, Any],
+    outputs: list[str],
+    delete_original: bool,
+) -> dict[str, Any]:
+    copc_path = dataset_dir / "dataset.copc.laz"
+    tiles_path = dataset_dir / "3dtiles" / "tileset.json"
+    size = sum(path.stat().st_size for path in source_paths if path.exists())
+    return {
+        "id": scene_id,
+        "source": "server",
+        "storage": "+".join(value.upper() for value in outputs),
+        "name": str(metadata.get("name") or scene_id).strip(),
+        "fileName": f"{slugify(str(metadata.get('name') or scene_id))}.pointcloud",
+        "fileType": "application/vnd.las",
+        "size": size,
+        "originalSize": size,
+        "satellite": "",
+        "sensor": "LiDAR",
+        "capturedAt": str(metadata.get("capturedAt") or "").strip(),
+        "projectId": str(metadata.get("projectId") or "").strip(),
+        "areaCode": str(metadata.get("areaCode") or "").strip(),
+        "allowedRoles": split_tokens(metadata.get("allowedRoles")),
+        "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "assetType": "pointcloud",
+        "missionId": str(metadata.get("missionId") or "").strip(),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "processingStage": "coverage-review",
+        "resolution": "",
+        "bounds": point_cloud["bounds"],
+        "crs": point_cloud["crs"],
+        "width": 0,
+        "height": 0,
+        "bands": 0,
+        "dtype": "pointcloud",
+        "pointCount": point_cloud["pointCount"],
+        "pointCloudFileCount": point_cloud["fileCount"],
+        "pointCloudVersions": point_cloud["versions"],
+        "pointCloudFormats": point_cloud["pointFormats"],
+        "nativeBounds": point_cloud["nativeBounds"],
+        "pointCloudFiles": point_cloud["files"],
+        "pointCloudSourcePaths": [catalog_path(path) for path in source_paths],
+        "copcPath": catalog_path(copc_path) if "copc" in outputs else "",
+        "tilesetPath": catalog_path(tiles_path) if "3dtiles" in outputs else "",
+        "deleteOriginalOnSceneDelete": delete_original,
+        "opacity": 1.0,
+        "visible": True,
+        "transferStatus": "pointcloud-ready",
+        "deliveryStatus": "pending",
+        "deliveryComment": "",
+        "deliveredAt": None,
+        "deliveredBy": "",
+        "deliveryEvents": [],
+        "createdAt": now_iso(),
+        "updatedAt": now_iso(),
+    }
+
+
+def run_point_cloud_conversion_task(task_id: str) -> None:
+    if find_task_record(task_id).get("status") == "canceled":
+        return
+    task = update_task(task_id, status="running", progress=5, message="Validating LAS/LAZ headers", startedAt=now_iso())
+    source_paths = [Path(value).resolve() for value in task.get("sourcePaths") or []]
+    scene_id = str(task["sceneId"])
+    dataset_dir = Path(str(task["datasetPath"])).resolve()
+    delete_original = bool(task.get("deleteOriginalOnSceneDelete"))
+    outputs = point_cloud_outputs(task.get("outputs") or [])
+    try:
+        point_cloud = point_cloud_collection_metadata(source_paths)
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        if delete_original and not bool(task.get("sourcesOwned")):
+            owned_dir = dataset_dir / "sources"
+            owned_dir.mkdir(parents=True, exist_ok=True)
+            owned_paths: list[Path] = []
+            for index, source_path in enumerate(source_paths):
+                target = owned_dir / f"{index:04d}-{slugify(source_path.name)}"
+                if source_path != target:
+                    shutil.move(str(source_path), str(target))
+                owned_paths.append(target)
+            source_paths = owned_paths
+            update_task(task_id, sourcePaths=[str(path) for path in source_paths], sourcesOwned=True)
+        if "copc" in outputs:
+            update_task(task_id, progress=25, message="Converting point cloud to COPC")
+            copc_path = dataset_dir / "dataset.copc.laz"
+            if copc_path.exists():
+                copc_path.unlink()
+            convert_point_cloud_to_copc(
+                source_paths,
+                copc_path,
+                pdal_executable=POINT_CLOUD_PDAL_EXECUTABLE,
+            )
+        if "3dtiles" in outputs:
+            update_task(task_id, progress=65, message="Converting point cloud to 3D Tiles")
+            tiles_dir = dataset_dir / "3dtiles"
+            if tiles_dir.exists():
+                shutil.rmtree(tiles_dir)
+            convert_point_cloud_to_3dtiles(
+                source_paths,
+                tiles_dir,
+                py3dtiles_executable=POINT_CLOUD_3DTILES_EXECUTABLE,
+            )
+        update_task(task_id, progress=90, message="Matching point-cloud footprint to forest blocks")
+        metadata = {
+            "name": task.get("name") or scene_id,
+            "missionId": task.get("missionId") or "",
+            "capturedAt": task.get("capturedAt") or "",
+            "projectId": task.get("projectId") or "",
+            "areaCode": task.get("areaCode") or "",
+            "allowedRoles": task.get("allowedRoles") or [],
+            "allowedUsers": task.get("allowedUsers") or [],
+            "linkedBlockCodes": task.get("linkedBlockCodes") or [],
+        }
+        scene = build_point_cloud_scene_record(
+            scene_id,
+            dataset_dir,
+            source_paths,
+            metadata,
+            point_cloud,
+            outputs,
+            delete_original,
+        )
+        scene = apply_scene_coverage_analysis(
+            scene,
+            {
+                "geometry": point_cloud["footprint"],
+                "bounds": point_cloud["bounds"],
+                "sourceCrs": point_cloud["crs"],
+            },
+            dict(task.get("analysisContext") or {}),
+        )
+        update_task(task_id, progress=96, message="Writing point-cloud catalog")
+        save_scene(scene)
+        update_task(
+            task_id,
+            status="completed",
+            progress=100,
+            message="Point-cloud dataset is ready for coverage confirmation",
+            scene=scene,
+            completedAt=now_iso(),
+        )
+    except Exception as exc:
+        update_task(task_id, status="failed", progress=100, message=str(exc), failedAt=now_iso())
+
+
+def create_point_cloud_conversion_task(
+    source_paths: list[Path],
+    metadata: dict[str, Any],
+    *,
+    outputs: list[str],
+    task_type: str,
+    delete_original: bool,
+    analysis_context: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_dirs()
+    scene_id = f"pc-{uuid.uuid4().hex[:12]}"
+    task_id = f"task-{uuid.uuid4().hex[:12]}"
+    timestamp = now_iso()
+    task = {
+        "id": task_id,
+        "type": task_type,
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued",
+        "sceneId": scene_id,
+        "name": str(metadata.get("name") or scene_id),
+        "fileName": f"{len(source_paths)} LAS/LAZ files",
+        "sourcePaths": [str(path.resolve()) for path in source_paths],
+        "datasetPath": str((POINT_CLOUD_DIR / scene_id).resolve()),
+        "assetType": "pointcloud",
+        "missionId": str(metadata.get("missionId") or ""),
+        "capturedAt": str(metadata.get("capturedAt") or ""),
+        "projectId": str(metadata.get("projectId") or ""),
+        "areaCode": str(metadata.get("areaCode") or ""),
+        "allowedRoles": split_tokens(metadata.get("allowedRoles")),
+        "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "outputs": point_cloud_outputs(outputs),
+        "deleteOriginalOnSceneDelete": delete_original,
+        "analysisContext": {
+            "user": str(analysis_context.get("user") or ""),
+            "roles": sorted(analysis_context.get("roles") or []),
+            "projects": sorted(analysis_context.get("projects") or []),
+            "areas": sorted(analysis_context.get("areas") or []),
+            "principalType": str(analysis_context.get("principalType") or "user"),
+        },
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "events": [{"at": timestamp, "status": "queued", "progress": 0, "message": "Queued"}],
+    }
+    upsert_task(task)
+    TASK_EXECUTOR.submit(run_point_cloud_conversion_task, task_id)
+    return task
+
+
 def find_task_record(task_id: str) -> dict[str, Any]:
     for task in load_tasks():
         if str(task.get("id")) == str(task_id):
@@ -3651,9 +4131,16 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
     if original.get("status") != "failed":
         raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
 
-    source_path = Path(str(original.get("sourcePath") or "")).resolve()
-    if not source_path.exists():
-        raise HTTPException(status_code=400, detail="Original source file is no longer available")
+    is_point_cloud = str(original.get("assetType") or "") == "pointcloud"
+    if is_point_cloud:
+        source_paths = [Path(str(value)).resolve() for value in original.get("sourcePaths") or []]
+        if not source_paths or any(not path.exists() for path in source_paths):
+            raise HTTPException(status_code=400, detail="Original point-cloud source files are no longer available")
+        source_path = None
+    else:
+        source_path = Path(str(original.get("sourcePath") or "")).resolve()
+        if not source_path.exists():
+            raise HTTPException(status_code=400, detail="Original source file is no longer available")
 
     timestamp = now_iso()
     retry_attempt = int(original.get("retryAttempt") or 0) + 1
@@ -3665,10 +4152,11 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
         "message": "Queued retry",
         "retryOf": original.get("id"),
         "retryAttempt": retry_attempt,
-        "sourcePath": str(source_path),
         "createdAt": timestamp,
         "updatedAt": timestamp,
     }
+    if source_path is not None:
+        retry_task["sourcePath"] = str(source_path)
     for key in ["startedAt", "completedAt", "failedAt", "scene"]:
         retry_task.pop(key, None)
     retry_task["events"] = [
@@ -3680,7 +4168,8 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
         }
     ]
     upsert_task(retry_task)
-    TASK_EXECUTOR.submit(run_conversion_task, retry_task["id"])
+    runner = run_point_cloud_conversion_task if is_point_cloud else run_conversion_task
+    TASK_EXECUTOR.submit(runner, retry_task["id"])
     return retry_task
 
 
@@ -5055,7 +5544,7 @@ async def upload_scene(
     linkedBlockCodes: str = Form(""),
     processingStage: str = Form("ready"),
 ) -> Any:
-    require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
     ensure_dirs()
     extension = Path(file.filename or "").suffix.lower()
     if extension not in SUPPORTED_RASTER_EXTENSIONS:
@@ -5087,12 +5576,20 @@ async def upload_scene(
         "processingStage": processingStage.strip() or "ready",
     }
     if asyncMode:
-        task = create_conversion_task(source_path, metadata, fallback_bounds, "upload", delete_original=True)
+        task = create_conversion_task(
+            source_path,
+            metadata,
+            fallback_bounds,
+            "upload",
+            delete_original=True,
+            analysis_context=context,
+        )
         return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
 
     try:
         convert_to_cog(source_path, cog_path)
         scene = build_scene_record(scene_id, source_path, cog_path, metadata, fallback_bounds, delete_original=True)
+        scene = analyze_raster_scene_coverage(scene, cog_path, context)
     except HTTPException:
         raise
     except Exception as exc:
@@ -5104,7 +5601,7 @@ async def upload_scene(
 
 @app.post("/api/scenes/register")
 def register_scene(payload: RegisterSceneRequest, request: Request) -> JSONResponse:
-    require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
     source_path = resolve_import_path(payload.path)
     fallback_bounds = parse_bounds(payload.bounds)
     metadata = {
@@ -5123,7 +5620,252 @@ def register_scene(payload: RegisterSceneRequest, request: Request) -> JSONRespo
         "linkedBlockCodes": payload.linkedBlockCodes,
         "processingStage": payload.processingStage.strip() or "ready",
     }
-    task = create_conversion_task(source_path, metadata, fallback_bounds, "register", delete_original=False)
+    task = create_conversion_task(
+        source_path,
+        metadata,
+        fallback_bounds,
+        "register",
+        delete_original=False,
+        analysis_context=context,
+    )
+    return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
+
+
+@app.post("/api/scenes/{scene_id}/coverage/confirm")
+def confirm_scene_coverage(
+    scene_id: str,
+    payload: CoverageConfirmationRequest,
+    request: Request,
+) -> dict[str, Any]:
+    context = require_imagery_permission(request, IMAGERY_SCENE_UPDATE_PERMISSION)
+    scene = find_allowed_scene(scene_id, request)
+    blocks: list[dict[str, Any]] = []
+    for code in split_tokens(payload.blockCodes):
+        block = block_by_code(code)
+        if not block:
+            raise HTTPException(status_code=422, detail=f"Forest block does not exist: {code}")
+        blocks.append(find_block(str(block["id"]), platform_auth_context(context)))
+    confirmed_codes = [str(block["blockCode"]) for block in blocks]
+    analysis = dict(scene.get("coverageAnalysis") or {})
+    analysis.update(
+        {
+            "requiresConfirmation": False,
+            "confirmedAt": now_iso(),
+            "confirmedBy": str(context.get("user") or ""),
+            "confirmedBlockCodes": confirmed_codes,
+        }
+    )
+    updated = {
+        **scene,
+        "linkedBlockCodes": confirmed_codes,
+        "processingStage": "ready",
+        "coverageAnalysis": analysis,
+        "updatedAt": now_iso(),
+    }
+    save_scene(updated)
+    replace_scene_links_for_scene(
+        scene_id,
+        [
+            {
+                "forestBlockId": str(block["id"]),
+                "relationType": "coverage",
+                "capturedAt": updated.get("capturedAt") or None,
+                "confidence": 1.0,
+            }
+            for block in blocks
+        ],
+    )
+    return public_scene(updated, request)
+
+
+@app.post("/api/point-clouds/upload-sessions")
+def create_point_cloud_upload_session(
+    payload: PointCloudUploadSessionRequest,
+    request: Request,
+) -> dict[str, Any]:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    ensure_dirs()
+    outputs = point_cloud_outputs(payload.outputs)
+    names: set[str] = set()
+    validated_files: list[tuple[int, PointCloudFileManifest]] = []
+    session_id = f"pc-upload-{uuid.uuid4().hex[:12]}"
+    session_path = point_cloud_session_dir(session_id)
+    for index, manifest in enumerate(payload.files):
+        extension = Path(manifest.name).suffix.lower()
+        if extension not in SUPPORTED_POINT_CLOUD_EXTENSIONS:
+            raise HTTPException(status_code=422, detail=f"Only LAS/LAZ files are accepted: {manifest.name}")
+        normalized_name = manifest.name.strip().lower()
+        if normalized_name in names:
+            raise HTTPException(status_code=422, detail=f"Duplicate point-cloud file name: {manifest.name}")
+        names.add(normalized_name)
+        validated_files.append((index, manifest))
+    (session_path / "files").mkdir(parents=True, exist_ok=False)
+    files: list[dict[str, Any]] = []
+    for index, manifest in validated_files:
+        total_chunks = math.ceil(manifest.size / POINT_CLOUD_CHUNK_SIZE)
+        storage_path = session_path / "files" / f"{index:04d}-{slugify(manifest.name)}"
+        files.append(
+            {
+                "index": index,
+                "name": manifest.name.strip(),
+                "size": manifest.size,
+                "lastModified": manifest.lastModified,
+                "chunkSize": POINT_CLOUD_CHUNK_SIZE,
+                "totalChunks": total_chunks,
+                "receivedChunks": [],
+                "chunkHashes": {},
+                "uploadedBytes": 0,
+                "storagePath": str(storage_path),
+            }
+        )
+    timestamp = now_iso()
+    session = {
+        "id": session_id,
+        "name": payload.name.strip(),
+        "missionId": payload.missionId.strip(),
+        "capturedAt": payload.capturedAt.strip(),
+        "outputs": outputs,
+        "status": "uploading",
+        "files": files,
+        "createdBy": str(context.get("user") or ""),
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+    }
+    save_point_cloud_session(session)
+    return public_point_cloud_session(session)
+
+
+@app.get("/api/point-clouds/upload-sessions/{session_id}")
+def get_point_cloud_upload_session(session_id: str, request: Request) -> dict[str, Any]:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    session = load_point_cloud_session(session_id)
+    require_point_cloud_session_access(session, context)
+    return public_point_cloud_session(session)
+
+
+@app.put("/api/point-clouds/upload-sessions/{session_id}/files/{file_index}/chunks/{chunk_index}")
+async def upload_point_cloud_chunk(
+    session_id: str,
+    file_index: int,
+    chunk_index: int,
+    request: Request,
+) -> dict[str, Any]:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    session = load_point_cloud_session(session_id)
+    require_point_cloud_session_access(session, context)
+    if session.get("status") != "uploading":
+        raise HTTPException(status_code=409, detail="Point-cloud upload session is not accepting chunks")
+    files = list(session.get("files") or [])
+    if file_index < 0 or file_index >= len(files):
+        raise HTTPException(status_code=404, detail="Point-cloud upload file not found")
+    item = files[file_index]
+    total_chunks = int(item["totalChunks"])
+    if chunk_index < 0 or chunk_index >= total_chunks:
+        raise HTTPException(status_code=416, detail="Point-cloud chunk index is outside the file range")
+    body = await request.body()
+    expected_start = chunk_index * int(item["chunkSize"])
+    expected_size = min(int(item["chunkSize"]), int(item["size"]) - expected_start)
+    if len(body) != expected_size:
+        raise HTTPException(status_code=416, detail=f"Chunk size mismatch; expected {expected_size} bytes")
+    content_range = request.headers.get("content-range", "")
+    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", content_range)
+    if not match:
+        raise HTTPException(status_code=400, detail="Content-Range must be bytes start-end/total")
+    start, end, total = (int(value) for value in match.groups())
+    if start != expected_start or end != expected_start + len(body) - 1 or total != int(item["size"]):
+        raise HTTPException(status_code=416, detail="Content-Range does not match the requested chunk")
+    digest = hashlib.sha256(body).hexdigest()
+    expected_digest = request.headers.get("x-chunk-sha256", "").strip().lower()
+    if expected_digest and expected_digest != digest:
+        raise HTTPException(status_code=422, detail="Point-cloud chunk checksum mismatch")
+
+    with point_cloud_file_lock(session_id, file_index), POINT_CLOUD_SESSION_LOCK:
+        session = load_point_cloud_session(session_id)
+        require_point_cloud_session_access(session, context)
+        if session.get("status") != "uploading":
+            raise HTTPException(status_code=409, detail="Point-cloud upload session is not accepting chunks")
+        item = session["files"][file_index]
+        storage_path = Path(str(item["storagePath"])).resolve()
+        storage_path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "r+b" if storage_path.exists() else "w+b"
+        with storage_path.open(mode) as output:
+            if mode == "w+b":
+                output.truncate(int(item["size"]))
+            output.seek(expected_start)
+            output.write(body)
+            output.flush()
+        received = {int(value) for value in item.get("receivedChunks") or []}
+        is_new = chunk_index not in received
+        received.add(chunk_index)
+        item["receivedChunks"] = sorted(received)
+        item.setdefault("chunkHashes", {})[str(chunk_index)] = digest
+        if is_new:
+            item["uploadedBytes"] = int(item.get("uploadedBytes") or 0) + len(body)
+        session["updatedAt"] = now_iso()
+        save_point_cloud_session(session)
+    return {
+        "ok": True,
+        "fileIndex": file_index,
+        "chunkIndex": chunk_index,
+        "sha256": digest,
+        "session": public_point_cloud_session(session),
+    }
+
+
+@app.post("/api/point-clouds/upload-sessions/{session_id}/complete")
+def complete_point_cloud_upload_session(session_id: str, request: Request) -> JSONResponse:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    with POINT_CLOUD_SESSION_LOCK:
+        session = load_point_cloud_session(session_id)
+        require_point_cloud_session_access(session, context)
+        if session.get("status") == "queued" and session.get("taskId"):
+            return JSONResponse(
+                status_code=202,
+                content={"accepted": True, "task": task_public(find_task_record(str(session["taskId"])), request)},
+            )
+        incomplete = [
+            item["name"]
+            for item in session.get("files") or []
+            if len(set(item.get("receivedChunks") or [])) != int(item.get("totalChunks") or 0)
+        ]
+        if incomplete:
+            raise HTTPException(status_code=409, detail=f"Point-cloud files are incomplete: {', '.join(incomplete[:5])}")
+        source_paths = [Path(str(item["storagePath"])).resolve() for item in session["files"]]
+        task = create_point_cloud_conversion_task(
+            source_paths,
+            {
+                "name": session["name"],
+                "missionId": session.get("missionId") or "",
+                "capturedAt": session.get("capturedAt") or "",
+            },
+            outputs=list(session.get("outputs") or []),
+            task_type="pointcloud-upload",
+            delete_original=True,
+            analysis_context=context,
+        )
+        session["status"] = "queued"
+        session["taskId"] = task["id"]
+        session["updatedAt"] = now_iso()
+        save_point_cloud_session(session)
+    return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
+
+
+@app.post("/api/point-clouds/register")
+def register_point_cloud(payload: PointCloudRegisterRequest, request: Request) -> JSONResponse:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    source_paths = resolve_point_cloud_import_sources(payload.path, recursive=payload.recursive)
+    task = create_point_cloud_conversion_task(
+        source_paths,
+        {
+            "name": payload.name.strip(),
+            "missionId": payload.missionId.strip(),
+            "capturedAt": payload.capturedAt.strip(),
+        },
+        outputs=payload.outputs,
+        task_type="pointcloud-register",
+        delete_original=False,
+        analysis_context=context,
+    )
     return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
 
 
@@ -5322,6 +6064,42 @@ def archive_task(task_id: str, request: Request) -> dict[str, Any]:
     return {"ok": True, "archived": task_id, "task": task_public(task, request)}
 
 
+@app.get("/api/scenes/{scene_id}/point-cloud/copc")
+def point_cloud_copc(scene_id: str, request: Request) -> FileResponse:
+    scene = find_allowed_scene(scene_id, request)
+    if str(scene.get("assetType") or "") != "pointcloud":
+        raise HTTPException(status_code=404, detail="Point-cloud asset not found")
+    path_value = str(scene.get("copcPath") or "").strip()
+    if not path_value:
+        raise HTTPException(status_code=404, detail="COPC output is not available")
+    path = resolve_catalog_path(path_value)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="COPC file not found")
+    return FileResponse(path, media_type="application/vnd.laszip", filename=f"{slugify(scene['name'])}.copc.laz")
+
+
+@app.get("/api/scenes/{scene_id}/point-cloud/tiles/{asset_path:path}")
+def point_cloud_3dtiles(scene_id: str, asset_path: str, request: Request) -> FileResponse:
+    scene = find_allowed_scene(scene_id, request)
+    if str(scene.get("assetType") or "") != "pointcloud":
+        raise HTTPException(status_code=404, detail="Point-cloud asset not found")
+    tileset_value = str(scene.get("tilesetPath") or "").strip()
+    if not tileset_value:
+        raise HTTPException(status_code=404, detail="3D Tiles output is not available")
+    tiles_root = resolve_catalog_path(tileset_value).parent.resolve()
+    target = (tiles_root / asset_path).resolve()
+    if not is_relative_to(target, tiles_root) or not target.is_file():
+        raise HTTPException(status_code=404, detail="3D Tiles asset not found")
+    media_types = {
+        ".json": "application/json",
+        ".pnts": "application/octet-stream",
+        ".b3dm": "application/octet-stream",
+        ".cmpt": "application/octet-stream",
+        ".glb": "model/gltf-binary",
+    }
+    return FileResponse(target, media_type=media_types.get(target.suffix.lower(), "application/octet-stream"))
+
+
 @app.get("/api/scenes/{scene_id}/tilejson.json")
 def tilejson(scene_id: str, request: Request) -> dict[str, Any]:
     scene = public_scene(find_allowed_scene(scene_id, request), request)
@@ -5449,7 +6227,9 @@ def tianditu_tile(request: Request, layer: str, z: int, x: int, y: int, tk: str 
 
     runtime = runtime_basemap_settings()
     browser_token = tk.strip()
-    token = browser_token or runtime["serverKey"]
+    # Keep the process-level value as a fallback for deployments and tests that
+    # inject the server key without persisting a runtime basemap settings file.
+    token = browser_token or runtime["serverKey"] or TIANDITU_TK
     if not token and not runtime["proxyBaseUrl"]:
         raise HTTPException(
             status_code=400,
