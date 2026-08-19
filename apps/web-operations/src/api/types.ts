@@ -186,6 +186,7 @@ export interface ForestRightOptionsResponse {
 export interface MapConfigResponse {
   provider: "tianditu";
   available: boolean;
+  accessMode: "server-proxy" | "web-direct";
   imageryUrl: string;
   labelsUrl: string;
   maximumLevel: number;
@@ -248,6 +249,13 @@ export interface BasemapSettingsResponse {
   available: boolean;
   hasServerKey: boolean;
   serverKeyMasked: string;
+  hasWebKey: boolean;
+  webKeyMasked: string;
+  hasAndroidKey: boolean;
+  androidKeyMasked: string;
+  hasIosKey: boolean;
+  iosKeyMasked: string;
+  webDirectEnabled: boolean;
   proxyBaseUrl: string;
   referer: string;
   source: "stored" | "environment";
@@ -255,6 +263,10 @@ export interface BasemapSettingsResponse {
 
 export interface BasemapSettingsPayload {
   serverKey: string;
+  webKey: string;
+  androidKey: string;
+  iosKey: string;
+  webDirectEnabled: boolean;
   proxyBaseUrl: string;
   referer: string;
 }

@@ -79,10 +79,12 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "maximumLevel: 19" in cesium
     assert "maximumLevel: config.maximumLevel" in cesium
     assert "viewer.useBrowserRecommendedResolution = false" in cesium
-    assert "viewer.resolutionScale = sharpResolutionScale()" in cesium
-    assert "return Math.min(1.25, 2 / devicePixelRatio)" in cesium
-    assert "viewer.scene.globe.maximumScreenSpaceError = 0.5" in cesium
-    assert "viewer.scene.globe.preloadSiblings = true" in cesium
+    assert "viewer.resolutionScale = performanceResolutionScale()" in cesium
+    assert "return Math.min(1.1, 1.25 / devicePixelRatio)" in cesium
+    assert "viewer.scene.globe.maximumScreenSpaceError = 2" in cesium
+    assert "viewer.scene.globe.preloadSiblings = false" in cesium
+    assert "labelLayerRef.current.show = false" in cesium
+    assert "}, 1_500);" in cesium
     assert "targetHeight" in cesium
     assert 'zoomRequest.direction === "in"' in cesium
     assert "FAR_VIEW_PITCH_RESET_HEIGHT = 300_000" in cesium
@@ -130,7 +132,23 @@ def test_v2_basemap_settings_are_managed_server_side():
     assert '"/api/v2/system/basemap-settings"' in client
     assert "完整值不会返回浏览器" in page
     assert 'type="password"' in page
+    assert 'name="webKey"' in page
+    assert 'name="androidKey"' in page
+    assert 'name="iosKey"' in page
+    assert 'name="webDirectEnabled"' in page
     assert "?tk=" not in cesium
+
+
+def test_v2_api_client_sends_and_recovers_human_session_csrf_tokens():
+    client = (
+        ROOT_DIR / "apps" / "web-operations" / "src" / "api" / "client.ts"
+    ).read_text(encoding="utf-8")
+
+    assert 'const CSRF_COOKIE_NAME = "smart_bamboo_session_csrf"' in client
+    assert 'headers["X-CSRF-Token"] = csrfToken()' in client
+    assert 'fetch("/api/auth/session"' in client
+    assert 'headers["X-CSRF-Token"] = freshToken' in client
+    assert 'isCsrfFailure(response, responseBody)' in client
 
 
 def test_v2_mobile_operations_page_exposes_sync_tracks_and_evidence_ledgers():

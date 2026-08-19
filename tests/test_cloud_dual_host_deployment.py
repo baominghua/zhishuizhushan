@@ -1354,6 +1354,15 @@ def test_v2_map_defaults_to_2d_and_keeps_cesium_lazy_loaded():
     assert 'await import("./CesiumGlobe")' in map_canvas
 
 
+def test_v2_map_defers_noncritical_queries_and_secure_entry_uses_http2():
+    map_page = read_text("apps/web-operations/src/pages/MapPage.tsx")
+    secure_nginx = read_text("ops/nginx/smart-bamboo-v2-secure.conf")
+
+    assert 'enabled: filtersOpen' in map_page
+    assert 'enabled: resultsOpen' in map_page
+    assert 'http2 on;' in secure_nginx
+
+
 def test_tianditu_key_configurator_updates_only_key_without_logging_it(tmp_path):
     env_file = tmp_path / "primary.env"
     env_file.write_text(

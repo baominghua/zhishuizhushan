@@ -108,24 +108,76 @@ export class ApiError extends Error {
   }
 }
 
+const CSRF_COOKIE_NAME = "smart_bamboo_session_csrf";
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+let recoveredCsrfToken = "";
+
+function cookieValue(name: string): string {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const match = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
+  return match ? decodeURIComponent(match.slice(prefix.length)) : "";
+}
+
+function csrfToken(): string {
+  return cookieValue(CSRF_COOKIE_NAME) || recoveredCsrfToken;
+}
+
+function isCsrfFailure(response: Response, body: unknown): boolean {
+  return response.status === 403
+    && typeof body === "object"
+    && body !== null
+    && "detail" in body
+    && (body as { detail?: unknown }).detail === "CSRF validation failed";
+}
+
+async function recoverCsrfToken(): Promise<string> {
+  const response = await fetch("/api/auth/session", {
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return "";
+  const body = await response.json() as { csrfToken?: string };
+  recoveredCsrfToken = body.csrfToken || "";
+  return recoveredCsrfToken;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = String(init.method || "GET").toUpperCase();
   const headers = requestHeaders({
     Accept: "application/json",
     ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
     ...(init.headers as Record<string, string> | undefined),
   });
-  const response = await fetch(path, {
+  if (MUTATING_METHODS.has(method) && csrfToken()) {
+    headers["X-CSRF-Token"] = csrfToken();
+  }
+  const requestInit = {
     ...init,
     credentials: "same-origin",
     headers,
-  });
+  } satisfies RequestInit;
+  let response = await fetch(path, requestInit);
+  let responseBody: unknown = null;
+  if (!response.ok) {
+    responseBody = await response.clone().json().catch(() => null);
+  }
+  if (MUTATING_METHODS.has(method) && isCsrfFailure(response, responseBody)) {
+    const freshToken = await recoverCsrfToken();
+    if (freshToken) {
+      headers["X-CSRF-Token"] = freshToken;
+      response = await fetch(path, { ...requestInit, headers });
+      responseBody = response.ok
+        ? null
+        : await response.clone().json().catch(() => null);
+    }
+  }
   if (!response.ok) {
     let message = `请求失败 (${response.status})`;
-    try {
-      const body = (await response.json()) as { detail?: string };
-      message = body.detail || message;
-    } catch {
-      // Keep the status-based message when the response is not JSON.
+    if (typeof responseBody === "object" && responseBody !== null && "detail" in responseBody) {
+      message = String((responseBody as { detail?: unknown }).detail || message);
     }
     throw new ApiError(message, response.status);
   }
