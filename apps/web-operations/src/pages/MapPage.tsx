@@ -15,7 +15,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api/client";
-import type { ForestBlockOption, ForestBlockQuery } from "../api/types";
+import type { ForestBlockOption, ForestBlockQuery, ImageryAsset } from "../api/types";
 import { MapCanvas } from "../components/MapCanvas";
 import { QueryState } from "../components/QueryState";
 import {
@@ -67,6 +67,7 @@ function initialMapMode(): MapViewMode {
 }
 
 export function MapPage() {
+  const targetSceneId = useMemo(() => new URLSearchParams(window.location.search).get("sceneId") || "", []);
   const [resultsOpen, setResultsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
@@ -140,6 +141,28 @@ export function MapPage() {
       asset.visible !== false && ["orthophoto", "dsm", "dtm"].includes(asset.assetType || "orthophoto")),
     [imageryAssets.data?.scenes],
   );
+  const spatial3dAssetsQuery = useQuery({
+    queryKey: ["spatial-3d-assets", viewport.bbox.join(",")],
+    queryFn: () => api.imageryAssets({ bbox: viewport.bbox.join(","), limit: 100 }),
+    enabled: mode === "3d" && layers.spatial3d,
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const targetSpatialAsset = useQuery({
+    queryKey: ["imagery-asset", targetSceneId],
+    queryFn: () => api.imageryAsset(targetSceneId),
+    enabled: Boolean(targetSceneId),
+    staleTime: 60_000,
+  });
+  const visibleSpatial3dAssets = useMemo(() => {
+    const items: ImageryAsset[] = [...(spatial3dAssetsQuery.data?.scenes ?? [])];
+    if (targetSpatialAsset.data && !items.some((item) => item.id === targetSpatialAsset.data?.id)) {
+      items.unshift(targetSpatialAsset.data);
+    }
+    return items.filter((asset) =>
+      asset.visible !== false && Boolean(asset.tilesetUrl) && asset.processingStage !== "coverage-review"
+      && ["pointcloud", "oblique3d"].includes(asset.assetType));
+  }, [spatial3dAssetsQuery.data?.scenes, targetSpatialAsset.data]);
   const selectedDetail = useQuery({
     queryKey: ["forest-block-detail", selected?.id],
     queryFn: () => api.forestBlockDetail(selected!.id),
@@ -172,6 +195,16 @@ export function MapPage() {
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    const asset = targetSpatialAsset.data;
+    if (!asset?.tilesetUrl || asset.processingStage === "coverage-review") return;
+    setMode("3d");
+    setLayers((current) => ({ ...current, spatial3d: true }));
+    if (asset.bounds?.length === 4) {
+      setAreaFocusRequest((current) => ({ sequence: current.sequence + 1, bbox: asset.bounds }));
+    }
+  }, [targetSpatialAsset.data]);
 
   useEffect(() => {
     setDetailPosition(null);
@@ -432,6 +465,7 @@ export function MapPage() {
           onSelectBlock={selectMapBlock}
           onViewportChange={updateViewport}
           imageryAssets={visibleImageryAssets}
+          spatial3dAssets={visibleSpatial3dAssets}
           forestBlockFilterQuery={appliedFilterQuery}
         />
         {resultsOpen && (
@@ -523,6 +557,10 @@ export function MapPage() {
             <label>
               <input type="checkbox" checked={layers.droneImagery} onChange={() => toggleLayer("droneImagery")} />
               <span><strong>无人机正射成果</strong><small>{imageryAssets.isFetching ? "正在读取当前视窗" : `${visibleImageryAssets.length} 个已发布成果`}</small></span>
+            </label>
+            <label>
+              <input type="checkbox" checked={layers.spatial3d} disabled={mode !== "3d"} onChange={() => toggleLayer("spatial3d")} />
+              <span><strong>三维点云与模型</strong><small>{mode !== "3d" ? "切换到三维地球后可用" : spatial3dAssetsQuery.isFetching ? "正在校验当前视窗" : `${visibleSpatial3dAssets.length} 个可用成果`}</small></span>
             </label>
             <label>
               <input type="checkbox" checked={layers.labels} onChange={() => toggleLayer("labels")} />

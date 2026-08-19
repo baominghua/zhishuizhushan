@@ -17,6 +17,7 @@ export interface MapLayerState {
   labels: boolean;
   forestBlocks: boolean;
   droneImagery: boolean;
+  spatial3d: boolean;
 }
 
 export interface MapViewport {
@@ -39,6 +40,7 @@ export const DEFAULT_MAP_LAYERS: MapLayerState = {
   labels: true,
   forestBlocks: true,
   droneImagery: false,
+  spatial3d: false,
 };
 
 export const DEFAULT_MAP_VIEWPORT: MapViewport = {

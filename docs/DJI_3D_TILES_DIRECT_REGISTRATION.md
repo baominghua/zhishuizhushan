@@ -1,0 +1,65 @@
+# DJI 3D Tiles 直接登记与服务器入库
+
+平台支持直接登记 DJI Terra 已生成的 PNTS 或 B3DM 目录。登记过程不会复制或转换瓦片，只会递归校验 `tileset.json` 引用、读取空间范围、统计瓦片并生成成果档案。
+
+## 推荐成果
+
+- 林业点云浏览和点数统计：优先登记 `terra_pnts`。
+- 倾斜摄影实景模型：登记 `terra_b3dms`。
+- 原始 LAS/LAZ 需要生成 COPC 或重新加工时，仍使用“LAS/LAZ 点云”入口。
+- PNTS 和 B3DM 应作为两份成果分别登记，不要混在同一个目录。
+
+## 云服务器目录
+
+生产容器将宿主机 `/srv/smart-bamboo/data` 挂载到容器 `/app/data`。建议将成果放到：
+
+```text
+宿主机：/srv/smart-bamboo/data/remote-sensing/inbox/<项目>/<成果目录>
+平台填写：/app/data/remote-sensing/inbox/<项目>/<成果目录>
+```
+
+登记后不要移动、改名或删除该目录；三维地图会按需读取其中的 `tileset.json`、PNTS、B3DM 及子瓦片。
+
+## 从 Windows 传到云服务器
+
+大量小瓦片先打成 TAR 再上传，通常比逐文件 SCP 更稳定。以下以 `terra_pnts` 为例：
+
+```powershell
+tar -C "D:\拷贝任务\大横厂房\大横厂房\lidars" -cf "D:\拷贝任务\大横厂房-terra_pnts.tar" "terra_pnts"
+scp -P 22 "D:\拷贝任务\大横厂房-terra_pnts.tar" root@36.140.138.117:/srv/smart-bamboo/data/remote-sensing/inbox/
+```
+
+登录服务器后解包到独立项目目录：
+
+```bash
+mkdir -p /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房
+tar -xf /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房-terra_pnts.tar \
+  -C /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房
+chmod -R a+rX /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房/terra_pnts
+```
+
+传输完成后先核对根文件和容量：
+
+```bash
+test -f /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房/terra_pnts/tileset.json
+du -sh /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房/terra_pnts
+find /srv/smart-bamboo/data/remote-sensing/inbox/大横厂房/terra_pnts -type f | wc -l
+```
+
+## 平台登记
+
+进入“无人机任务 → 影像成果 → 上传成果”，选择“DJI 3D Tiles”，填写：
+
+```text
+/app/data/remote-sensing/inbox/大横厂房/terra_pnts
+```
+
+平台会异步完成：
+
+1. 校验根和子 `tileset.json`、相对路径及瓦片头；
+2. 兼容 DJI Terra 的 `asset.version=0.0`，但不改写源文件；
+3. 自动识别 PNTS/B3DM、点数、瓦片数、容量和覆盖范围；
+4. 计算跨林班相交面积，由操作人确认一个或多个林班；
+5. 在成果详情中通过“在三维地图打开”加载成果。
+
+平台会拒绝远程 URL、越出登记目录的引用、缺失文件、隐藏工作目录、无效瓦片头和不受支持的根包围体。

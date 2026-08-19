@@ -7,6 +7,7 @@ import {
   Download,
   Eye,
   FileImage,
+  Globe2,
   Layers,
   MapPinned,
   Pencil,
@@ -73,7 +74,7 @@ export function ImageryAssetsPage() {
   const metrics = useMemo(() => ({
     total: ledger.data?.total ?? 0,
     orthophotos: items.filter((item) => assetType(item) === "orthophoto").length,
-    pointClouds: items.filter((item) => assetType(item) === "pointcloud").length,
+    pointClouds: items.filter((item) => ["pointcloud", "oblique3d"].includes(assetType(item))).length,
     pendingReview: items.filter((item) => item.processingStage === "coverage-review").length,
   }), [items, ledger.data?.total]);
   const refresh = async () => { await client.invalidateQueries({ queryKey: ["imagery-assets"] }); };
@@ -89,7 +90,7 @@ export function ImageryAssetsPage() {
     <section className="domain-summary-strip">
       <Summary label="成果总数" value={metrics.total} detail="正式空间资产" />
       <Summary label="正射成果" value={metrics.orthophotos} detail="GeoTIFF / COG" />
-      <Summary label="点云成果" value={metrics.pointClouds} detail="COPC / 3D Tiles" />
+      <Summary label="三维成果" value={metrics.pointClouds} detail="COPC / PNTS / B3DM" />
       <Summary label="待确认覆盖" value={metrics.pendingReview} detail="需人工确认林班" tone={metrics.pendingReview ? "warning" : "active"} />
     </section>
     <section className="ledger-shell">
@@ -99,9 +100,9 @@ export function ImageryAssetsPage() {
           <td><strong>{record.name}</strong><small>{record.fileName || record.id}</small></td>
           <td><strong>{TYPE_LABELS[assetType(record)]}</strong><small>{formatDate(record.capturedAt)}{record.missionId ? ` · ${record.missionId}` : ""}</small></td>
           <td><strong>{record.linkedBlockCodes?.join("、") || "待确认"}</strong><small>{record.linkedBlockCodes?.length || 0} 个正式林班</small></td>
-          <td><strong>{assetType(record) === "pointcloud" ? `${formatNumber(record.pointCount || 0)} 点` : record.resolution || "分辨率自动识别"}</strong><small>{record.crs || "坐标系待识别"}</small></td>
+          <td><strong>{record.tilesetUrl ? record.pointCount ? `${formatNumber(record.pointCount)} 点` : `${formatNumber(record.tileCount || 0)} 瓦片` : record.resolution || "分辨率自动识别"}</strong><small>{record.crs || "坐标系待识别"}</small></td>
           <td>{record.deletedAt ? <Badge label="已删除" tone="deleted" /> : record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</td>
-          <td className="action-column"><div className="row-actions"><Action label="查看" icon={Eye} onClick={() => setSelected(record)} />{record.deletedAt ? <Action label="恢复" icon={RotateCcw} disabled={!canRestore} onClick={() => restore.mutate(record.id)} /> : <><Action label="编辑" icon={Pencil} disabled={!canUpdate} onClick={() => setEditing(record)} />{!isPublished(record) && assetType(record) !== "pointcloud" ? <Action label="发布到一张图" icon={Send} disabled={!canPublish || record.processingStage === "coverage-review"} onClick={() => publish.mutate(record)} /> : null}<Action label="删除" icon={Trash2} danger disabled={!canDelete} onClick={() => { if (window.confirm(`确认将“${record.name}”移入回收站吗？`)) remove.mutate(record.id); }} /></>}</div></td>
+          <td className="action-column"><div className="row-actions"><Action label="查看" icon={Eye} onClick={() => setSelected(record)} />{record.deletedAt ? <Action label="恢复" icon={RotateCcw} disabled={!canRestore} onClick={() => restore.mutate(record.id)} /> : <><Action label="编辑" icon={Pencil} disabled={!canUpdate} onClick={() => setEditing(record)} />{!isPublished(record) && !record.tilesetUrl ? <Action label="发布到一张图" icon={Send} disabled={!canPublish || record.processingStage === "coverage-review"} onClick={() => publish.mutate(record)} /> : null}<Action label="删除" icon={Trash2} danger disabled={!canDelete} onClick={() => { if (window.confirm(`确认将“${record.name}”移入回收站吗？`)) remove.mutate(record.id); }} /></>}</div></td>
         </tr>)}
         {!ledger.isLoading && !items.length ? <tr><td colSpan={6}><div className="table-empty"><FileImage aria-hidden="true" /><strong>暂无空间成果</strong><p>可上传 GeoTIFF，或按一次航飞任务批量接收 LAS/LAZ。</p></div></td></tr> : null}
       </tbody></table></div></QueryState>
@@ -116,7 +117,7 @@ export function ImageryAssetsPage() {
 function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: (record: ImageryAsset) => void }) {
   const rasterFileRef = useRef<HTMLInputElement>(null);
   const pointCloudFilesRef = useRef<HTMLInputElement>(null);
-  const [assetKind, setAssetKind] = useState<"raster" | "pointcloud">("raster");
+  const [assetKind, setAssetKind] = useState<"raster" | "pointcloud" | "tileset">("raster");
   const [rasterType, setRasterType] = useState<"orthophoto" | "dsm" | "dtm">("orthophoto");
   const [sourceMode, setSourceMode] = useState<"upload" | "register">("upload");
   const [taskId, setTaskId] = useState("");
@@ -141,7 +142,7 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
       const data = new FormData(form);
       const payload: ImageryUploadPayload = {
         name: field(data, "name"),
-        assetType: assetKind === "pointcloud" ? "pointcloud" : rasterType,
+        assetType: assetKind === "raster" ? rasterType : assetKind === "pointcloud" ? "pointcloud" : "oblique3d",
         missionId: field(data, "missionId"),
         capturedAt: field(data, "capturedAt"),
         resolution: field(data, "resolution"),
@@ -159,6 +160,8 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
           result = await api.uploadImageryAsset(file, payload);
           setTransfer({ uploaded: file.size, total: file.size, label: "文件上传完成，等待后台处理" });
         }
+      } else if (assetKind === "tileset") {
+        result = await api.registerTileset({ path, name: payload.name, missionId: payload.missionId || "", capturedAt: payload.capturedAt || "" });
       } else if (sourceMode === "register") {
         result = await api.registerPointCloud({ path, name: payload.name, missionId: payload.missionId || "", capturedAt: payload.capturedAt || "", recursive: true, outputs: ["copc", "3dtiles"] });
       } else {
@@ -207,20 +210,20 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
   if (taskId) return <TaskProgress task={task.data} loading={task.isLoading || completedAsset.isLoading} error={task.error || completedAsset.error} onCancel={onCancel} />;
 
   return <form className="entity-form spatial-upload-form" onSubmit={submit}>
-    <fieldset className="form-section"><legend>成果类型</legend><div className="asset-kind-switch"><button type="button" className={assetKind === "raster" ? "active" : ""} onClick={() => { setAssetKind("raster"); setUploadSessionId(""); }}><FileImage aria-hidden="true" /><span><strong>GeoTIFF 影像</strong><small>正射、DSM、DTM 自动转 COG</small></span></button><button type="button" className={assetKind === "pointcloud" ? "active" : ""} onClick={() => setAssetKind("pointcloud")}><CloudUpload aria-hidden="true" /><span><strong>LAS/LAZ 点云</strong><small>批量续传，生成 COPC 与 3D Tiles</small></span></button></div></fieldset>
-    <fieldset className="form-section"><legend>文件来源</legend><div className="source-mode-tabs"><button type="button" className={sourceMode === "upload" ? "active" : ""} onClick={() => setSourceMode("upload")}>本机断点续传</button><button type="button" className={sourceMode === "register" ? "active" : ""} onClick={() => setSourceMode("register")}>服务器 / NAS 目录</button></div><div className="form-grid">
+    <fieldset className="form-section"><legend>成果类型</legend><div className="asset-kind-switch"><button type="button" className={assetKind === "raster" ? "active" : ""} onClick={() => { setAssetKind("raster"); setUploadSessionId(""); }}><FileImage aria-hidden="true" /><span><strong>GeoTIFF 影像</strong><small>正射、DSM、DTM 自动转 COG</small></span></button><button type="button" className={assetKind === "pointcloud" ? "active" : ""} onClick={() => setAssetKind("pointcloud")}><CloudUpload aria-hidden="true" /><span><strong>LAS/LAZ 点云</strong><small>批量续传，生成 COPC 与 3D Tiles</small></span></button><button type="button" className={assetKind === "tileset" ? "active" : ""} onClick={() => { setAssetKind("tileset"); setSourceMode("register"); setUploadSessionId(""); }}><Layers aria-hidden="true" /><span><strong>DJI 3D Tiles</strong><small>直接登记 PNTS / B3DM，不重复转换</small></span></button></div></fieldset>
+    <fieldset className="form-section"><legend>文件来源</legend><div className="source-mode-tabs"><button type="button" className={sourceMode === "upload" ? "active" : ""} disabled={assetKind === "tileset"} onClick={() => setSourceMode("upload")}>本机断点续传</button><button type="button" className={sourceMode === "register" ? "active" : ""} onClick={() => setSourceMode("register")}>服务器 / NAS 目录</button></div>{assetKind === "tileset" ? <p className="form-hint tileset-register-note">DJI Terra 已生成的目录直接留在服务器或 NAS；平台只校验引用、提取范围并建立目录索引。</p> : null}<div className="form-grid">
       {sourceMode === "upload" && assetKind === "raster" ? <label className="field-span"><span>GeoTIFF 文件<em>*</em></span><input ref={rasterFileRef} type="file" accept=".tif,.tiff,.geotiff,image/tiff" required /><small>上传完成后由后台转为 COG，并根据透明通道或 NoData 提取有效覆盖范围。</small></label> : null}
       {sourceMode === "upload" && assetKind === "pointcloud" ? <label className="field-span"><span>同一航飞任务的 LAS/LAZ<em>*</em></span><input ref={pointCloudFilesRef} type="file" accept=".las,.laz" multiple required onChange={() => setUploadSessionId("")} /><small>可一次选择多个文件；系统按 16–128MB 分片续传，失败或刷新页面后重新选择同一批文件即可续传。不要选择 .temp 中间目录。</small></label> : null}
-      {sourceMode === "register" ? <label className="field-span"><span>服务器允许目录中的路径<em>*</em></span><input name="serverPath" required placeholder={assetKind === "pointcloud" ? "/app/data/remote-sensing/inbox/邵武S1地块/terra_las_1_4" : "/app/data/remote-sensing/inbox/result.tif"} /><small>路径必须位于 REMOTE_SENSING_IMPORT_DIRS；点云目录会递归扫描并自动排除 .temp 等隐藏目录。</small></label> : null}
+      {sourceMode === "register" ? <label className="field-span"><span>服务器允许目录中的路径<em>*</em></span><input name="serverPath" required placeholder={assetKind === "tileset" ? "/app/data/remote-sensing/inbox/邵武S1地块/terra_pnts" : assetKind === "pointcloud" ? "/app/data/remote-sensing/inbox/邵武S1地块/terra_las_1_4" : "/app/data/remote-sensing/inbox/result.tif"} /><small>{assetKind === "tileset" ? "填写包含根 tileset.json 的目录，或直接填写该文件。系统递归校验 PNTS/B3DM 与子 tileset，原目录不会被复制、改写或删除。" : "路径必须位于 REMOTE_SENSING_IMPORT_DIRS；点云目录会递归扫描并自动排除 .temp 等隐藏目录。"}</small></label> : null}
       <label><span>成果名称<em>*</em></span><input name="name" required /></label>
-      {assetKind === "raster" ? <label><span>成果类型<em>*</em></span><select value={rasterType} onChange={(event) => setRasterType(event.target.value as typeof rasterType)}><option value="orthophoto">正射影像</option><option value="dsm">DSM 地表模型</option><option value="dtm">DTM 地形模型</option></select></label> : <label><span>转换产物</span><input readOnly value="COPC + 3D Tiles" /></label>}
+      {assetKind === "raster" ? <label><span>成果类型<em>*</em></span><select value={rasterType} onChange={(event) => setRasterType(event.target.value as typeof rasterType)}><option value="orthophoto">正射影像</option><option value="dsm">DSM 地表模型</option><option value="dtm">DTM 地形模型</option></select></label> : <label><span>{assetKind === "tileset" ? "登记方式" : "转换产物"}</span><input readOnly value={assetKind === "tileset" ? "直接登记 PNTS / B3DM（不转换）" : "COPC + 3D Tiles"} /></label>}
       <label><span>无人机任务</span><input name="missionId" placeholder="例如 DJI-S1-20260813" /></label>
       <label><span>采集时间</span><input name="capturedAt" type="datetime-local" /></label>
       {assetKind === "raster" ? <label><span>标称分辨率</span><input name="resolution" placeholder="留空则从 GeoTIFF 自动识别" /></label> : null}
     </div></fieldset>
     {transfer.total ? <TransferProgress uploaded={transfer.uploaded} total={transfer.total} label={transfer.label} /> : null}
     {submitMutation.error ? <p className="form-error">{submitMutation.error.message}</p> : null}
-    <div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>取消</button><button className="button primary" disabled={submitMutation.isPending}>{submitMutation.isPending ? uploadSessionId ? "继续上传中" : "正在提交" : uploadSessionId ? "继续断点上传" : "上传并自动分析"}</button></div>
+    <div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>取消</button><button className="button primary" disabled={submitMutation.isPending}>{submitMutation.isPending ? uploadSessionId ? "继续上传中" : "正在提交" : uploadSessionId ? "继续断点上传" : assetKind === "tileset" ? "登记并自动分析" : "上传并自动分析"}</button></div>
   </form>;
 }
 
@@ -266,11 +269,13 @@ function ImageryEditForm({ initial, onCancel, onSaved }: { initial: ImageryAsset
 
 function ImageryDetail({ record, canPublish, publishing, onPublish }: { record: ImageryAsset; canPublish: boolean; publishing: boolean; onPublish: () => void }) {
   const pointCloud = assetType(record) === "pointcloud";
+  const is3d = Boolean(record.tilesetUrl);
+  const formatSummary = Object.entries(record.tileFormats ?? {}).map(([format, count]) => `${format.toUpperCase()} ${count}`).join(" · ");
   return <div className="detail-stack imagery-detail">
-    {pointCloud ? <section className="point-cloud-preview"><CloudUpload aria-hidden="true" /><div><strong>{formatNumber(record.pointCount || 0)} 个点</strong><small>{record.pointCloudFileCount || 0} 个 LAS/LAZ · {record.crs}</small></div></section> : <section className="imagery-preview"><img src={record.thumbnailUrl} alt={`${record.name} 预览`} /></section>}
-    <section className="detail-group"><div className="detail-title-row"><h3>成果信息</h3>{record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</div><dl><Detail label="成果类型" value={TYPE_LABELS[assetType(record)]} /><Detail label="文件名" value={record.fileName} /><Detail label="采集时间" value={formatDate(record.capturedAt)} /><Detail label="任务编号" value={record.missionId} /><Detail label="坐标系" value={record.crs} />{pointCloud ? <><Detail label="点数量" value={formatNumber(record.pointCount || 0)} /><Detail label="点云文件" value={`${record.pointCloudFileCount || 0} 个`} /><Detail label="LAS 版本" value={record.pointCloudVersions?.join("、")} /></> : <><Detail label="分辨率" value={record.resolution} /><Detail label="像素尺寸" value={`${record.width} × ${record.height} · ${record.bands} 波段`} /></>}<Detail label="文件容量" value={formatBytes(record.size)} /></dl>{pointCloud ? <div className="point-cloud-downloads">{record.copcUrl ? <a className="button secondary" href={record.copcUrl}><Download aria-hidden="true" />下载 COPC</a> : null}{record.tilesetUrl ? <a className="button secondary" href={record.tilesetUrl} target="_blank" rel="noreferrer"><Layers aria-hidden="true" />打开 3D Tiles</a> : null}</div> : null}</section>
+    {is3d ? <section className="point-cloud-preview"><Layers aria-hidden="true" /><div><strong>{pointCloud && record.pointCount ? `${formatNumber(record.pointCount)} 个点` : `${formatNumber(record.tileCount || 0)} 个三维瓦片`}</strong><small>{formatSummary || record.tilesetContentType?.toUpperCase() || "3D Tiles"} · {record.crs}</small></div></section> : <section className="imagery-preview"><img src={record.thumbnailUrl} alt={`${record.name} 预览`} /></section>}
+    <section className="detail-group"><div className="detail-title-row"><h3>成果信息</h3>{record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</div><dl><Detail label="成果类型" value={TYPE_LABELS[assetType(record)]} /><Detail label="文件名" value={record.fileName} /><Detail label="采集时间" value={formatDate(record.capturedAt)} /><Detail label="任务编号" value={record.missionId} /><Detail label="坐标系" value={record.crs} />{is3d ? <><Detail label="瓦片格式" value={formatSummary} /><Detail label="内容瓦片" value={`${record.tileCount || 0} 个`} /><Detail label="子 tileset" value={`${record.tilesetCount || 0} 个`} />{record.pointCount ? <Detail label="点数量" value={formatNumber(record.pointCount)} /> : null}<Detail label="Tiles 版本" value={record.tilesetAssetVersions?.join("、")} /></> : <><Detail label="分辨率" value={record.resolution} /><Detail label="像素尺寸" value={`${record.width} × ${record.height} · ${record.bands} 波段`} /></>}<Detail label="文件容量" value={formatBytes(record.size)} /></dl>{is3d ? <div className="point-cloud-downloads">{record.copcUrl ? <a className="button secondary" href={record.copcUrl}><Download aria-hidden="true" />下载 COPC</a> : null}{record.processingStage !== "coverage-review" ? <a className="button primary" href={`/v2/map?sceneId=${encodeURIComponent(record.id)}&mode=3d`}><Globe2 aria-hidden="true" />在三维地图打开</a> : null}<a className="button secondary" href={record.tilesetUrl} target="_blank" rel="noreferrer"><Layers aria-hidden="true" />检查 tileset.json</a></div> : null}</section>
     <section className="detail-group"><h3>覆盖林班</h3><div className="relation-chips read-only">{record.linkedBlockCodes?.map((code) => <span key={code}><strong>{code}</strong><small>正式林班</small></span>)}{!record.linkedBlockCodes?.length ? <p className="muted-copy">尚未确认林班关系，请点击编辑完成确认。</p> : null}</div></section>
-    {!pointCloud && !isPublished(record) ? <button className="button primary" type="button" disabled={!canPublish || publishing || record.processingStage === "coverage-review"} onClick={onPublish}><Layers aria-hidden="true" />{publishing ? "正在发布" : "发布到 GIS 一张图"}</button> : null}
+    {!is3d && !isPublished(record) ? <button className="button primary" type="button" disabled={!canPublish || publishing || record.processingStage === "coverage-review"} onClick={onPublish}><Layers aria-hidden="true" />{publishing ? "正在发布" : "发布到 GIS 一张图"}</button> : null}
   </div>;
 }
 

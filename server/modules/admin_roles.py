@@ -565,6 +565,7 @@ PERMISSION_API_SCOPES = {
         "/api/point-clouds/upload-sessions/{session_id}/files/{file_index}/chunks/{chunk_index}",
         "/api/point-clouds/upload-sessions/{session_id}/complete",
         "/api/point-clouds/register",
+        "/api/3d-tiles/register",
     ],
     "imagery.scenes.update": ["/api/scenes/{scene_id}", "/api/scenes/{scene_id}/coverage/confirm"],
     "imagery.scenes.delete": ["/api/scenes/{scene_id}"],

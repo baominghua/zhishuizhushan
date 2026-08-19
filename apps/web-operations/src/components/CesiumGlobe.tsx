@@ -8,6 +8,7 @@ import {
   ConstantPositionProperty,
   ConstantProperty,
   Credit,
+  Cesium3DTileset,
   GeoJsonDataSource,
   HeightReference,
   HorizontalOrigin,
@@ -54,6 +55,7 @@ interface CesiumGlobeProps {
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
   imageryAssets: ImageryAsset[];
+  spatial3dAssets: ImageryAsset[];
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
 }
@@ -242,6 +244,7 @@ export function CesiumGlobe({
   onSelectBlock,
   onViewportChange,
   imageryAssets,
+  spatial3dAssets,
   situationAssets,
   onSelectSituationAsset,
 }: CesiumGlobeProps) {
@@ -252,6 +255,7 @@ export function CesiumGlobe({
   const labelLayerReadyRef = useRef(false);
   const labelsVisibleRef = useRef(layers.labels);
   const droneImageryLayersRef = useRef<ImageryLayer[]>([]);
+  const spatial3dTilesetsRef = useRef<Cesium3DTileset[]>([]);
   const blockDataSourceRef = useRef<GeoJsonDataSource | null>(null);
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
   const forestBlocksVisibleRef = useRef(layers.forestBlocks);
@@ -414,6 +418,7 @@ export function CesiumGlobe({
       labelLayerReadyRef.current = false;
       blockDataSourceRef.current = null;
       droneImageryLayersRef.current = [];
+      spatial3dTilesetsRef.current = [];
       if (!viewer.isDestroyed()) viewer.destroy();
     };
   }, [config, scene.home.height3d, scene.home.latitude, scene.home.longitude]);
@@ -453,6 +458,64 @@ export function CesiumGlobe({
       if (!viewer.isDestroyed() && viewer.imageryLayers.contains(layer)) viewer.imageryLayers.remove(layer, true);
     });
   }, [imageryAssets, layers.droneImagery]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const activeViewer = viewer;
+    let canceled = false;
+    const previous = spatial3dTilesetsRef.current;
+    spatial3dTilesetsRef.current = [];
+    previous.forEach((tileset) => {
+      if (!activeViewer.isDestroyed() && activeViewer.scene.primitives.contains(tileset)) {
+        activeViewer.scene.primitives.remove(tileset);
+      }
+    });
+
+    async function loadTilesets() {
+      const loaded: Cesium3DTileset[] = [];
+      for (const asset of spatial3dAssets) {
+        if (!asset.tilesetUrl || canceled) continue;
+        try {
+          const tileset = await Cesium3DTileset.fromUrl(asset.tilesetUrl, {
+            maximumScreenSpaceError: 8,
+          });
+          if (canceled || activeViewer.isDestroyed()) {
+            if (!tileset.isDestroyed()) tileset.destroy();
+            continue;
+          }
+          tileset.show = layers.spatial3d;
+          activeViewer.scene.primitives.add(tileset);
+          loaded.push(tileset);
+          spatial3dTilesetsRef.current = loaded;
+        } catch {
+          // Keep loading the remaining registered datasets when one directory is unavailable.
+        }
+      }
+      if (!canceled) {
+        spatial3dTilesetsRef.current = loaded;
+        activeViewer.scene.requestRender();
+      }
+    }
+
+    void loadTilesets();
+    return () => {
+      canceled = true;
+      spatial3dTilesetsRef.current.forEach((tileset) => {
+        if (!activeViewer.isDestroyed() && activeViewer.scene.primitives.contains(tileset)) {
+          activeViewer.scene.primitives.remove(tileset);
+        }
+      });
+      spatial3dTilesetsRef.current = [];
+    };
+  }, [spatial3dAssets]);
+
+  useEffect(() => {
+    spatial3dTilesetsRef.current.forEach((tileset) => {
+      tileset.show = layers.spatial3d;
+    });
+    viewerRef.current?.scene.requestRender();
+  }, [layers.spatial3d]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

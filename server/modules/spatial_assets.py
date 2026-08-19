@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import struct
 import subprocess
+import urllib.parse
 from pathlib import Path
 from typing import Any, Iterable
 
-from shapely.geometry import box, mapping, shape
+from shapely.geometry import MultiPoint, box, mapping, shape
 from shapely.ops import unary_union
 
 
 COVERAGE_ALGORITHM_VERSION = "effective-footprint-v1"
 SUPPORTED_POINT_CLOUD_EXTENSIONS = {".las", ".laz"}
+SUPPORTED_3D_TILE_EXTENSIONS = {".b3dm", ".cmpt", ".glb", ".gltf", ".i3dm", ".pnts"}
+MAX_TILESET_JSON_BYTES = 16 * 1024 * 1024
+MAX_TILESET_JSON_FILES = 5_000
+MAX_TILESET_CONTENT_FILES = 100_000
 
 
 def _crs_label(crs: Any, wkt: str = "") -> str:
@@ -273,6 +279,299 @@ def point_cloud_collection_metadata(paths: Iterable[Path]) -> dict[str, Any]:
             {key: value for key, value in item.items() if key not in {"crs", "crsWkt"}}
             for item in items
         ],
+    }
+
+
+def _tileset_document(path: Path) -> dict[str, Any]:
+    if path.stat().st_size > MAX_TILESET_JSON_BYTES:
+        raise ValueError(f"3D Tiles JSON 文件过大：{path.name}")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取 3D Tiles JSON：{path.name}") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("root"), dict):
+        raise ValueError(f"3D Tiles JSON 缺少 root：{path.name}")
+    asset = document.get("asset")
+    version = str(asset.get("version") or "") if isinstance(asset, dict) else ""
+    if version not in {"0.0", "1.0", "1.1"}:
+        raise ValueError(f"不支持的 3D Tiles asset.version：{version or 'missing'}")
+    return document
+
+
+def normalized_tileset_document(path: Path, *, service_token: str = "") -> dict[str, Any]:
+    """Return a web-compatible document without mutating DJI Terra output."""
+    document = _tileset_document(path)
+    asset = dict(document.get("asset") or {})
+    if str(asset.get("version") or "") == "0.0":
+        asset["version"] = "1.0"
+        document = {**document, "asset": asset}
+    if service_token:
+        pending = [document["root"]]
+        while pending:
+            tile = pending.pop()
+            children = tile.get("children")
+            if isinstance(children, list):
+                pending.extend(item for item in children if isinstance(item, dict))
+            contents = []
+            if isinstance(tile.get("content"), dict):
+                contents.append(tile["content"])
+            if isinstance(tile.get("contents"), list):
+                contents.extend(item for item in tile["contents"] if isinstance(item, dict))
+            for content in contents:
+                key = "uri" if isinstance(content.get("uri"), str) else "url"
+                uri = content.get(key)
+                if not isinstance(uri, str) or not uri.strip():
+                    continue
+                parsed = urllib.parse.urlsplit(uri)
+                if parsed.scheme or parsed.netloc:
+                    continue
+                query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+                query["token"] = service_token
+                content[key] = urllib.parse.urlunsplit(
+                    (parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), parsed.fragment)
+                )
+    return document
+
+
+def _tileset_content_uris(root: dict[str, Any]) -> Iterable[str]:
+    pending = [root]
+    while pending:
+        tile = pending.pop()
+        children = tile.get("children")
+        if isinstance(children, list):
+            pending.extend(item for item in children if isinstance(item, dict))
+        content_items: list[Any] = []
+        if isinstance(tile.get("content"), dict):
+            content_items.append(tile["content"])
+        if isinstance(tile.get("contents"), list):
+            content_items.extend(item for item in tile["contents"] if isinstance(item, dict))
+        for content in content_items:
+            uri = content.get("uri") or content.get("url")
+            if isinstance(uri, str) and uri.strip():
+                yield uri.strip()
+
+
+def _safe_tileset_target(uri: str, document_path: Path, tiles_root: Path) -> Path:
+    parsed = urllib.parse.urlsplit(uri)
+    if parsed.scheme or parsed.netloc:
+        raise ValueError(f"3D Tiles 不允许引用远程资源：{uri}")
+    decoded = urllib.parse.unquote(parsed.path).replace("\\", "/")
+    if not decoded or decoded.startswith("/") or re.match(r"^[a-zA-Z]:", decoded):
+        raise ValueError(f"3D Tiles 包含无效资源路径：{uri}")
+    target = (document_path.parent / decoded).resolve()
+    try:
+        target.relative_to(tiles_root)
+    except ValueError as exc:
+        raise ValueError(f"3D Tiles 资源越出登记目录：{uri}") from exc
+    if not target.is_file():
+        raise ValueError(f"3D Tiles 引用文件不存在：{uri}")
+    return target
+
+
+def _tile_header(path: Path) -> dict[str, int | str]:
+    suffix = path.suffix.lower()
+    if suffix not in {".b3dm", ".cmpt", ".i3dm", ".pnts"}:
+        return {"pointCount": 0}
+    minimum_header_size = {".b3dm": 28, ".cmpt": 16, ".i3dm": 32, ".pnts": 28}[suffix]
+    with path.open("rb") as source:
+        header = source.read(minimum_header_size)
+        if len(header) < minimum_header_size:
+            raise ValueError(f"3D Tiles 瓦片头不完整：{path.name}")
+        magic = header[:4].decode("ascii", "replace")
+        version, declared_length = struct.unpack_from("<II", header, 4)
+        if magic != suffix[1:] or version != 1 or declared_length != path.stat().st_size:
+            raise ValueError(f"3D Tiles 瓦片头无效：{path.name}")
+        if suffix == ".cmpt" and struct.unpack_from("<I", header, 12)[0] < 1:
+            raise ValueError(f"3D Tiles 复合瓦片没有子瓦片：{path.name}")
+        if suffix == ".i3dm" and struct.unpack_from("<I", header, 28)[0] not in {0, 1}:
+            raise ValueError(f"3D Tiles I3DM glTF 格式标记无效：{path.name}")
+        point_count = 0
+        if suffix == ".pnts":
+            feature_json_length = struct.unpack_from("<I", header, 12)[0]
+            if 0 < feature_json_length <= 1024 * 1024:
+                feature_json = source.read(feature_json_length).rstrip(b" \t\r\n\0")
+                try:
+                    feature_table = json.loads(feature_json.decode("utf-8"))
+                    point_count = max(0, int(feature_table.get("POINTS_LENGTH") or 0))
+                except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                    point_count = 0
+    return {"magic": magic, "version": version, "pointCount": point_count}
+
+
+def _apply_tileset_transform(point: tuple[float, float, float], transform: list[Any] | None) -> tuple[float, float, float]:
+    if not transform:
+        return point
+    if len(transform) != 16:
+        raise ValueError("3D Tiles root.transform 必须包含16个数值。")
+    values = [float(item) for item in transform]
+    if not all(math.isfinite(item) for item in values):
+        raise ValueError("3D Tiles root.transform 包含无效数值。")
+    x, y, z = point
+    w = values[3] * x + values[7] * y + values[11] * z + values[15]
+    if abs(w) < 1e-12:
+        raise ValueError("3D Tiles root.transform 产生无效齐次坐标。")
+    return (
+        (values[0] * x + values[4] * y + values[8] * z + values[12]) / w,
+        (values[1] * x + values[5] * y + values[9] * z + values[13]) / w,
+        (values[2] * x + values[6] * y + values[10] * z + values[14]) / w,
+    )
+
+
+def _ecef_footprint(points: list[tuple[float, float, float]]) -> dict[str, Any]:
+    if not points:
+        raise ValueError("3D Tiles 根包围体没有有效坐标。")
+    rasterio = _require_rasterio()
+    from rasterio.warp import transform
+
+    longitudes, latitudes, _heights = transform(
+        "EPSG:4978",
+        "EPSG:4326",
+        [item[0] for item in points],
+        [item[1] for item in points],
+        [item[2] for item in points],
+    )
+    footprint = MultiPoint([
+        (float(longitude), float(latitude))
+        for longitude, latitude in zip(longitudes, latitudes, strict=True)
+    ]).convex_hull
+    if footprint.is_empty or footprint.geom_type not in {"Polygon", "MultiPolygon"}:
+        raise ValueError("3D Tiles 根包围体无法生成有效地理覆盖范围。")
+    return mapping(footprint)
+
+
+def tileset_root_footprint(document: dict[str, Any]) -> dict[str, Any]:
+    root = document.get("root") or {}
+    volume = root.get("boundingVolume") or {}
+    if not isinstance(volume, dict):
+        raise ValueError("3D Tiles root 缺少 boundingVolume。")
+    region = volume.get("region")
+    if isinstance(region, list):
+        if len(region) != 6:
+            raise ValueError("3D Tiles boundingVolume.region 必须包含6个数值。")
+        west, south, east, north = [math.degrees(float(item)) for item in region[:4]]
+        if not all(math.isfinite(item) for item in (west, south, east, north)) or west >= east or south >= north:
+            raise ValueError("3D Tiles boundingVolume.region 无效。")
+        geometry = mapping(box(west, south, east, north))
+        return {"geometry": geometry, "bounds": [west, south, east, north], "sourceCrs": "EPSG:4326"}
+
+    transform = root.get("transform") if isinstance(root.get("transform"), list) else None
+    points: list[tuple[float, float, float]] = []
+    native_bounds: list[float] = []
+    volume_box = volume.get("box")
+    if isinstance(volume_box, list):
+        if len(volume_box) != 12:
+            raise ValueError("3D Tiles boundingVolume.box 必须包含12个数值。")
+        values = [float(item) for item in volume_box]
+        if not all(math.isfinite(item) for item in values):
+            raise ValueError("3D Tiles boundingVolume.box 包含无效数值。")
+        center = values[:3]
+        axes = (values[3:6], values[6:9], values[9:12])
+        for first in (-1, 1):
+            for second in (-1, 1):
+                for third in (-1, 1):
+                    point = tuple(
+                        center[index]
+                        + first * axes[0][index]
+                        + second * axes[1][index]
+                        + third * axes[2][index]
+                        for index in range(3)
+                    )
+                    points.append(_apply_tileset_transform(point, transform))
+        native_bounds = [
+            min(point[index] for point in points) for index in range(3)
+        ] + [
+            max(point[index] for point in points) for index in range(3)
+        ]
+    else:
+        sphere = volume.get("sphere")
+        if not isinstance(sphere, list) or len(sphere) != 4:
+            raise ValueError("3D Tiles 仅支持 region、box 或 sphere 根包围体。")
+        center = [float(item) for item in sphere[:3]]
+        radius = float(sphere[3])
+        if not all(math.isfinite(item) for item in [*center, radius]) or radius <= 0:
+            raise ValueError("3D Tiles boundingVolume.sphere 无效。")
+        for axis in range(3):
+            for direction in (-1, 1):
+                point = list(center)
+                point[axis] += radius * direction
+                points.append(_apply_tileset_transform(tuple(point), transform))
+        native_bounds = [
+            min(point[index] for point in points) for index in range(3)
+        ] + [
+            max(point[index] for point in points) for index in range(3)
+        ]
+
+    geometry = _ecef_footprint(points)
+    footprint = _valid_geometry(geometry)
+    if footprint is None:
+        raise ValueError("3D Tiles 根包围体无法生成有效覆盖范围。")
+    return {
+        "geometry": mapping(footprint),
+        "bounds": [round(float(item), 8) for item in footprint.bounds],
+        "sourceCrs": "EPSG:4978",
+        "nativeBounds": [round(float(item), 3) for item in native_bounds],
+    }
+
+
+def inspect_3d_tileset(root_path: Path) -> dict[str, Any]:
+    root_path = root_path.resolve()
+    tiles_root = root_path.parent.resolve()
+    root_document = _tileset_document(root_path)
+    pending = [root_path]
+    seen_documents: set[Path] = set()
+    referenced_files: set[Path] = set()
+    formats: dict[str, int] = {}
+    asset_versions: set[str] = set()
+    point_count = 0
+
+    while pending:
+        document_path = pending.pop().resolve()
+        if document_path in seen_documents:
+            continue
+        if len(seen_documents) >= MAX_TILESET_JSON_FILES:
+            raise ValueError(f"3D Tiles JSON 数量超过上限 {MAX_TILESET_JSON_FILES}。")
+        document = _tileset_document(document_path)
+        seen_documents.add(document_path)
+        asset_versions.add(str((document.get("asset") or {}).get("version") or ""))
+        for uri in _tileset_content_uris(document["root"]):
+            target = _safe_tileset_target(uri, document_path, tiles_root)
+            suffix = target.suffix.lower()
+            if suffix == ".json":
+                pending.append(target)
+                continue
+            if len(referenced_files) >= MAX_TILESET_CONTENT_FILES and target not in referenced_files:
+                raise ValueError(f"3D Tiles 内容文件数量超过上限 {MAX_TILESET_CONTENT_FILES}。")
+            if target in referenced_files:
+                continue
+            header = _tile_header(target)
+            referenced_files.add(target)
+            key = suffix[1:] if suffix else "other"
+            formats[key] = formats.get(key, 0) + 1
+            point_count += int(header.get("pointCount") or 0)
+
+    supported_files = [path for path in referenced_files if path.suffix.lower() in SUPPORTED_3D_TILE_EXTENSIONS]
+    if not supported_files:
+        raise ValueError("3D Tiles 没有引用可支持的 PNTS/B3DM/GLB 内容。")
+    footprint = tileset_root_footprint(root_document)
+    total_size = sum(path.stat().st_size for path in referenced_files | seen_documents)
+    content_type = "mixed" if formats.get("pnts") and formats.get("b3dm") else (
+        "pnts" if formats.get("pnts") else "b3dm" if formats.get("b3dm") else "3dtiles"
+    )
+    return {
+        "rootPath": str(root_path),
+        "tilesetCount": len(seen_documents),
+        "contentFileCount": len(referenced_files),
+        "tileCount": len(supported_files),
+        "totalSize": total_size,
+        "pointCount": point_count,
+        "formats": dict(sorted(formats.items())),
+        "contentType": content_type,
+        "assetVersions": sorted(asset_versions),
+        "normalizesDjiVersion": "0.0" in asset_versions,
+        "bounds": footprint["bounds"],
+        "footprint": footprint["geometry"],
+        "crs": footprint["sourceCrs"],
+        "nativeBounds": footprint.get("nativeBounds") or [],
     }
 
 

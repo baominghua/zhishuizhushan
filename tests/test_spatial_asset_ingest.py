@@ -6,6 +6,7 @@ import struct
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
@@ -14,6 +15,8 @@ from server.modules.spatial_assets import (
     convert_point_cloud_to_3dtiles,
     coverage_analysis,
     effective_raster_footprint,
+    inspect_3d_tileset,
+    normalized_tileset_document,
     point_cloud_collection_metadata,
 )
 from tests.test_forest_blocks import sample_block_payload
@@ -62,6 +65,42 @@ def write_las_14_with_wkt(path: Path, *, bounds: tuple[float, float, float, floa
     struct.pack_into("<H", vlr, 18, 2112)
     struct.pack_into("<H", vlr, 20, len(wkt))
     path.write_bytes(header + vlr + wkt)
+
+
+def write_pnts(path: Path, point_count: int = 12) -> None:
+    feature_json = json.dumps({"POINTS_LENGTH": point_count}, separators=(",", ":")).encode("utf-8")
+    byte_length = 28 + len(feature_json)
+    path.write_bytes(b"pnts" + struct.pack("<IIIIII", 1, byte_length, len(feature_json), 0, 0, 0) + feature_json)
+
+
+def write_b3dm(path: Path) -> None:
+    path.write_bytes(b"b3dm" + struct.pack("<IIIIII", 1, 28, 0, 0, 0, 0))
+
+
+def write_tileset(path: Path, content_uri: str = "tile.pnts", *, version: str = "0.0") -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "asset": {"version": version},
+                "geometricError": 100,
+                "root": {
+                    "boundingVolume": {
+                        "region": [
+                            118.10 * np.pi / 180,
+                            26.50 * np.pi / 180,
+                            118.12 * np.pi / 180,
+                            26.52 * np.pi / 180,
+                            0,
+                            500,
+                        ]
+                    },
+                    "geometricError": 0,
+                    "content": {"uri": content_uri},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_effective_raster_footprint_uses_nodata_not_full_tiff_extent(tmp_path):
@@ -144,6 +183,120 @@ def test_py3dtiles_conversion_leaves_destination_creation_to_converter(tmp_path,
         str(output),
         str(source),
     ]
+
+
+def test_dji_tileset_inspection_reads_pnts_and_normalizes_legacy_asset_version(tmp_path):
+    root = tmp_path / "tileset.json"
+    write_pnts(tmp_path / "tile.pnts", point_count=321)
+    write_tileset(root)
+
+    metadata = inspect_3d_tileset(root)
+    normalized = normalized_tileset_document(root)
+    authenticated = normalized_tileset_document(root, service_token="secret token")
+
+    assert metadata["contentType"] == "pnts"
+    assert metadata["pointCount"] == 321
+    assert metadata["tileCount"] == 1
+    assert metadata["formats"] == {"pnts": 1}
+    assert metadata["assetVersions"] == ["0.0"]
+    assert metadata["normalizesDjiVersion"] is True
+    assert metadata["bounds"] == pytest.approx([118.10, 26.50, 118.12, 26.52])
+    assert normalized["asset"]["version"] == "1.0"
+    assert authenticated["root"]["content"]["uri"] == "tile.pnts?token=secret+token"
+    assert json.loads(root.read_text(encoding="utf-8"))["asset"]["version"] == "0.0"
+
+
+def test_dji_tileset_inspection_identifies_b3dm_oblique_model(tmp_path):
+    root = tmp_path / "tileset.json"
+    write_b3dm(tmp_path / "tile.b3dm")
+    write_tileset(root, "tile.b3dm", version="1.0")
+
+    metadata = inspect_3d_tileset(root)
+
+    assert metadata["contentType"] == "b3dm"
+    assert metadata["pointCount"] == 0
+    assert metadata["formats"] == {"b3dm": 1}
+    assert metadata["normalizesDjiVersion"] is False
+
+
+def test_dji_tileset_inspection_rejects_truncated_binary_tile(tmp_path):
+    root = tmp_path / "tileset.json"
+    (tmp_path / "tile.pnts").write_bytes(b"pnts" + struct.pack("<II", 1, 12))
+    write_tileset(root)
+
+    with pytest.raises(ValueError, match="瓦片头不完整"):
+        inspect_3d_tileset(root)
+
+
+@pytest.mark.parametrize("content_uri", ["../outside.pnts", "missing.pnts", "https://example.com/tile.pnts"])
+def test_dji_tileset_inspection_rejects_unsafe_or_missing_references(tmp_path, content_uri):
+    write_pnts(tmp_path.parent / "outside.pnts")
+    root = tmp_path / "tileset.json"
+    write_tileset(root, content_uri)
+
+    with pytest.raises(ValueError):
+        inspect_3d_tileset(root)
+
+
+def test_dji_tileset_registration_accepts_allowed_directory_without_copying(app_client, isolated_env, monkeypatch):
+    import server.app as app_module
+
+    import_root = isolated_env / "tiles-inbox"
+    tiles_dir = import_root / "terra_pnts"
+    tiles_dir.mkdir(parents=True)
+    write_pnts(tiles_dir / "tile.pnts")
+    write_tileset(tiles_dir / "tileset.json")
+    app_module.IMPORT_DIRS = [import_root]
+    monkeypatch.setattr(app_module.TASK_EXECUTOR, "submit", lambda *_args, **_kwargs: None)
+
+    response = app_client.post(
+        "/api/3d-tiles/register",
+        headers={"X-RS-Roles": "admin"},
+        json={"path": str(tiles_dir), "name": "DJI 已生成点云"},
+    )
+
+    assert response.status_code == 202
+    task = response.json()["task"]
+    assert task["type"] == "3dtiles-register"
+    assert task["sourcePath"] == str((tiles_dir / "tileset.json").resolve())
+    assert task["assetType"] == "oblique3d"
+    assert not (isolated_env / "point-clouds" / task["sceneId"]).exists()
+
+
+def test_registered_dji_tileset_service_normalizes_json_and_serves_binary(app_client, isolated_env):
+    import server.app as app_module
+
+    tiles_dir = isolated_env / "registered-tiles"
+    tiles_dir.mkdir()
+    write_pnts(tiles_dir / "tile.pnts", point_count=7)
+    write_tileset(tiles_dir / "tileset.json")
+    app_module.save_scene(
+        {
+            "id": "tiles-direct-service",
+            "name": "直接登记三维成果",
+            "assetType": "pointcloud",
+            "tilesetPath": str(tiles_dir / "tileset.json"),
+            "allowedRoles": [],
+            "allowedUsers": [],
+            "linkedBlockCodes": [],
+            "processingStage": "ready",
+        }
+    )
+
+    document = app_client.get(
+        "/api/scenes/tiles-direct-service/point-cloud/tiles/tileset.json?token=visual-token",
+        headers={"X-RS-Roles": "admin"},
+    )
+    binary = app_client.get(
+        "/api/scenes/tiles-direct-service/point-cloud/tiles/tile.pnts",
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert document.status_code == 200
+    assert document.json()["asset"]["version"] == "1.0"
+    assert document.json()["root"]["content"]["uri"] == "tile.pnts?token=visual-token"
+    assert binary.status_code == 200
+    assert binary.content[:4] == b"pnts"
 
 
 def test_point_cloud_upload_session_is_chunk_idempotent_and_resumable(app_client, monkeypatch):

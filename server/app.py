@@ -109,6 +109,8 @@ from server.modules.spatial_assets import (
     convert_point_cloud_to_copc,
     coverage_analysis,
     effective_raster_footprint,
+    inspect_3d_tileset,
+    normalized_tileset_document,
     point_cloud_collection_metadata,
 )
 from server.v2 import router as v2_router
@@ -434,6 +436,13 @@ class PointCloudRegisterRequest(BaseModel):
     capturedAt: str = ""
     recursive: bool = True
     outputs: list[str] = Field(default_factory=lambda: ["copc", "3dtiles"])
+
+
+class TilesetRegisterRequest(BaseModel):
+    path: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=255)
+    missionId: str = Field(default="", max_length=128)
+    capturedAt: str = ""
 
 
 class SceneAccessUpdateRequest(BaseModel):
@@ -1956,12 +1965,14 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
     tile_url = f"{base_url}/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
-    is_point_cloud = str(scene.get("assetType") or "") == "pointcloud"
+    is_3d_asset = str(scene.get("assetType") or "") == "pointcloud" or bool(
+        str(scene.get("tilesetPath") or "").strip()
+    )
     return {
         **scene,
-        "tileUrl": "" if is_point_cloud else tile_url,
-        "tileJsonUrl": "" if is_point_cloud else f"{base_url}/api/scenes/{scene_id}/tilejson.json{token_query}",
-        "thumbnailUrl": "" if is_point_cloud else f"{base_url}/api/scenes/{scene_id}/thumbnail.png{token_query}",
+        "tileUrl": "" if is_3d_asset else tile_url,
+        "tileJsonUrl": "" if is_3d_asset else f"{base_url}/api/scenes/{scene_id}/tilejson.json{token_query}",
+        "thumbnailUrl": "" if is_3d_asset else f"{base_url}/api/scenes/{scene_id}/thumbnail.png{token_query}",
         "copcUrl": (
             f"{base_url}/api/scenes/{scene_id}/point-cloud/copc{token_query}"
             if str(scene.get("copcPath") or "").strip()
@@ -3921,6 +3932,189 @@ def resolve_point_cloud_import_sources(path_value: str, *, recursive: bool) -> l
     return result
 
 
+def resolve_3d_tileset_import_root(path_value: str) -> Path:
+    if not path_value.strip():
+        raise HTTPException(status_code=400, detail="3D Tiles import path is required")
+    source = Path(path_value).expanduser()
+    if not source.is_absolute():
+        source = INBOX_DIR / source
+    resolved = source.resolve()
+    import_root = next(
+        (directory.resolve() for directory in IMPORT_DIRS if is_relative_to(resolved, directory.resolve())),
+        None,
+    )
+    if import_root is None:
+        raise HTTPException(status_code=403, detail="3D Tiles path is outside REMOTE_SENSING_IMPORT_DIRS")
+    if any(part.startswith(".") for part in resolved.relative_to(import_root).parts):
+        raise HTTPException(status_code=422, detail="Hidden 3D Tiles working directories cannot be registered")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="3D Tiles import path not found")
+    root_path = (resolved / "tileset.json").resolve() if resolved.is_dir() else resolved
+    if root_path.name.lower() != "tileset.json" or not root_path.is_file():
+        raise HTTPException(status_code=422, detail="Select a 3D Tiles directory or its root tileset.json")
+    if not is_relative_to(root_path, import_root):
+        raise HTTPException(status_code=403, detail="3D Tiles root resolves outside REMOTE_SENSING_IMPORT_DIRS")
+    return root_path
+
+
+def build_registered_tileset_scene_record(
+    scene_id: str,
+    root_path: Path,
+    metadata: dict[str, Any],
+    tileset: dict[str, Any],
+) -> dict[str, Any]:
+    content_type = str(tileset.get("contentType") or "3dtiles")
+    asset_type = "pointcloud" if content_type == "pnts" else "oblique3d"
+    formats = dict(tileset.get("formats") or {})
+    timestamp = now_iso()
+    return {
+        "id": scene_id,
+        "source": "server",
+        "storage": "DJI 3D Tiles",
+        "name": str(metadata.get("name") or root_path.parent.name or scene_id).strip(),
+        "fileName": "tileset.json",
+        "fileType": "application/json",
+        "size": int(tileset.get("totalSize") or 0),
+        "originalSize": int(tileset.get("totalSize") or 0),
+        "satellite": "",
+        "sensor": "DJI Terra",
+        "capturedAt": str(metadata.get("capturedAt") or "").strip(),
+        "projectId": str(metadata.get("projectId") or "").strip(),
+        "areaCode": str(metadata.get("areaCode") or "").strip(),
+        "allowedRoles": split_tokens(metadata.get("allowedRoles")),
+        "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "assetType": asset_type,
+        "missionId": str(metadata.get("missionId") or "").strip(),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "processingStage": "coverage-review",
+        "resolution": "",
+        "bounds": tileset["bounds"],
+        "crs": tileset["crs"],
+        "width": 0,
+        "height": 0,
+        "bands": 0,
+        "dtype": content_type,
+        "pointCount": int(tileset.get("pointCount") or 0),
+        "pointCloudFileCount": int(tileset.get("contentFileCount") or 0),
+        "tilesetCount": int(tileset.get("tilesetCount") or 0),
+        "tileCount": int(tileset.get("tileCount") or 0),
+        "tileFormats": formats,
+        "tilesetAssetVersions": list(tileset.get("assetVersions") or []),
+        "tilesetContentType": content_type,
+        "tilesetSource": "dji-terra",
+        "tilesetVersionNormalized": bool(tileset.get("normalizesDjiVersion")),
+        "nativeBounds": list(tileset.get("nativeBounds") or []),
+        "tilesetPath": catalog_path(root_path),
+        "deleteOriginalOnSceneDelete": False,
+        "opacity": 1.0,
+        "visible": True,
+        "transferStatus": "tileset-ready",
+        "deliveryStatus": "pending",
+        "deliveryComment": "",
+        "deliveredAt": None,
+        "deliveredBy": "",
+        "deliveryEvents": [],
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+    }
+
+
+def run_3d_tileset_registration_task(task_id: str) -> None:
+    if find_task_record(task_id).get("status") == "canceled":
+        return
+    task = update_task(
+        task_id,
+        status="running",
+        progress=5,
+        message="Validating DJI 3D Tiles directory",
+        startedAt=now_iso(),
+    )
+    root_path = Path(str(task.get("sourcePath") or "")).resolve()
+    scene_id = str(task["sceneId"])
+    try:
+        tileset = inspect_3d_tileset(root_path)
+        update_task(task_id, progress=85, message="Matching 3D footprint to forest blocks")
+        scene = build_registered_tileset_scene_record(
+            scene_id,
+            root_path,
+            {
+                "name": task.get("name") or scene_id,
+                "missionId": task.get("missionId") or "",
+                "capturedAt": task.get("capturedAt") or "",
+                "projectId": task.get("projectId") or "",
+                "areaCode": task.get("areaCode") or "",
+                "allowedRoles": task.get("allowedRoles") or [],
+                "allowedUsers": task.get("allowedUsers") or [],
+                "linkedBlockCodes": task.get("linkedBlockCodes") or [],
+            },
+            tileset,
+        )
+        scene = apply_scene_coverage_analysis(
+            scene,
+            {
+                "geometry": tileset["footprint"],
+                "bounds": tileset["bounds"],
+                "sourceCrs": tileset["crs"],
+            },
+            dict(task.get("analysisContext") or {}),
+        )
+        save_scene(scene)
+        update_task(
+            task_id,
+            status="completed",
+            progress=100,
+            message="DJI 3D Tiles is ready for coverage confirmation",
+            scene=scene,
+            completedAt=now_iso(),
+        )
+    except Exception as exc:
+        update_task(task_id, status="failed", progress=100, message=str(exc), failedAt=now_iso())
+
+
+def create_3d_tileset_registration_task(
+    root_path: Path,
+    metadata: dict[str, Any],
+    *,
+    analysis_context: dict[str, Any],
+) -> dict[str, Any]:
+    ensure_dirs()
+    scene_id = f"tiles-{uuid.uuid4().hex[:12]}"
+    task_id = f"task-{uuid.uuid4().hex[:12]}"
+    timestamp = now_iso()
+    task = {
+        "id": task_id,
+        "type": "3dtiles-register",
+        "status": "queued",
+        "progress": 0,
+        "message": "Queued",
+        "sceneId": scene_id,
+        "name": str(metadata.get("name") or root_path.parent.name or scene_id),
+        "fileName": "tileset.json",
+        "sourcePath": str(root_path.resolve()),
+        "assetType": "oblique3d",
+        "missionId": str(metadata.get("missionId") or ""),
+        "capturedAt": str(metadata.get("capturedAt") or ""),
+        "projectId": str(metadata.get("projectId") or ""),
+        "areaCode": str(metadata.get("areaCode") or ""),
+        "allowedRoles": split_tokens(metadata.get("allowedRoles")),
+        "allowedUsers": split_tokens(metadata.get("allowedUsers")),
+        "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
+        "analysisContext": {
+            "user": str(analysis_context.get("user") or ""),
+            "roles": sorted(analysis_context.get("roles") or []),
+            "projects": sorted(analysis_context.get("projects") or []),
+            "areas": sorted(analysis_context.get("areas") or []),
+            "principalType": str(analysis_context.get("principalType") or "user"),
+        },
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "events": [{"at": timestamp, "status": "queued", "progress": 0, "message": "Queued"}],
+    }
+    upsert_task(task)
+    TASK_EXECUTOR.submit(run_3d_tileset_registration_task, task_id)
+    return task
+
+
 def build_point_cloud_scene_record(
     scene_id: str,
     dataset_dir: Path,
@@ -4131,8 +4325,13 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
     if original.get("status") != "failed":
         raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
 
+    is_tileset_registration = str(original.get("type") or "") == "3dtiles-register"
     is_point_cloud = str(original.get("assetType") or "") == "pointcloud"
-    if is_point_cloud:
+    if is_tileset_registration:
+        source_path = Path(str(original.get("sourcePath") or "")).resolve()
+        if not source_path.is_file():
+            raise HTTPException(status_code=400, detail="Original 3D Tiles root is no longer available")
+    elif is_point_cloud:
         source_paths = [Path(str(value)).resolve() for value in original.get("sourcePaths") or []]
         if not source_paths or any(not path.exists() for path in source_paths):
             raise HTTPException(status_code=400, detail="Original point-cloud source files are no longer available")
@@ -4168,7 +4367,12 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
         }
     ]
     upsert_task(retry_task)
-    runner = run_point_cloud_conversion_task if is_point_cloud else run_conversion_task
+    if is_tileset_registration:
+        runner = run_3d_tileset_registration_task
+    elif is_point_cloud:
+        runner = run_point_cloud_conversion_task
+    else:
+        runner = run_conversion_task
     TASK_EXECUTOR.submit(runner, retry_task["id"])
     return retry_task
 
@@ -5869,6 +6073,22 @@ def register_point_cloud(payload: PointCloudRegisterRequest, request: Request) -
     return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
 
 
+@app.post("/api/3d-tiles/register")
+def register_3d_tiles(payload: TilesetRegisterRequest, request: Request) -> JSONResponse:
+    context = require_imagery_permission(request, IMAGERY_SCENE_CREATE_PERMISSION)
+    root_path = resolve_3d_tileset_import_root(payload.path)
+    task = create_3d_tileset_registration_task(
+        root_path,
+        {
+            "name": payload.name.strip(),
+            "missionId": payload.missionId.strip(),
+            "capturedAt": payload.capturedAt.strip(),
+        },
+        analysis_context=context,
+    )
+    return JSONResponse(status_code=202, content={"accepted": True, "task": task_public(task, request)})
+
+
 @app.patch("/api/scenes/{scene_id}/access")
 def update_scene_access(scene_id: str, payload: SceneAccessUpdateRequest, request: Request) -> dict[str, Any]:
     require_imagery_permission(request, IMAGERY_SCENE_UPDATE_PERMISSION)
@@ -6079,10 +6299,10 @@ def point_cloud_copc(scene_id: str, request: Request) -> FileResponse:
 
 
 @app.get("/api/scenes/{scene_id}/point-cloud/tiles/{asset_path:path}")
-def point_cloud_3dtiles(scene_id: str, asset_path: str, request: Request) -> FileResponse:
+def point_cloud_3dtiles(scene_id: str, asset_path: str, request: Request) -> Response:
     scene = find_allowed_scene(scene_id, request)
-    if str(scene.get("assetType") or "") != "pointcloud":
-        raise HTTPException(status_code=404, detail="Point-cloud asset not found")
+    if str(scene.get("assetType") or "") not in {"pointcloud", "oblique3d"}:
+        raise HTTPException(status_code=404, detail="3D Tiles asset not found")
     tileset_value = str(scene.get("tilesetPath") or "").strip()
     if not tileset_value:
         raise HTTPException(status_code=404, detail="3D Tiles output is not available")
@@ -6090,12 +6310,35 @@ def point_cloud_3dtiles(scene_id: str, asset_path: str, request: Request) -> Fil
     target = (tiles_root / asset_path).resolve()
     if not is_relative_to(target, tiles_root) or not target.is_file():
         raise HTTPException(status_code=404, detail="3D Tiles asset not found")
+    relative_parts = target.relative_to(tiles_root).parts
+    if any(part.startswith(".") for part in relative_parts):
+        raise HTTPException(status_code=404, detail="3D Tiles asset not found")
+    allowed_extensions = {
+        ".json", ".pnts", ".b3dm", ".cmpt", ".i3dm", ".glb", ".gltf", ".bin",
+        ".jpg", ".jpeg", ".png", ".webp", ".ktx2",
+    }
+    if target.suffix.lower() not in allowed_extensions:
+        raise HTTPException(status_code=404, detail="Unsupported 3D Tiles asset")
+    if target.suffix.lower() == ".json":
+        return JSONResponse(
+            content=normalized_tileset_document(
+                target,
+                service_token=str(request.query_params.get("token") or ""),
+            )
+        )
     media_types = {
-        ".json": "application/json",
         ".pnts": "application/octet-stream",
         ".b3dm": "application/octet-stream",
         ".cmpt": "application/octet-stream",
+        ".i3dm": "application/octet-stream",
         ".glb": "model/gltf-binary",
+        ".gltf": "model/gltf+json",
+        ".bin": "application/octet-stream",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".ktx2": "image/ktx2",
     }
     return FileResponse(target, media_type=media_types.get(target.suffix.lower(), "application/octet-stream"))
 

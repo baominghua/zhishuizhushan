@@ -254,6 +254,13 @@ export interface ImageryAsset {
   pointCloudFileCount?: number;
   pointCloudVersions?: string[];
   pointCloudFormats?: number[];
+  tilesetCount?: number;
+  tileCount?: number;
+  tileFormats?: Record<string, number>;
+  tilesetAssetVersions?: string[];
+  tilesetContentType?: "pnts" | "b3dm" | "mixed" | "3dtiles" | string;
+  tilesetSource?: string;
+  tilesetVersionNormalized?: boolean;
   nativeBounds?: [number, number, number, number, number, number];
   copcUrl?: string;
   tilesetUrl?: string;

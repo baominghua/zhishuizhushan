@@ -2,7 +2,7 @@ import { chromium } from "../apps/web-operations/node_modules/playwright-core/in
 import { mkdir } from "node:fs/promises";
 
 const baseURL = process.env.V2_VISUAL_BASE_URL || "http://127.0.0.1:8022";
-const outputDir = process.env.V2_VISUAL_OUTPUT || ".codex-temp/spatial-assets-visual-verification";
+const outputDir = process.env.V2_VISUAL_OUTPUT || "C:/Users/MECHREUO/.codex/visualizations/2026/08/19/smart-bamboo-3d-tiles";
 const executablePath = process.env.V2_BROWSER_PATH || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
 const testGeoTiff = process.env.V2_TEST_GEOTIFF || "";
 const viewports = [
@@ -26,8 +26,25 @@ for (const viewport of viewports) {
   });
   const page = await context.newPage();
   const consoleErrors = [];
+  let registeredTilesetPayload = null;
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("pageerror", (error) => consoleErrors.push(error.message));
+  await page.route("**/api/3d-tiles/register", async (route) => {
+    registeredTilesetPayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        accepted: true,
+        task: { id: "task-visual-tileset", type: "3dtiles-register", status: "queued", progress: 0, message: "Queued", sceneId: "tiles-visual" },
+      }),
+    });
+  });
+  await page.route("**/api/tasks/task-visual-tileset", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "task-visual-tileset", type: "3dtiles-register", status: "running", progress: 45, message: "正在校验 DJI 3D Tiles 目录", sceneId: "tiles-visual" }),
+  }));
 
   const response = await page.goto(`${baseURL}/v2/drone/imagery-assets`, { waitUntil: "networkidle", timeout: 30_000 });
   if (!response?.ok()) failures.push(`${viewport.name}: HTTP ${response?.status()}`);
@@ -40,13 +57,25 @@ for (const viewport of viewports) {
   if (!(await panel.getByText("同一航飞任务的 LAS/LAZ", { exact: false }).isVisible())) failures.push(`${viewport.name}: point-cloud batch input missing`);
   await panel.getByRole("button", { name: "服务器 / NAS 目录" }).click();
   if (!(await panel.getByPlaceholder(/terra_las_1_4/).isVisible())) failures.push(`${viewport.name}: server directory mode missing`);
+  await panel.getByRole("button", { name: /DJI 3D Tiles/ }).click();
+  if (!(await panel.getByText("直接登记 PNTS / B3DM，不重复转换", { exact: true }).isVisible())) failures.push(`${viewport.name}: DJI direct-registration mode missing`);
+  if (!(await panel.getByRole("button", { name: "本机断点续传" }).isDisabled())) failures.push(`${viewport.name}: local upload must be disabled for a ready tileset`);
+  const tilesetPath = panel.getByPlaceholder(/terra_pnts/);
+  await tilesetPath.fill("/app/data/remote-sensing/inbox/邵武S1地块/terra_pnts");
+  await panel.locator('input[name="name"]').fill("邵武 S1 DJI 点云");
+  await page.screenshot({ path: `${outputDir}/spatial-assets-dji-tileset-form-${viewport.name}.png`, fullPage: true });
+  if (viewport.name !== "desktop" || !testGeoTiff) {
+    await panel.getByRole("button", { name: "登记并自动分析" }).click();
+    await panel.getByRole("heading", { name: "正在校验 DJI 3D Tiles 目录" }).waitFor();
+    if (registeredTilesetPayload?.path !== "/app/data/remote-sensing/inbox/邵武S1地块/terra_pnts") failures.push(`${viewport.name}: registered path payload mismatch`);
+  }
 
   const pageOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   const panelOverflow = await panel.evaluate((element) => element.scrollWidth - element.clientWidth);
   if (pageOverflow > 2) failures.push(`${viewport.name}: page horizontal overflow ${pageOverflow}px`);
   if (panelOverflow > 2) failures.push(`${viewport.name}: panel horizontal overflow ${panelOverflow}px`);
   if (consoleErrors.length) failures.push(`${viewport.name}: console errors: ${consoleErrors.join(" | ")}`);
-  await page.screenshot({ path: `${outputDir}/spatial-assets-${viewport.name}.png`, fullPage: true });
+  await page.screenshot({ path: `${outputDir}/spatial-assets-dji-tileset-progress-${viewport.name}.png`, fullPage: true });
 
   if (viewport.name === "desktop" && testGeoTiff) {
     const suffix = Date.now().toString(36);
@@ -87,6 +116,63 @@ for (const viewport of viewports) {
     await page.screenshot({ path: `${outputDir}/spatial-assets-coverage-confirmation.png`, fullPage: true });
     await panel.getByRole("button", { name: /确认关联 \d+ 个林班/ }).click();
     await page.getByRole("dialog", { name: `跨林班自动匹配 ${suffix}` }).waitFor({ timeout: 15_000 });
+  }
+  if (viewport.name === "desktop") {
+    let tilesetRequested = false;
+    await page.route("**/api/scenes/tiles-map-visual", async (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "tiles-map-visual",
+        name: "邵武 S1 DJI 点云",
+        fileName: "tileset.json",
+        fileType: "application/json",
+        size: 1024,
+        originalSize: 1024,
+        assetType: "pointcloud",
+        missionId: "DJI-S1",
+        linkedBlockCodes: ["S1-001"],
+        processingStage: "ready",
+        capturedAt: "2026-08-13T12:00:00",
+        resolution: "",
+        bounds: [117.02, 27.13, 117.05, 27.16],
+        crs: "EPSG:4978",
+        width: 0,
+        height: 0,
+        bands: 0,
+        opacity: 1,
+        visible: true,
+        transferStatus: "tileset-ready",
+        tileUrl: "",
+        tileJsonUrl: "",
+        thumbnailUrl: "",
+        tilesetUrl: `${baseURL}/qa-tiles/tileset.json`,
+        createdAt: "2026-08-19T00:00:00Z",
+        updatedAt: "2026-08-19T00:00:00Z",
+      }),
+    }));
+    await page.route("**/qa-tiles/tileset.json", async (route) => {
+      tilesetRequested = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          asset: { version: "1.0" },
+          geometricError: 0,
+          root: {
+            boundingVolume: { region: [2.0426, 0.4735, 2.0432, 0.4741, 0, 500] },
+            geometricError: 0,
+          },
+        }),
+      });
+    });
+    await page.goto(`${baseURL}/v2/map?sceneId=tiles-map-visual&mode=3d`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForFunction(() => document.body.textContent?.includes("三维地球"), null, { timeout: 30_000 });
+    await page.getByRole("button", { name: "图层" }).click();
+    await page.getByText("三维点云与模型", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.waitForTimeout(1_000);
+    if (!tilesetRequested) failures.push("desktop: registered tileset was not requested by the Cesium map");
+    await page.screenshot({ path: `${outputDir}/spatial-assets-dji-tileset-map-desktop.png`, fullPage: true });
   }
   await context.close();
 }

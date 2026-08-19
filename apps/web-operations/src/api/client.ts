@@ -727,6 +727,8 @@ export const api = {
     request<{ accepted: true; task: SpatialAssetTask }>(`/api/point-clouds/upload-sessions/${encodeURIComponent(id)}/complete`, { method: "POST" }),
   registerPointCloud: (payload: { path: string; name: string; missionId: string; capturedAt: string; recursive: boolean; outputs: Array<"copc" | "3dtiles"> }) =>
     request<{ accepted: true; task: SpatialAssetTask }>("/api/point-clouds/register", { method: "POST", body: JSON.stringify(payload) }),
+  registerTileset: (payload: { path: string; name: string; missionId: string; capturedAt: string }) =>
+    request<{ accepted: true; task: SpatialAssetTask }>("/api/3d-tiles/register", { method: "POST", body: JSON.stringify(payload) }),
   updateImageryAsset: (id: string, payload: Partial<ImageryUploadPayload> & { visible?: boolean; opacity?: number }) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteImageryAsset: (id: string) =>

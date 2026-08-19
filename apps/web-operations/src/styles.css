@@ -4795,7 +4795,7 @@ svg {
 @media (max-width: 700px) { .system-tabs { margin-inline: -4px; } .system-summary { grid-template-columns: 1fr; } .system-summary > div { min-height: 82px; border-right: 0; border-bottom: 1px solid var(--line); } .selection-grid,.permission-matrix section > div,.permission-catalog-list section > div { grid-template-columns: 1fr; } .permission-matrix > section { grid-template-columns: 1fr; } .module-permission { border-right: 0; border-bottom: 1px solid var(--line); } }
 
 /* Spatial imagery and point-cloud ingestion */
-.asset-kind-switch { display: grid; gap: 10px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.asset-kind-switch { display: grid; gap: 10px; grid-template-columns: repeat(3,minmax(0,1fr)); }
 .asset-kind-switch > button { display: grid; min-height: 82px; align-items: center; gap: 12px; padding: 14px; color: var(--text); text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 8px; grid-template-columns: 38px minmax(0,1fr); cursor: pointer; }
 .asset-kind-switch > button:hover { border-color: var(--line-strong); background: #f8fbf9; }
 .asset-kind-switch > button.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(23,112,79,.1); }
@@ -4806,6 +4806,8 @@ svg {
 .source-mode-tabs { display: inline-flex; gap: 3px; margin-bottom: 14px; padding: 3px; background: #eaf1ed; border-radius: 6px; }
 .source-mode-tabs button { min-height: 32px; padding: 0 13px; color: var(--muted); background: transparent; border: 0; border-radius: 4px; font-size: 10px; font-weight: 700; cursor: pointer; }
 .source-mode-tabs button.active { color: var(--accent-strong); background: #fff; box-shadow: 0 1px 4px rgba(25,60,48,.12); }
+.source-mode-tabs button:disabled { color: #91a49b; cursor: not-allowed; opacity: .65; }
+.tileset-register-note { margin: 0 0 14px; padding: 10px 12px; color: var(--accent-strong); background: var(--accent-soft); border: 1px solid #cfe1d8; border-radius: 6px; }
 .transfer-progress { display: grid; gap: 8px; padding: 13px 15px; background: #eff6f2; border: 1px solid #d5e4dc; border-radius: 7px; }
 .transfer-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
 .transfer-progress strong { font-size: 11px; }

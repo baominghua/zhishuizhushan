@@ -260,6 +260,7 @@ export function DisplayDashboardPage() {
             onSelectBlock={setSelectedBlockId}
             onViewportChange={setViewport}
             imageryAssets={[]}
+            spatial3dAssets={[]}
             forestBlockFilterQuery={searchKeyword ? new URLSearchParams({ q: searchKeyword }).toString() : ""}
             situationAssets={situationAssets}
             onSelectSituationAsset={(id) => {
