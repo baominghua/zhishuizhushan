@@ -155,6 +155,18 @@ def test_production_python_dependencies_exclude_test_only_packages():
     assert "requirements-dev.txt" not in dockerfile
 
 
+def test_production_point_cloud_runtime_uses_pinned_pdal_image():
+    dockerfile = read_text("Dockerfile")
+    primary_compose = read_text("ops/compose.primary.yml")
+    standby_compose = read_text("ops/compose.standby.yml")
+
+    assert "FROM pdal/pdal:latest@sha256:" in dockerfile
+    assert "pdal --drivers | grep -q writers.copc" in dockerfile
+    assert "apt-get install" not in dockerfile
+    assert "urllib.request.urlopen" in primary_compose
+    assert "urllib.request.urlopen" in standby_compose
+
+
 def test_env_example_documents_required_deployment_variables():
     env_example = read_text(".env.example")
 
