@@ -334,6 +334,7 @@ def test_v2_map_config_reports_server_side_tianditu_availability(
     assert response.json() == {
         "provider": "tianditu",
         "available": True,
+        "accessMode": "server-proxy",
         "imageryUrl": "/api/basemaps/tianditu/img_w/{z}/{x}/{y}.png",
         "labelsUrl": "/api/basemaps/tianditu/cia_w/{z}/{x}/{y}.png",
         "maximumLevel": 18,
@@ -370,12 +371,19 @@ def test_v2_basemap_settings_are_persisted_and_never_return_the_full_key(
     monkeypatch.delenv("REMOTE_SENSING_TIANDITU_TK", raising=False)
     monkeypatch.delenv("REMOTE_SENSING_TIANDITU_PROXY_BASE_URL", raising=False)
     server_key = "a" * 32
+    web_key = "b" * 32
+    android_key = "c" * 32
+    ios_key = "d" * 32
 
     saved = app_client.put(
         "/api/v2/system/basemap-settings",
         headers=ADMIN_HEADERS,
         json={
             "serverKey": server_key,
+            "webKey": web_key,
+            "androidKey": android_key,
+            "iosKey": ios_key,
+            "webDirectEnabled": True,
             "proxyBaseUrl": "",
             "referer": "https://platform.example.test",
         },
@@ -386,7 +394,14 @@ def test_v2_basemap_settings_are_persisted_and_never_return_the_full_key(
     assert payload["available"] is True
     assert payload["hasServerKey"] is True
     assert payload["serverKeyMasked"] == "********aaaa"
+    assert payload["webKeyMasked"] == "********bbbb"
+    assert payload["androidKeyMasked"] == "********cccc"
+    assert payload["iosKeyMasked"] == "********dddd"
+    assert payload["webDirectEnabled"] is True
     assert server_key not in saved.text
+    assert web_key not in saved.text
+    assert android_key not in saved.text
+    assert ios_key not in saved.text
     assert payload["source"] == "stored"
 
     settings_file = isolated_env / "remote-sensing" / "system" / "basemap_settings.json"
@@ -397,10 +412,16 @@ def test_v2_basemap_settings_are_persisted_and_never_return_the_full_key(
     assert loaded.status_code == 200
     assert loaded.json()["serverKeyMasked"] == "********aaaa"
     assert server_key not in loaded.text
+    assert android_key not in loaded.text
+    assert ios_key not in loaded.text
 
     map_config = app_client.get("/api/v2/system/map-config", headers=ADMIN_HEADERS)
     assert map_config.status_code == 200
     assert map_config.json()["available"] is True
+    assert map_config.json()["accessMode"] == "web-direct"
+    assert f"tk={web_key}" in map_config.json()["imageryUrl"]
+    assert android_key not in map_config.text
+    assert ios_key not in map_config.text
 
 
 def test_v2_basemap_settings_reject_invalid_keys(app_client):

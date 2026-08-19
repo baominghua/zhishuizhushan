@@ -70,6 +70,10 @@ def administrative_divisions(
 
 class BasemapSettingsPayload(BaseModel):
     serverKey: str = ""
+    webKey: str = ""
+    androidKey: str = ""
+    iosKey: str = ""
+    webDirectEnabled: bool = False
     proxyBaseUrl: str = ""
     referer: str = ""
 
@@ -329,12 +333,22 @@ def v2_map_config(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_permission(context, "forest.blocks.view")
-    configured = public_basemap_settings()["available"]
+    settings = runtime_basemap_settings()
+    direct_web = bool(settings["webDirectEnabled"] and settings["webKey"])
+    configured = bool(settings["serverKey"] or settings["proxyBaseUrl"] or direct_web)
+    if direct_web:
+        web_key = settings["webKey"]
+        imagery_url = f"https://t0.tianditu.gov.cn/DataServer?T=img_w&x={{x}}&y={{y}}&l={{z}}&tk={web_key}"
+        labels_url = f"https://t0.tianditu.gov.cn/DataServer?T=cia_w&x={{x}}&y={{y}}&l={{z}}&tk={web_key}"
+    else:
+        imagery_url = "/api/basemaps/tianditu/img_w/{z}/{x}/{y}.png"
+        labels_url = "/api/basemaps/tianditu/cia_w/{z}/{x}/{y}.png"
     return {
         "provider": "tianditu",
         "available": configured,
-        "imageryUrl": "/api/basemaps/tianditu/img_w/{z}/{x}/{y}.png",
-        "labelsUrl": "/api/basemaps/tianditu/cia_w/{z}/{x}/{y}.png",
+        "accessMode": "web-direct" if direct_web else "server-proxy",
+        "imageryUrl": imagery_url,
+        "labelsUrl": labels_url,
         "maximumLevel": 18,
         "message": "天地图服务已连接" if configured else "当前环境尚未配置天地图服务端 Key",
     }
@@ -353,14 +367,32 @@ def update_v2_basemap_settings(
 ) -> dict[str, Any]:
     require_permission(context, "system.basemap.manage")
     current = runtime_basemap_settings()
-    server_key = payload.serverKey.strip()
-    if not server_key or "*" in server_key:
-        server_key = current["serverKey"]
-    if server_key and (len(server_key) != 32 or not server_key.isalnum()):
-        raise HTTPException(status_code=422, detail="天地图服务端 Key 必须是 32 位字母或数字。")
+    credentials: dict[str, str] = {}
+    for supplied, settings_name, label in (
+        (payload.serverKey, "serverKey", "服务端"),
+        (payload.webKey, "webKey", "Web"),
+        (payload.androidKey, "androidKey", "Android"),
+        (payload.iosKey, "iosKey", "iOS"),
+    ):
+        key = supplied.strip()
+        if not key or "*" in key:
+            key = str(current[settings_name])
+        if key and (len(key) != 32 or not key.isalnum()):
+            raise HTTPException(status_code=422, detail=f"天地图 {label} Key 必须是 32 位字母或数字。")
+        credentials[settings_name] = key
     proxy_base_url = payload.proxyBaseUrl.strip().rstrip("/")
     if proxy_base_url and not proxy_base_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="上游代理地址必须以 http:// 或 https:// 开头。")
-    if not server_key and not proxy_base_url:
-        raise HTTPException(status_code=422, detail="服务端 Key 和上游代理地址至少配置一项。")
-    return save_basemap_settings(server_key=server_key, proxy_base_url=proxy_base_url, referer=payload.referer)
+    if not credentials["serverKey"] and not proxy_base_url and not (payload.webDirectEnabled and credentials["webKey"]):
+        raise HTTPException(status_code=422, detail="请配置服务端 Key、上游代理地址，或配置 Web Key 并开启 Web 直连。")
+    if payload.webDirectEnabled and not credentials["webKey"]:
+        raise HTTPException(status_code=422, detail="开启 Web 直连前必须配置 Web Key。")
+    return save_basemap_settings(
+        server_key=credentials["serverKey"],
+        web_key=credentials["webKey"],
+        android_key=credentials["androidKey"],
+        ios_key=credentials["iosKey"],
+        web_direct_enabled=payload.webDirectEnabled,
+        proxy_base_url=proxy_base_url,
+        referer=payload.referer,
+    )

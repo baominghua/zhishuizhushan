@@ -3512,6 +3512,12 @@ svg {
 .basemap-settings-page { max-width: 1440px; }
 .basemap-settings-page .domain-summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .basemap-settings-page .domain-summary-strip > div { position: relative; padding-left: 64px; }
+.basemap-settings-page .checkbox-field { display: flex; align-items: flex-start; gap: 12px; }
+.basemap-settings-page .checkbox-field > input { width: 18px; height: 18px; margin-top: 3px; flex: 0 0 auto; accent-color: var(--accent); }
+.basemap-settings-page .checkbox-field > span { display: grid; gap: 4px; }
+.basemap-settings-page .checkbox-field strong { font-size: 14px; }
+.basemap-settings-page .checkbox-field small,
+.basemap-settings-page .field-span > small { color: var(--muted); line-height: 1.55; }
 .summary-icon { position: absolute; left: 22px; top: 50%; display: grid; width: 28px; height: 28px; place-items: center; color: var(--accent); transform: translateY(-50%); }
 .summary-icon svg { width: 21px; height: 21px; }
 .basemap-config-shell { max-width: 980px; padding: 20px; }

@@ -132,6 +132,10 @@ def test_v2_basemap_settings_are_managed_server_side():
     assert '"/api/v2/system/basemap-settings"' in client
     assert "完整值不会返回浏览器" in page
     assert 'type="password"' in page
+    assert 'name="webKey"' in page
+    assert 'name="androidKey"' in page
+    assert 'name="iosKey"' in page
+    assert 'name="webDirectEnabled"' in page
     assert "?tk=" not in cesium
 
 
