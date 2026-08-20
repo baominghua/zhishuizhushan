@@ -1295,6 +1295,9 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'git merge --ff-only "`$target_commit"' in publisher
     assert 'RELEASE_BUNDLE="`$bundle"' in publisher
     assert '"--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit"' in publisher
+    assert '"archive", "--format=tar"' in publisher
+    assert '"/var/tmp/smart-bamboo-release.XXXXXX"' in publisher
+    assert '"tar", "-xf", $linuxSourceArchive' in publisher
     assert "[AllowEmptyString()][string[]]$Arguments" in publisher
     assert '"-N", \'""\'' in publisher
     assert "grep -Fqx -f ~/.ssh/.smart_bamboo_release_key" in publisher
@@ -1315,6 +1318,14 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'echo "=== VERIFY PREBUILT APPLICATION IMAGE ==="' in deploy_script
     assert 'prebuilt_image_verified=${PREBUILT_IMAGE}' in deploy_script
     assert 'org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"' in dockerfile
+    assert "NPM_CONFIG_FETCH_TIMEOUT=600000" in dockerfile
+    assert "COREPACK_NPM_REGISTRY=${NPM_REGISTRY}" in dockerfile
+    assert 'pnpm config set registry "${NPM_REGISTRY}"' in dockerfile
+    assert "id=smart-bamboo-pnpm-store" in dockerfile
+    assert "https://registry.npmmirror.com" in dockerfile
+    assert "id=smart-bamboo-pip-cache" in dockerfile
+    assert "https://mirrors.aliyun.com/pypi/simple/" in dockerfile
+    assert "ENV PATH=/opt/conda/envs/pdal/bin:${PATH}" in dockerfile
     assert "绕过服务器访问 GitHub、Docker Hub" in guide
 
 

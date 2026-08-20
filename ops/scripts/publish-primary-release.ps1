@@ -163,6 +163,7 @@ if ($ReleaseTag -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or -not $Release
 $cacheDirectory = Join-Path $env:LOCALAPPDATA "SmartBamboo\ReleaseCache"
 New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
 $bundlePath = Join-Path $cacheDirectory "$ReleaseTag.bundle"
+$sourceArchivePath = Join-Path $cacheDirectory "$ReleaseTag.source.tar"
 $remoteBundle = "$RemoteBundleDirectory/$ReleaseTag.bundle"
 $imageName = "smart-bamboo-app:$ReleaseTag"
 $imageArchivePath = Join-Path $ImageCacheDirectory "$ReleaseTag.image.tar.gz"
@@ -228,19 +229,33 @@ $imageHash = ""
 $imageSize = 0
 if ($IncludeImage) {
     Write-Host "[2/7] 在本机 WSL Docker 中构建生产镜像……" -ForegroundColor Cyan
-    $linuxRepository = ConvertTo-WslPath -WindowsPath $repositoryRoot
     Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "docker", "info") -FailureMessage "WSL Docker Engine 未启动"
-    Invoke-Native -FilePath $wsl -Arguments @(
-        "-d", $WslDistribution,
-        "-u", "root",
-        "--",
-        "docker", "build",
-        "--progress", "plain",
-        "--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit",
-        "-t", $imageName,
-        "-f", "$linuxRepository/Dockerfile",
-        $linuxRepository
-    ) -FailureMessage "本机构建生产镜像失败"
+    if (Test-Path -LiteralPath $sourceArchivePath -PathType Leaf) {
+        Remove-Item -LiteralPath $sourceArchivePath -Force
+    }
+    Invoke-Native -FilePath $git -Arguments @("-C", $repositoryRoot, "archive", "--format=tar", "--output=$sourceArchivePath", $TargetCommit) -FailureMessage "生成生产源码归档失败"
+    $linuxSourceArchive = ConvertTo-WslPath -WindowsPath $sourceArchivePath
+    $linuxBuildContext = Get-NativeText -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "mktemp", "-d", "/var/tmp/smart-bamboo-release.XXXXXX") -FailureMessage "创建 WSL 构建目录失败"
+    if ($linuxBuildContext -notmatch '^/var/tmp/smart-bamboo-release\.[A-Za-z0-9]+$') {
+        throw "WSL 构建目录格式异常：$linuxBuildContext"
+    }
+    try {
+        Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "tar", "-xf", $linuxSourceArchive, "-C", $linuxBuildContext) -FailureMessage "解压生产源码到 WSL 失败"
+        Invoke-Native -FilePath $wsl -Arguments @(
+            "-d", $WslDistribution,
+            "-u", "root",
+            "--",
+            "docker", "build",
+            "--progress", "plain",
+            "--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit",
+            "-t", $imageName,
+            "-f", "$linuxBuildContext/Dockerfile",
+            $linuxBuildContext
+        ) -FailureMessage "本机构建生产镜像失败"
+    } finally {
+        & $wsl -d $WslDistribution -u root -- rm -rf -- $linuxBuildContext
+        Remove-Item -LiteralPath $sourceArchivePath -Force -ErrorAction SilentlyContinue
+    }
     $imageRevision = Get-NativeText -FilePath $wsl -Arguments @(
         "-d", $WslDistribution,
         "-u", "root",
