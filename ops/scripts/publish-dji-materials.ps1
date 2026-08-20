@@ -73,7 +73,7 @@ function Get-DefaultProjectName {
 function Invoke-Native {
     param(
         [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Arguments,
         [Parameter(Mandatory)][string]$FailureMessage
     )
     & $FilePath @Arguments
@@ -92,7 +92,9 @@ function Install-PublishSshKey {
         $sshKeygen = Require-Command -Name "ssh-keygen"
         $keyDirectory = Split-Path -Parent $KeyPath
         New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
-        Invoke-Native -FilePath $sshKeygen -Arguments @("-t", "ed25519", "-f", $KeyPath, "-N", "", "-C", "smart-bamboo-material-publisher") -FailureMessage "创建素材发布专用 SSH 密钥失败"
+        # Windows PowerShell 5 drops a true empty native argument. A literal
+        # pair of quotes is decoded by Windows OpenSSH as an empty passphrase.
+        Invoke-Native -FilePath $sshKeygen -Arguments @("-t", "ed25519", "-f", $KeyPath, "-N", '""', "-C", "smart-bamboo-material-publisher") -FailureMessage "创建素材发布专用 SSH 密钥失败"
     }
     $publicKey = [System.IO.File]::ReadAllText("$KeyPath.pub", [System.Text.Encoding]::UTF8).Trim()
     $publicKeyBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($publicKey + "`n"))
@@ -155,7 +157,19 @@ Test-SafeName -Value $sourceDirectory.Name -Label "成果目录名"
 
 $datasetName = $sourceDirectory.Name
 $target = "$SshUser@$ServerHost"
-$keyPath = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".ssh\smart_bamboo_publish_ed25519"
+$sshDirectory = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".ssh"
+$materialKeyPath = Join-Path $sshDirectory "smart_bamboo_publish_ed25519"
+$releaseKeyPath = Join-Path $sshDirectory "smart_bamboo_release_ed25519"
+# The direct-release key is already authorized on the same managed server.
+# Reuse it until a dedicated material key has been installed, avoiding another
+# password prompt and account-lock risk on first material publication.
+$keyPath = if (Test-Path -LiteralPath $materialKeyPath -PathType Leaf) {
+    $materialKeyPath
+} elseif (Test-Path -LiteralPath $releaseKeyPath -PathType Leaf) {
+    $releaseKeyPath
+} else {
+    $materialKeyPath
+}
 $sshCommon = @("-i", $keyPath, "-p", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new")
 $scpCommon = @("-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new")
 

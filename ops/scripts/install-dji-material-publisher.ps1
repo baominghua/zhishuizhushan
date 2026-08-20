@@ -34,13 +34,12 @@ exit /b %PUBLISH_EXIT_CODE%
 '@
 [IO.File]::WriteAllText($launcherPath, $launcher, [Text.Encoding]::ASCII)
 
-$powershellPath = Join-Path $PSHOME "powershell.exe"
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $powershellPath
-$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$installedScript`""
-$shortcut.WorkingDirectory = $installDirectory
-$shortcut.IconLocation = "$powershellPath,0"
+$shortcut.TargetPath = $env:ComSpec
+$shortcut.Arguments = "/d /c `"`"$launcherPath`"`""
+$shortcut.WorkingDirectory = $desktopDirectory
+$shortcut.IconLocation = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe,0"
 $shortcut.Description = "发布 DJI 3D Tiles 素材到智慧竹山平台"
 $shortcut.Save()
 

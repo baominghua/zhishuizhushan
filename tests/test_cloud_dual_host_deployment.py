@@ -1261,6 +1261,9 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
 def test_dji_material_publisher_shortcut_is_safe_for_windows_chinese_paths():
     launcher = (ROOT / "ops/scripts/发布大疆素材到智慧竹山.cmd").read_bytes()
     installer = (ROOT / "ops/scripts/install-dji-material-publisher.ps1").read_bytes()
+    publisher = (ROOT / "ops/scripts/publish-dji-materials.ps1").read_text(
+        encoding="utf-8-sig"
+    )
     installer_text = installer.decode("utf-8-sig")
 
     assert all(byte < 128 for byte in launcher)
@@ -1270,6 +1273,12 @@ def test_dji_material_publisher_shortcut_is_safe_for_windows_chinese_paths():
     assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer_text
     assert "[Text.Encoding]::ASCII" in installer_text
     assert 'CreateShortcut($shortcutPath)' in installer_text
+    assert '[AllowEmptyString()][string[]]$Arguments' in publisher
+    assert '"-N", \'""\'' in publisher
+    assert '"smart_bamboo_release_ed25519"' in publisher
+    assert "Test-Path -LiteralPath $releaseKeyPath" in publisher
+    assert '$shortcut.TargetPath = $env:ComSpec' in installer_text
+    assert '$shortcut.Arguments = "/d /c' in installer_text
 
 
 def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
