@@ -97,7 +97,10 @@ function Install-ReleaseSshKey {
     $keyDirectory = Split-Path -Parent $KeyPath
     New-Item -ItemType Directory -Path $keyDirectory -Force | Out-Null
     if (-not (Test-Path -LiteralPath $KeyPath -PathType Leaf)) {
-        Invoke-Native -FilePath $SshKeygenExecutable -Arguments @("-t", "ed25519", "-N", "", "-C", "smart-bamboo-release", "-f", $KeyPath) -FailureMessage "生成发布专用 SSH 密钥失败"
+        # Windows PowerShell 5 drops a true empty native argument. Passing a
+        # literal pair of quotes is decoded by Windows OpenSSH as an empty
+        # passphrase while preserving the value following -N.
+        Invoke-Native -FilePath $SshKeygenExecutable -Arguments @("-t", "ed25519", "-N", '""', "-C", "smart-bamboo-release", "-f", $KeyPath) -FailureMessage "生成发布专用 SSH 密钥失败"
     }
     $publicKey = [IO.File]::ReadAllText("$KeyPath.pub", [Text.Encoding]::UTF8).Trim()
     $publicKeyBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($publicKey + "`n"))
