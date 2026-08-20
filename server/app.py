@@ -1961,29 +1961,28 @@ def public_service_token_query(request: Request) -> str:
 
 
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
-    base_url = str(request.base_url).rstrip("/")
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
-    tile_url = f"{base_url}/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
+    tile_url = f"/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
     is_3d_asset = str(scene.get("assetType") or "") == "pointcloud" or bool(
         str(scene.get("tilesetPath") or "").strip()
     )
     return {
         **scene,
         "tileUrl": "" if is_3d_asset else tile_url,
-        "tileJsonUrl": "" if is_3d_asset else f"{base_url}/api/scenes/{scene_id}/tilejson.json{token_query}",
-        "thumbnailUrl": "" if is_3d_asset else f"{base_url}/api/scenes/{scene_id}/thumbnail.png{token_query}",
+        "tileJsonUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/tilejson.json{token_query}",
+        "thumbnailUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/thumbnail.png{token_query}",
         "copcUrl": (
-            f"{base_url}/api/scenes/{scene_id}/point-cloud/copc{token_query}"
+            f"/api/scenes/{scene_id}/point-cloud/copc{token_query}"
             if str(scene.get("copcPath") or "").strip()
             else ""
         ),
         "tilesetUrl": (
-            f"{base_url}/api/scenes/{scene_id}/point-cloud/tiles/tileset.json{token_query}"
+            f"/api/scenes/{scene_id}/point-cloud/tiles/tileset.json{token_query}"
             if str(scene.get("tilesetPath") or "").strip()
             else ""
         ),
-        "metadataUrl": f"{base_url}/api/scenes/{scene_id}{token_query}",
+        "metadataUrl": f"/api/scenes/{scene_id}{token_query}",
     }
 
 
@@ -3143,14 +3142,13 @@ def find_allowed_scene(scene_id: str, request: Request) -> dict[str, Any]:
 def task_public(task: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
     if not request or not task.get("sceneId"):
         return task
-    base_url = str(request.base_url).rstrip("/")
     token_query = public_service_token_query(request)
     payload = {
         **task,
-        "sceneUrl": f"{base_url}/api/scenes/{task['sceneId']}{token_query}",
+        "sceneUrl": f"/api/scenes/{task['sceneId']}{token_query}",
     }
     if task.get("status") == "failed":
-        payload["retryUrl"] = f"{base_url}/api/tasks/{task['id']}/retry{token_query}"
+        payload["retryUrl"] = f"/api/tasks/{task['id']}/retry{token_query}"
     return payload
 
 

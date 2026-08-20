@@ -194,9 +194,34 @@ def test_public_scene_exposes_thumbnail_url(isolated_env):
     )
 
     assert response.status_code == 200
-    assert response.json()["thumbnailUrl"].endswith(
-        "/api/scenes/scene-thumbnail-url/thumbnail.png"
+    payload = response.json()
+    assert payload["thumbnailUrl"] == "/api/scenes/scene-thumbnail-url/thumbnail.png"
+    assert "://" not in payload["thumbnailUrl"]
+
+
+def test_public_scene_uses_same_origin_paths_for_3d_tiles(isolated_env):
+    app_module = reload_app_module()
+    scene = sample_scene("scene-3d-same-origin")
+    scene.update(
+        {
+            "assetType": "oblique3d",
+            "tilesetPath": "inbox/demo/tileset.json",
+        }
     )
+    app_module.save_scene(scene)
+    client = TestClient(app_module.app, base_url="https://example.test:18081")
+
+    response = client.get(
+        "/api/scenes/scene-3d-same-origin",
+        headers={"X-RS-Roles": "imagery.scenes.view"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tilesetUrl"] == (
+        "/api/scenes/scene-3d-same-origin/point-cloud/tiles/tileset.json"
+    )
+    assert "://" not in payload["tilesetUrl"]
 
 
 def test_public_scene_never_echoes_service_token_in_human_auth_mode(
