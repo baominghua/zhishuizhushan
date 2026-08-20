@@ -1226,6 +1226,12 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "REMOTE_SENSING_API_TOKENS" in script
     assert "SMART_BAMBOO_DASHBOARD_TOKEN" in script
     assert "config --quiet" in script
+    assert 'echo "=== CACHE BASE IMAGES ==="' in script
+    assert 'docker image inspect "${base_image}"' in script
+    assert 'timeout --foreground "${BASE_IMAGE_PULL_TIMEOUT_SECONDS}"' in script
+    assert 'docker pull "${base_image}"' in script
+    assert "The running application remains online" in script
+    assert "BUILDKIT_PROGRESS=plain" in script
     assert "build app" in script
     assert "up -d --no-deps --no-build app" in script
     assert "rollback_application" in script

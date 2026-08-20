@@ -10,6 +10,8 @@ ENV_FILE="${ENV_FILE:-/srv/smart-bamboo/config/primary.env}"
 PUBLIC_BRANCH="${PUBLIC_BRANCH:-production-deploy}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-40}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-5}"
+BASE_IMAGE_PULL_ATTEMPTS="${BASE_IMAGE_PULL_ATTEMPTS:-3}"
+BASE_IMAGE_PULL_TIMEOUT_SECONDS="${BASE_IMAGE_PULL_TIMEOUT_SECONDS:-1200}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/smart-bamboo-primary-release.lock}"
 
 fail() {
@@ -30,6 +32,10 @@ flock -n 9 || fail "another primary release is already running."
   fail "HEALTH_ATTEMPTS must be a positive integer."
 [[ "${HEALTH_INTERVAL_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
   fail "HEALTH_INTERVAL_SECONDS must be a positive integer."
+[[ "${BASE_IMAGE_PULL_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
+  fail "BASE_IMAGE_PULL_ATTEMPTS must be a positive integer."
+[[ "${BASE_IMAGE_PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
+  fail "BASE_IMAGE_PULL_TIMEOUT_SECONDS must be a positive integer."
 
 [[ "$(hostname)" == "${EXPECTED_HOST}" ]] ||
   fail "This is not the expected primary host ${EXPECTED_HOST}."
@@ -37,6 +43,7 @@ ip -4 addr show eth0 | grep -Fq "${EXPECTED_IP}/" ||
   fail "Primary address ${EXPECTED_IP} is not assigned to eth0."
 [[ -d "${REPOSITORY}/.git" ]] || fail "Git repository is missing: ${REPOSITORY}"
 [[ -f "${ENV_FILE}" ]] || fail "Protected environment is missing: ${ENV_FILE}"
+command -v timeout >/dev/null || fail "The coreutils timeout command is required."
 [[ "$(stat -c '%a' "${ENV_FILE}")" == "600" ]] ||
   fail "Protected environment must have mode 600."
 
@@ -222,8 +229,39 @@ grep -Eq '^SMART_BAMBOO_DASHBOARD_TOKEN=.+' "${ENV_FILE}" ||
 
 "${compose[@]}" config --quiet
 
+echo "=== CACHE BASE IMAGES ==="
+mapfile -t base_images < <(
+  awk 'toupper($1) == "FROM" { print $2 }' "${REPOSITORY}/Dockerfile" |
+    awk '!seen[$0]++'
+)
+[[ "${#base_images[@]}" -gt 0 ]] || fail "Dockerfile does not declare a base image."
+for base_image in "${base_images[@]}"; do
+  [[ "${base_image}" != *'$'* ]] ||
+    fail "Dockerfile base image variables are not supported by this release script: ${base_image}"
+  if docker image inspect "${base_image}" >/dev/null 2>&1; then
+    echo "base_image_cached=${base_image}"
+    continue
+  fi
+
+  echo "base_image_missing=${base_image}"
+  echo "The running application remains online while this one-time image download runs."
+  image_pull_succeeded=0
+  for ((attempt = 1; attempt <= BASE_IMAGE_PULL_ATTEMPTS; attempt++)); do
+    echo "base_image_pull_attempt=${attempt}/${BASE_IMAGE_PULL_ATTEMPTS} image=${base_image}"
+    if timeout --foreground "${BASE_IMAGE_PULL_TIMEOUT_SECONDS}" \
+      docker pull "${base_image}"; then
+      image_pull_succeeded=1
+      break
+    fi
+    echo "base_image_pull_retry=${base_image}" >&2
+    sleep $((attempt * 5))
+  done
+  [[ "${image_pull_succeeded}" == "1" ]] ||
+    fail "Unable to cache base image ${base_image}; check Docker Hub connectivity."
+done
+
 echo "=== BUILD APPLICATION IMAGE ==="
-DOCKER_BUILDKIT=1 "${compose[@]}" build app
+DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "${compose[@]}" build app
 new_image="smart-bamboo-app:${RELEASE_TAG}"
 docker image inspect "${new_image}" >/dev/null
 

@@ -102,6 +102,8 @@ RELEASE_TAG=<日期-提交号前12位> \
   bash ops/scripts/deploy-primary-release.sh
 ```
 
+发布脚本会先逐个检查 Dockerfile 基础镜像。已缓存的镜像不会重复下载；缺失镜像会在正式构建前单独拉取，单次默认限时 20 分钟并最多重试 3 次，拉取和构建期间原有应用继续在线。日志出现 `base_image_cached=` 后，后续版本不会再因同一基础镜像停在 BuildKit 总步骤计数。
+
 脚本只在主节点 `ecs-98299861 / 192.168.0.32` 运行，先验证 Fast-forward、受保护环境文件和旧应用镜像，再构建并只替换 `app` 容器。失败时自动恢复旧环境和旧应用镜像；它不会重建 Nginx。输出中不得包含 `.env`、数据库密码或 Token。
 
 正式 HTTP 入口采用版本端口隔离：`80` 与 `18080` 提供 V1，`18081` 只提供 V2、统一登录页和 API。首次启用或 Nginx 配置更新后，在主节点运行 `bash ops/scripts/activate-versioned-http-ports.sh`；该脚本只重建 Nginx，并验证 V1 页面、V2 工作台以及登录返回路径。移动云安全组需单独允许 TCP `18081`，不得开放 `8010`、`8080` 或数据库端口。
