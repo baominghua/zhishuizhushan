@@ -80,8 +80,10 @@ if [[ -f "${secure_compose_file}" ]] &&
 fi
 "${compose[@]}" config --quiet
 application_services=(app)
+proxy_services=(nginx)
 if [[ "${secure_enabled}" == "1" ]]; then
   application_services+=(app-v2-secure)
+  proxy_services+=(nginx-v2-secure)
 fi
 
 current_commit="$(git rev-parse HEAD)"
@@ -150,6 +152,12 @@ wait_for_service_health() {
   return 1
 }
 
+recreate_proxy_services() {
+  # Nginx resolves static proxy_pass hostnames when it starts. Recreate the
+  # proxies after application containers receive new Docker network addresses.
+  "${compose[@]}" up -d --no-deps --force-recreate "${proxy_services[@]}"
+}
+
 restore_environment() {
   local restore_tmp=""
   restore_tmp="$(mktemp "${ENV_FILE}.restore.XXXXXX")"
@@ -167,7 +175,8 @@ rollback_application() {
     "${compose[@]}" config --quiet
     "${compose[@]}" up -d --no-deps --no-build "${application_services[@]}"
     if wait_for_service_health app &&
-      { [[ "${secure_enabled}" != "1" ]] || wait_for_service_health app-v2-secure; }; then
+      { [[ "${secure_enabled}" != "1" ]] || wait_for_service_health app-v2-secure; } &&
+      recreate_proxy_services; then
       rollback_succeeded=1
       echo "APPLICATION_ROLLBACK_OK" >&2
     else
@@ -326,6 +335,7 @@ if [[ "${secure_enabled}" == "1" ]]; then
   wait_for_service_health app-v2-secure ||
     fail "New administrator application did not become healthy."
 fi
+recreate_proxy_services
 
 echo "=== VERIFY APPLICATION READINESS ==="
 health_payload="$(curl -fsS http://127.0.0.1:8010/api/health)"
