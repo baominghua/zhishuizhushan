@@ -95,6 +95,11 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert 'maximumScreenSpaceError: asset.assetType === "pointcloud" ? 16 : 10' in cesium
     assert "cacheSize: 512" in open_layers
     assert "preload: 1" in open_layers
+    assert 'requestedMode === "2d" || requestedMode === "3d"' in page
+    assert 'asset.assetType === "orthophoto"' in page
+    assert 'mode=2d`}' in (
+        web_root / "pages" / "ImageryAssetsPage.tsx"
+    ).read_text(encoding="utf-8")
 
     map_page = (web_root / "pages" / "MapPage.tsx").read_text(encoding="utf-8")
     assert 'aria-label="放大地图"' in map_page

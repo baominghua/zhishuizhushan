@@ -64,6 +64,8 @@ function filterQueryString(filters: MapFilterValues) {
 }
 
 function initialMapMode(): MapViewMode {
+  const requestedMode = new URLSearchParams(window.location.search).get("mode");
+  if (requestedMode === "2d" || requestedMode === "3d") return requestedMode;
   return window.localStorage.getItem(MAP_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d";
 }
 
@@ -217,9 +219,16 @@ export function MapPage() {
 
   useEffect(() => {
     const asset = targetSpatialAsset.data;
-    if (!asset?.tilesetUrl || asset.processingStage === "coverage-review") return;
-    setMode("3d");
-    setLayers((current) => ({ ...current, spatial3d: true }));
+    if (!asset) return;
+    if (asset.tilesetUrl) {
+      if (asset.processingStage === "coverage-review") return;
+      setMode("3d");
+      setLayers((current) => ({ ...current, spatial3d: true }));
+    } else if (asset.assetType === "orthophoto") {
+      setLayers((current) => ({ ...current, droneImagery: true }));
+    } else {
+      return;
+    }
     if (asset.bounds?.length === 4) {
       setAreaFocusRequest((current) => ({ sequence: current.sequence + 1, bbox: asset.bounds }));
     }
