@@ -466,6 +466,7 @@ export function MapPage() {
           onViewportChange={updateViewport}
           imageryAssets={visibleImageryAssets}
           spatial3dAssets={visibleSpatial3dAssets}
+          targetSpatialAssetId={targetSceneId || undefined}
           forestBlockFilterQuery={appliedFilterQuery}
         />
         {resultsOpen && (

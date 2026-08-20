@@ -56,6 +56,7 @@ interface CesiumGlobeProps {
   onViewportChange: (viewport: MapViewport) => void;
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
+  targetSpatialAssetId?: string;
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
 }
@@ -245,6 +246,7 @@ export function CesiumGlobe({
   onViewportChange,
   imageryAssets,
   spatial3dAssets,
+  targetSpatialAssetId,
   situationAssets,
   onSelectSituationAsset,
 }: CesiumGlobeProps) {
@@ -488,6 +490,9 @@ export function CesiumGlobe({
           activeViewer.scene.primitives.add(tileset);
           loaded.push(tileset);
           spatial3dTilesetsRef.current = loaded;
+          if (asset.id === targetSpatialAssetId) {
+            await activeViewer.flyTo(tileset, { duration: 1.2 });
+          }
         } catch {
           // Keep loading the remaining registered datasets when one directory is unavailable.
         }
@@ -508,7 +513,7 @@ export function CesiumGlobe({
       });
       spatial3dTilesetsRef.current = [];
     };
-  }, [spatial3dAssets]);
+  }, [spatial3dAssets, targetSpatialAssetId]);
 
   useEffect(() => {
     spatial3dTilesetsRef.current.forEach((tileset) => {

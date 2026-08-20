@@ -31,6 +31,7 @@ interface MapCanvasProps {
   onViewportChange: (viewport: MapViewport) => void;
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
+  targetSpatialAssetId?: string;
   forestBlockFilterQuery: string;
   situationAssets?: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
@@ -63,6 +64,7 @@ export function MapCanvas({
   onViewportChange,
   imageryAssets,
   spatial3dAssets,
+  targetSpatialAssetId,
   forestBlockFilterQuery,
   situationAssets = [],
   onSelectSituationAsset,
@@ -123,6 +125,7 @@ export function MapCanvas({
             onViewportChange={onViewportChange}
             imageryAssets={imageryAssets}
             spatial3dAssets={spatial3dAssets}
+            targetSpatialAssetId={targetSpatialAssetId}
             situationAssets={situationAssets}
             onSelectSituationAsset={onSelectSituationAsset}
           />
