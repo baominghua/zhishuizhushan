@@ -104,9 +104,9 @@ RELEASE_TAG=<日期-提交号前12位> \
 
 发布脚本会先逐个检查 Dockerfile 基础镜像。已缓存的镜像不会重复下载；缺失镜像会在正式构建前单独拉取，单次默认限时 20 分钟并最多重试 3 次，拉取和构建期间原有应用继续在线。日志出现 `base_image_cached=` 后，后续版本不会再因同一基础镜像停在 BuildKit 总步骤计数。
 
-脚本只在主节点 `ecs-98299861 / 192.168.0.32` 运行，先验证 Fast-forward、受保护环境文件和旧应用镜像，再构建并只替换 `app` 容器。失败时自动恢复旧环境和旧应用镜像；它不会重建 Nginx。输出中不得包含 `.env`、数据库密码或 Token。
+脚本只在主节点 `ecs-98299861 / 192.168.0.32` 运行，先验证 Fast-forward、受保护环境文件和旧应用镜像，再构建并同步替换普通 `app` 与管理员 `app-v2-secure`。失败时自动恢复旧环境和旧应用镜像；常规发布不会重建 Nginx。输出中不得包含 `.env`、数据库密码或 Token。
 
-正式 HTTP 入口采用版本端口隔离：`80` 与 `18080` 提供 V1，`18081` 只提供 V2、统一登录页和 API。首次启用或 Nginx 配置更新后，在主节点运行 `bash ops/scripts/activate-versioned-http-ports.sh`；该脚本只重建 Nginx，并验证 V1 页面、V2 工作台以及登录返回路径。移动云安全组需单独允许 TCP `18081`，不得开放 `8010`、`8080` 或数据库端口。
+入口固定为：`80` 与 `18080` 提供普通展示，`18081` 提供管理员 HTTPS 登录、V2 工作台和 API。首次启用或 Nginx 配置更新后，在主节点运行 `bash ops/scripts/activate-versioned-http-ports.sh`；该脚本只重建普通与管理员 Nginx，并验证展示页面、管理员工作台以及登录返回路径。移动云安全组需允许 TCP `18081`，不得开放 `8010`、`8080` 或数据库端口。
 
 ## 检查点 3：低配热备节点
 
@@ -237,14 +237,14 @@ curl -fsS http://127.0.0.1:8010/api/health
 
 本手册的初始 Compose 是 HTTP 准备模式，`SMART_BAMBOO_HUMAN_AUTH_ENABLED=0` 时 `verify-cluster.sh primary --allow-human-auth-pending` 只允许 `human_auth_pending_https` 这一预期 warning。不得在这个阶段使用要求 `ready` 的验证命令。
 
-没有域名和正式证书时，可为测试验收启用独立的 V2 HTTPS 入口。先在移动云安全组开放 TCP `18443`，再从交互式远程终端执行：
+没有域名和正式证书时，可启用管理员 HTTPS 入口。先在移动云安全组开放 TCP `18081`，再从交互式远程终端执行：
 
 ```bash
 cd /opt/smart-bamboo
 bash ops/scripts/enable-v2-test-password-login.sh
 ```
 
-脚本静默读取两次自定义密码，创建或更新管理员凭据，生成仅用于测试的 IP 自签名证书，并启动隔离的 `app-v2-secure` 与 `nginx-v2-secure`。V1 的 app、`18080` 和令牌认证不变；V2 密码后台使用 `https://36.140.138.117:18443/v2/workspace`。浏览器首次访问会提示自签名证书不受信任，人工核对目标 IP 后才能继续。该入口只用于域名和正式证书就绪前的测试，不得作为最终生产 TLS 方案。
+脚本静默读取两次自定义密码，创建或更新管理员凭据，生成仅用于测试的 IP 自签名证书，并启动隔离的 `app-v2-secure` 与 `nginx-v2-secure`。普通展示入口和令牌认证不变；管理员后台统一使用 `https://36.140.138.117:18081/v2/workspace`。浏览器首次访问会提示自签名证书不受信任，人工核对目标 IP 后才能继续。该入口只用于域名和正式证书就绪前的测试，不得作为最终生产 TLS 方案。
 
 密码认证上线前，必须把真实、已批准域名的证书和私钥放入 `/srv/smart-bamboo/tls/`，在受保护的 `primary.env` 设置 `SMART_BAMBOO_TLS_ENABLED=1`、`SMART_BAMBOO_TLS_CERT_PATH` 和 `SMART_BAMBOO_TLS_KEY_PATH`，然后执行：
 

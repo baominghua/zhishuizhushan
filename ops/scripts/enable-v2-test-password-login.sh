@@ -97,14 +97,14 @@ done
 echo "=== START SECURE V2 ENTRY ==="
 "${compose_secure[@]}" up -d --no-deps nginx-v2-secure
 for attempt in $(seq 1 20); do
-  if curl -kfsS "https://127.0.0.1:18443/api/auth/config" | grep -q '"humanLoginEnabled":true'; then
+if curl -kfsS "https://127.0.0.1:18081/api/auth/config" | grep -q '"humanLoginEnabled":true'; then
     echo "secure_login_ready_attempt=${attempt}"
     break
   fi
   sleep 2
 done
-curl -kfsS "https://127.0.0.1:18443/api/auth/config" | grep -q '"humanLoginEnabled":true'
+curl -kfsS "https://127.0.0.1:18081/api/auth/config" | grep -q '"humanLoginEnabled":true'
 
 echo "username=${username}"
-echo "v2_secure_url=https://${public_ip}:18443/v2/workspace"
+echo "v2_secure_url=https://${public_ip}:18081/v2/workspace"
 echo "SMART_BAMBOO_V2_PASSWORD_LOGIN_READY"

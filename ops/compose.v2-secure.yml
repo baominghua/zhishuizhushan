@@ -17,7 +17,7 @@ services:
       app-v2-secure:
         condition: service_healthy
     ports:
-      - "0.0.0.0:18443:443"
+      - "0.0.0.0:18081:443"
     volumes:
       - ./ops/nginx/smart-bamboo-v2-secure.conf:/etc/nginx/conf.d/default.conf:ro
       - "${SMART_BAMBOO_TLS_CERT_PATH:?Set SMART_BAMBOO_TLS_CERT_PATH}:/etc/nginx/tls/fullchain.pem:ro"

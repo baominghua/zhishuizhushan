@@ -71,7 +71,7 @@ def test_primary_compose_exposes_only_nginx_publicly():
     assert '"127.0.0.1:8080:8080"' in compose
     assert '"0.0.0.0:80:80"' in compose
     assert '"0.0.0.0:18080:80"' in compose
-    assert '"0.0.0.0:18081:81"' in compose
+    assert '"0.0.0.0:18081:81"' not in compose
     assert "/srv/smart-bamboo/mysql:/var/lib/mysql" in compose
     assert "/srv/smart-bamboo/data:/app/data" in compose
     assert "/srv/smart-bamboo/geoserver:/opt/geoserver_data" in compose
@@ -106,12 +106,12 @@ def test_nginx_compresses_v2_text_assets_on_http_and_https_edges():
         assert "application/json" in nginx
 
 
-def test_versioned_port_activation_only_recreates_nginx():
+def test_versioned_port_activation_recreates_public_and_admin_edges():
     script = read_text("ops/scripts/activate-versioned-http-ports.sh")
 
-    assert 'up -d --no-deps --force-recreate nginx' in script
+    assert 'up -d --no-deps --force-recreate nginx nginx-v2-secure' in script
     assert "http://127.0.0.1:18080/zhushan-bigdata.html" in script
-    assert "http://127.0.0.1:18081/v2/workspace" in script
+    assert "https://127.0.0.1:18081/v2/workspace" in script
     assert "/admin-login.html?returnTo=/v2/workspace" in script
     assert "SMART_BAMBOO_VERSIONED_HTTP_PORTS_READY" in script
     assert "up -d app" not in script
@@ -124,7 +124,8 @@ def test_secure_v2_password_login_uses_an_isolated_https_entry():
     script = read_text("ops/scripts/enable-v2-test-password-login.sh")
 
     assert "file: ops/compose.primary.yml" in compose
-    assert '"0.0.0.0:18443:443"' in compose
+    assert '"0.0.0.0:18081:443"' in compose
+    assert "https://127.0.0.1:18081/api/auth/config" in script
     assert "app-v2-secure:" in compose
     assert 'SMART_BAMBOO_HUMAN_AUTH_ENABLED: "1"' in compose
     assert "ports: !reset []" in compose
@@ -1233,7 +1234,8 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "The running application remains online" in script
     assert "BUILDKIT_PROGRESS=plain" in script
     assert "build app" in script
-    assert "up -d --no-deps --no-build app" in script
+    assert 'application_services+=(app-v2-secure)' in script
+    assert 'up -d --no-deps --no-build "${application_services[@]}"' in script
     assert "rollback_application" in script
     assert 'rm -f "${env_backup}" "${env_tmp:-}"' in script
     assert 'current_app_container="$("${compose[@]}" ps -q app)"' in script
@@ -1247,6 +1249,8 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "--allow-human-auth-pending" in script
     assert "satellite-config.local.js" in script
     assert "humanLoginEnabled: false" in script
+    assert "https://127.0.0.1:18081/api/health" in script
+    assert '"humanLoginEnabled":true' in script
     assert "nginx" not in "\n".join(
         line for line in script.splitlines() if "up -d" in line
     )
@@ -1337,7 +1341,7 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert "id=smart-bamboo-pnpm-store" in dockerfile
     assert "https://registry.npmmirror.com" in dockerfile
     assert "id=smart-bamboo-pip-cache" in dockerfile
-    assert "https://mirrors.aliyun.com/pypi/simple/" in dockerfile
+    assert "https://pypi.tuna.tsinghua.edu.cn/simple" in dockerfile
     assert "ENV PATH=/opt/conda/envs/pdal/bin:${PATH}" in dockerfile
     assert "绕过服务器访问 GitHub、Docker Hub" in guide
 

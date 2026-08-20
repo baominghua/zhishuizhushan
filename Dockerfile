@@ -28,7 +28,7 @@ RUN pnpm run build
 FROM pdal/pdal:latest@sha256:8e1c89edd76a2d574b7a25675d122aa5eb3a1bfd6a2c50ab124a46769ed05271
 
 ARG SMART_BAMBOO_BUILD_COMMIT=unknown
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 LABEL org.opencontainers.image.title="Smart Bamboo V2" \
       org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"

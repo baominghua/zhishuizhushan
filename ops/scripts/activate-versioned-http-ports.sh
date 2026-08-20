@@ -15,23 +15,27 @@ compose=(
     --project-directory "${repo}"
     --env-file "${env_file}"
     -f "${compose_file}"
+    -f ops/compose.v2-secure.yml
 )
 
 echo "=== VERSIONED PORT GATE ==="
 app_id="$("${compose[@]}" ps -q app)"
 test -n "${app_id}"
 test "$(docker inspect --format '{{.State.Health.Status}}' "${app_id}")" = "healthy"
+secure_app_id="$("${compose[@]}" ps -q app-v2-secure)"
+test -n "${secure_app_id}"
+test "$(docker inspect --format '{{.State.Health.Status}}' "${secure_app_id}")" = "healthy"
 
 "${compose[@]}" config --quiet
-grep -q 'listen 81;' ops/nginx/smart-bamboo.conf
+grep -q 'listen 443 ssl default_server;' ops/nginx/smart-bamboo-v2-secure.conf
 
-echo "=== RECREATE NGINX ONLY ==="
-"${compose[@]}" up -d --no-deps --force-recreate nginx
+echo "=== RECREATE PUBLIC AND ADMIN NGINX ONLY ==="
+"${compose[@]}" up -d --no-deps --force-recreate nginx nginx-v2-secure
 
 echo "=== WAIT FOR VERSIONED PORTS ==="
 for attempt in $(seq 1 30); do
     v1_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18080/zhushan-bigdata.html || true)"
-    v2_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18081/v2/workspace || true)"
+    v2_status="$(curl -ksS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1:18081/v2/workspace || true)"
     if [[ "${v1_status}" = "200" && "${v2_status}" = "200" ]]; then
         echo "ports_ready_attempt=${attempt}"
         break
@@ -44,12 +48,12 @@ for attempt in $(seq 1 30); do
 done
 
 echo "=== LOGIN RETURN CONTRACT ==="
-login_location="$(curl -sS -o /dev/null -w '%{redirect_url}' --max-time 5 http://127.0.0.1:18081/admin-login.html)"
+login_location="$(curl -ksS -o /dev/null -w '%{redirect_url}' --max-time 5 https://127.0.0.1:18081/admin-login.html)"
 login_path="$(printf '%s\n' "${login_location}" | sed -E 's#^https?://[^/]+##')"
 test "${login_path}" = "/admin-login.html?returnTo=/v2/workspace"
 
 echo "=== PORT BINDINGS ==="
 docker port "$("${compose[@]}" ps -q nginx)"
 echo "v1_url=http://36.140.138.117:18080/zhushan-bigdata.html"
-echo "v2_url=http://36.140.138.117:18081/v2/workspace"
+echo "admin_url=https://36.140.138.117:18081/v2/workspace"
 echo "SMART_BAMBOO_VERSIONED_HTTP_PORTS_READY"

@@ -70,7 +70,19 @@ compose=(
   --env-file "${ENV_FILE}"
   -f "${REPOSITORY}/ops/compose.primary.yml"
 )
+secure_enabled=0
+secure_compose_file="${REPOSITORY}/ops/compose.v2-secure.yml"
+if [[ -f "${secure_compose_file}" ]] &&
+  grep -Eq '^SMART_BAMBOO_TLS_CERT_PATH=.+' "${ENV_FILE}" &&
+  grep -Eq '^SMART_BAMBOO_TLS_KEY_PATH=.+' "${ENV_FILE}"; then
+  compose+=( -f "${secure_compose_file}" )
+  secure_enabled=1
+fi
 "${compose[@]}" config --quiet
+application_services=(app)
+if [[ "${secure_enabled}" == "1" ]]; then
+  application_services+=(app-v2-secure)
+fi
 
 current_commit="$(git rev-parse HEAD)"
 current_app_container="$("${compose[@]}" ps -q app)"
@@ -115,19 +127,20 @@ env_updated=0
 app_recreated=0
 rollback_succeeded=0
 
-wait_for_app_health() {
+wait_for_service_health() {
+  local service="$1"
   local container_id=""
   local attempt=0
   local health=""
   for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt++)); do
-    container_id="$("${compose[@]}" ps -q app 2>/dev/null || true)"
+    container_id="$("${compose[@]}" ps -q "${service}" 2>/dev/null || true)"
     if [[ -n "${container_id}" ]]; then
       health="$(
         docker inspect \
           --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
           "${container_id}" 2>/dev/null || true
       )"
-      echo "app_health_attempt=${attempt} status=${health:-missing}"
+      echo "${service}_health_attempt=${attempt} status=${health:-missing}"
       [[ "${health}" == "healthy" ]] && return 0
       [[ "${health}" == "unhealthy" || "${health}" == "exited" || "${health}" == "dead" ]] &&
         return 1
@@ -152,8 +165,9 @@ rollback_application() {
   restore_environment
   if [[ "${app_recreated}" == "1" ]]; then
     "${compose[@]}" config --quiet
-    "${compose[@]}" up -d --no-deps --no-build app
-    if wait_for_app_health; then
+    "${compose[@]}" up -d --no-deps --no-build "${application_services[@]}"
+    if wait_for_service_health app &&
+      { [[ "${secure_enabled}" != "1" ]] || wait_for_service_health app-v2-secure; }; then
       rollback_succeeded=1
       echo "APPLICATION_ROLLBACK_OK" >&2
     else
@@ -304,10 +318,14 @@ else
   docker image inspect "${new_image}" >/dev/null
 fi
 
-echo "=== RECREATE APPLICATION ONLY ==="
+echo "=== RECREATE APPLICATION SERVICES ==="
 app_recreated=1
-"${compose[@]}" up -d --no-deps --no-build app
-wait_for_app_health || fail "New application did not become healthy."
+"${compose[@]}" up -d --no-deps --no-build "${application_services[@]}"
+wait_for_service_health app || fail "New public application did not become healthy."
+if [[ "${secure_enabled}" == "1" ]]; then
+  wait_for_service_health app-v2-secure ||
+    fail "New administrator application did not become healthy."
+fi
 
 echo "=== VERIFY APPLICATION READINESS ==="
 health_payload="$(curl -fsS http://127.0.0.1:8010/api/health)"
@@ -321,6 +339,18 @@ grep -Fq "humanLoginEnabled: false" <<<"${runtime_config}" ||
   fail "Runtime config did not keep human login disabled."
 grep -Fq "apiToken:" <<<"${runtime_config}" ||
   fail "Runtime config did not publish the read-only dashboard token."
+
+if [[ "${secure_enabled}" == "1" ]]; then
+  echo "=== VERIFY ADMINISTRATOR HTTPS READINESS ==="
+  secure_health_payload="$(curl -kfsS https://127.0.0.1:18081/api/health)"
+  printf '%s' "${secure_health_payload}" |
+    "${compose[@]}" exec -T app-v2-secure \
+      python /app/ops/scripts/verify-deployment-readiness.py
+  curl -kfsS https://127.0.0.1:18081/api/auth/config |
+    grep -Fq '"humanLoginEnabled":true' ||
+    fail "Administrator HTTPS entry did not enable human login."
+  echo "administrator_url=https://36.140.138.117:18081/v2/workspace"
+fi
 
 env_updated=0
 rm -f "${env_backup}" "${env_tmp:-}"

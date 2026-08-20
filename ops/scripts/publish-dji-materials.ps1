@@ -8,7 +8,7 @@ param(
     [ValidateRange(1, 65535)]
     [int]$SshPort = 22,
     [string]$RemoteInbox = "/srv/smart-bamboo/data/remote-sensing/inbox",
-    [string]$PlatformBaseUrl = "http://36.140.138.117",
+    [string]$PlatformBaseUrl = "https://36.140.138.117:18081",
     [switch]$InstallKey,
     [switch]$KeepArchive,
     [switch]$SkipOpenBrowser,
