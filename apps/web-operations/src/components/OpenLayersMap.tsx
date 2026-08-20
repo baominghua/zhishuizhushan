@@ -357,7 +357,7 @@ export function OpenLayersMap({
     if (!map || areaFocusRequest.sequence === 0) return;
     map.getView().fit(
       transformExtent(areaFocusRequest.bbox, "EPSG:4326", "EPSG:3857"),
-      { duration: 700, maxZoom: 14, padding: [88, 88, 88, 88] },
+      { duration: 700, maxZoom: 18, padding: [88, 88, 88, 88] },
     );
   }, [areaFocusRequest]);
 
