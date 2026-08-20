@@ -61,6 +61,17 @@ function ConvertTo-BashSingleQuoted {
     return "'" + $Value.Replace("'", "'`"'`"'") + "'"
 }
 
+function ConvertTo-WslPath {
+    param([Parameter(Mandatory)][string]$WindowsPath)
+    $fullPath = [IO.Path]::GetFullPath($WindowsPath)
+    if ($fullPath -notmatch '^([A-Za-z]):\\(.*)$') {
+        throw "当前只支持本机盘符路径转换为 WSL 路径：$fullPath"
+    }
+    $drive = $Matches[1].ToLowerInvariant()
+    $relativePath = $Matches[2].Replace("\", "/")
+    return "/mnt/$drive/$relativePath"
+}
+
 function Get-Sha256Hex {
     param([Parameter(Mandatory)][string]$Path)
     $stream = [IO.File]::OpenRead($Path)
@@ -211,7 +222,7 @@ $imageHash = ""
 $imageSize = 0
 if ($IncludeImage) {
     Write-Host "[2/7] 在本机 WSL Docker 中构建生产镜像……" -ForegroundColor Cyan
-    $linuxRepository = Get-NativeText -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "wslpath", "-a", "-u", $repositoryRoot) -FailureMessage "转换项目 WSL 路径失败"
+    $linuxRepository = ConvertTo-WslPath -WindowsPath $repositoryRoot
     Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "docker", "info") -FailureMessage "WSL Docker Engine 未启动"
     Invoke-Native -FilePath $wsl -Arguments @(
         "-d", $WslDistribution,
@@ -246,7 +257,7 @@ if ($IncludeImage) {
         }
         Remove-Item -LiteralPath $existingArchive -Force
     }
-    $linuxImageArchive = Get-NativeText -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "wslpath", "-a", "-u", $imageArchivePath) -FailureMessage "转换镜像包 WSL 路径失败"
+    $linuxImageArchive = ConvertTo-WslPath -WindowsPath $imageArchivePath
     $saveCommand = "set -o pipefail; docker save $(ConvertTo-BashSingleQuoted -Value $imageName) | gzip -1 > $(ConvertTo-BashSingleQuoted -Value $linuxImageArchive)"
     Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "bash", "-lc", $saveCommand) -FailureMessage "导出生产镜像失败"
     $imageHash = Get-Sha256Hex -Path $imageArchivePath

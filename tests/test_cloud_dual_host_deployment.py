@@ -1287,6 +1287,8 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert installer_bytes.startswith(b"\xef\xbb\xbf")
     assert '"bundle", "create", $bundlePath, "HEAD"' in publisher
     assert "function Get-Sha256Hex" in publisher
+    assert "function ConvertTo-WslPath" in publisher
+    assert 'return "/mnt/$drive/$relativePath"' in publisher
     assert "$bundleHash = Get-Sha256Hex -Path $bundlePath" in publisher
     assert "$imageHash = Get-Sha256Hex -Path $imageArchivePath" in publisher
     assert 'git bundle verify "`$bundle"' in publisher
