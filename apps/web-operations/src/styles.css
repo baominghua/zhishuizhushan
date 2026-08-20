@@ -2181,7 +2181,9 @@ svg {
 .map-layer-panel {
   top: 16px;
   right: 16px;
-  width: 252px;
+  width: 320px;
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
   padding: 14px;
 }
 
@@ -2227,6 +2229,55 @@ svg {
 .map-layer-panel label small {
   color: var(--muted);
   font-size: 10px;
+}
+
+.map-spatial-assets {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.map-spatial-assets > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.map-spatial-asset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.map-spatial-asset label {
+  min-width: 0;
+  min-height: 0;
+}
+
+.map-spatial-asset label > span {
+  min-width: 0;
+}
+
+.map-spatial-asset label strong,
+.map-spatial-asset label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-spatial-asset button {
+  padding: 5px 7px;
+  color: var(--accent-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #fff;
+  font-size: 10px;
+  cursor: pointer;
 }
 
 .map-layer-error {

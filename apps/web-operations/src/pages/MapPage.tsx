@@ -66,6 +66,13 @@ function initialMapMode(): MapViewMode {
   return window.localStorage.getItem(MAP_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d";
 }
 
+function spatialAssetFormat(asset: ImageryAsset) {
+  const contentType = asset.tilesetContentType?.toLowerCase();
+  if (contentType === "pnts" || asset.tileFormats?.pnts) return "PNTS 点云";
+  if (contentType === "b3dm" || asset.tileFormats?.b3dm) return "B3DM 实景模型";
+  return asset.assetType === "pointcloud" ? "三维点云" : "三维模型";
+}
+
 export function MapPage() {
   const targetSceneId = useMemo(() => new URLSearchParams(window.location.search).get("sceneId") || "", []);
   const [resultsOpen, setResultsOpen] = useState(false);
@@ -83,6 +90,8 @@ export function MapPage() {
   const detailDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [mode, setMode] = useState<MapViewMode>(initialMapMode);
   const [layers, setLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
+  const [enabledSpatialAssetIds, setEnabledSpatialAssetIds] = useState<Set<string> | null>(null);
+  const [focusedSpatialAssetId, setFocusedSpatialAssetId] = useState(targetSceneId);
   const [homeRequest, setHomeRequest] = useState(0);
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
   const [areaFocusRequest, setAreaFocusRequest] = useState<MapAreaFocusRequest>({
@@ -163,6 +172,12 @@ export function MapPage() {
       asset.visible !== false && Boolean(asset.tilesetUrl) && asset.processingStage !== "coverage-review"
       && ["pointcloud", "oblique3d"].includes(asset.assetType));
   }, [spatial3dAssetsQuery.data?.scenes, targetSpatialAsset.data]);
+  const displayedSpatial3dAssets = useMemo(
+    () => enabledSpatialAssetIds === null
+      ? []
+      : visibleSpatial3dAssets.filter((asset) => enabledSpatialAssetIds.has(asset.id)),
+    [enabledSpatialAssetIds, visibleSpatial3dAssets],
+  );
   const selectedDetail = useQuery({
     queryKey: ["forest-block-detail", selected?.id],
     queryFn: () => api.forestBlockDetail(selected!.id),
@@ -207,6 +222,15 @@ export function MapPage() {
   }, [targetSpatialAsset.data]);
 
   useEffect(() => {
+    if (enabledSpatialAssetIds !== null || visibleSpatial3dAssets.length === 0) return;
+    const initialId = visibleSpatial3dAssets.some((asset) => asset.id === targetSceneId)
+      ? targetSceneId
+      : visibleSpatial3dAssets[0].id;
+    setEnabledSpatialAssetIds(new Set([initialId]));
+    setFocusedSpatialAssetId(initialId);
+  }, [enabledSpatialAssetIds, targetSceneId, visibleSpatial3dAssets]);
+
+  useEffect(() => {
     setDetailPosition(null);
     setDetailMaximized(false);
   }, [selected?.id]);
@@ -218,6 +242,21 @@ export function MapPage() {
 
   function toggleLayer(layer: keyof MapLayerState) {
     setLayers((current) => ({ ...current, [layer]: !current[layer] }));
+  }
+
+  function toggleSpatialAsset(id: string) {
+    setEnabledSpatialAssetIds((current) => {
+      const next = new Set(current ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function showOnlySpatialAsset(id: string) {
+    setEnabledSpatialAssetIds(new Set([id]));
+    setFocusedSpatialAssetId(id);
+    setLayers((current) => ({ ...current, spatial3d: true }));
   }
 
   function requestZoom(direction: MapZoomRequest["direction"]) {
@@ -465,8 +504,8 @@ export function MapPage() {
           onSelectBlock={selectMapBlock}
           onViewportChange={updateViewport}
           imageryAssets={visibleImageryAssets}
-          spatial3dAssets={visibleSpatial3dAssets}
-          targetSpatialAssetId={targetSceneId || undefined}
+          spatial3dAssets={displayedSpatial3dAssets}
+          targetSpatialAssetId={focusedSpatialAssetId || undefined}
           forestBlockFilterQuery={appliedFilterQuery}
         />
         {resultsOpen && (
@@ -561,8 +600,26 @@ export function MapPage() {
             </label>
             <label>
               <input type="checkbox" checked={layers.spatial3d} disabled={mode !== "3d"} onChange={() => toggleLayer("spatial3d")} />
-              <span><strong>三维点云与模型</strong><small>{mode !== "3d" ? "切换到三维地球后可用" : spatial3dAssetsQuery.isFetching ? "正在校验当前视窗" : `${visibleSpatial3dAssets.length} 个可用成果`}</small></span>
+              <span><strong>三维点云与模型</strong><small>{mode !== "3d" ? "切换到三维地球后可用" : spatial3dAssetsQuery.isFetching ? "正在校验当前视窗" : `${displayedSpatial3dAssets.length}/${visibleSpatial3dAssets.length} 个已显示`}</small></span>
             </label>
+            {mode === "3d" && layers.spatial3d && visibleSpatial3dAssets.length > 0 && (
+              <div className="map-spatial-assets" aria-label="三维成果列表">
+                <small>同一区域默认只显示一项，可手动叠加对比</small>
+                {visibleSpatial3dAssets.map((asset) => (
+                  <div className="map-spatial-asset" key={asset.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={enabledSpatialAssetIds?.has(asset.id) ?? false}
+                        onChange={() => toggleSpatialAsset(asset.id)}
+                      />
+                      <span><strong>{asset.name}</strong><small>{spatialAssetFormat(asset)}</small></span>
+                    </label>
+                    <button type="button" onClick={() => showOnlySpatialAsset(asset.id)}>仅看此项</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <label>
               <input type="checkbox" checked={layers.labels} onChange={() => toggleLayer("labels")} />
               <span><strong>地名注记</strong><small>道路与行政区注记</small></span>
