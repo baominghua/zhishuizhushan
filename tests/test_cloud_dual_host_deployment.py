@@ -1272,6 +1272,31 @@ def test_dji_material_publisher_shortcut_is_safe_for_windows_chinese_paths():
     assert 'CreateShortcut($shortcutPath)' in installer_text
 
 
+def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
+    deploy_script = read_text("ops/scripts/deploy-primary-release.sh")
+    publisher_bytes = (ROOT / "ops/scripts/publish-primary-release.ps1").read_bytes()
+    installer_bytes = (
+        ROOT / "ops/scripts/install-primary-release-publisher.ps1"
+    ).read_bytes()
+    publisher = publisher_bytes.decode("utf-8-sig")
+    installer = installer_bytes.decode("utf-8-sig")
+    guide = read_text("docs/LOCAL_DIRECT_RELEASE.md")
+
+    assert publisher_bytes.startswith(b"\xef\xbb\xbf")
+    assert installer_bytes.startswith(b"\xef\xbb\xbf")
+    assert '"bundle", "create", $bundlePath, "HEAD"' in publisher
+    assert "Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256" in publisher
+    assert 'git bundle verify "`$bundle"' in publisher
+    assert 'git merge --ff-only "`$target_commit"' in publisher
+    assert 'RELEASE_BUNDLE="`$bundle"' in publisher
+    assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer
+    assert "[Text.Encoding]::ASCII" in installer
+    assert 'RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"' in deploy_script
+    assert 'release_source=local_bundle' in deploy_script
+    assert 'git bundle verify "${resolved_release_bundle}"' in deploy_script
+    assert "源码传输不依赖服务器访问 GitHub" in guide
+
+
 def test_primary_release_readiness_accepts_only_the_http_rollout_warning():
     validator = ROOT / "ops/scripts/verify-deployment-readiness.py"
     readiness = {

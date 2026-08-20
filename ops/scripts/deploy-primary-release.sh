@@ -8,6 +8,8 @@ RELEASE_TAG="${RELEASE_TAG:-}"
 REPOSITORY="${REPOSITORY:-/opt/smart-bamboo}"
 ENV_FILE="${ENV_FILE:-/srv/smart-bamboo/config/primary.env}"
 PUBLIC_BRANCH="${PUBLIC_BRANCH:-production-deploy}"
+RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"
+RELEASE_BUNDLE_ROOT="${RELEASE_BUNDLE_ROOT:-/srv/smart-bamboo/releases/incoming}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-40}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-5}"
 BASE_IMAGE_PULL_ATTEMPTS="${BASE_IMAGE_PULL_ATTEMPTS:-3}"
@@ -50,6 +52,16 @@ command -v timeout >/dev/null || fail "The coreutils timeout command is required
 cd "${REPOSITORY}"
 [[ -z "$(git status --porcelain)" ]] ||
   fail "Repository has uncommitted changes."
+
+resolved_release_bundle=""
+if [[ -n "${RELEASE_BUNDLE}" ]]; then
+  [[ "${RELEASE_BUNDLE}" == /* ]] || fail "RELEASE_BUNDLE must be an absolute path."
+  [[ -f "${RELEASE_BUNDLE}" ]] || fail "Release bundle is missing: ${RELEASE_BUNDLE}"
+  resolved_release_bundle="$(realpath "${RELEASE_BUNDLE}")"
+  resolved_release_bundle_root="$(realpath -m "${RELEASE_BUNDLE_ROOT}")"
+  [[ "${resolved_release_bundle}" == "${resolved_release_bundle_root}/"* ]] ||
+    fail "RELEASE_BUNDLE must be inside ${resolved_release_bundle_root}."
+fi
 
 compose=(
   docker compose
@@ -169,20 +181,30 @@ finish() {
 trap finish EXIT
 
 echo "=== FETCH EXACT RELEASE ==="
-fetch_succeeded=0
-for attempt in 1 2 3 4 5; do
-  echo "fetch_attempt=${attempt}"
-  if git -c http.version=HTTP/1.1 fetch --no-tags --force origin \
-    "+refs/heads/${PUBLIC_BRANCH}:refs/remotes/origin/${PUBLIC_BRANCH}"; then
-    fetch_succeeded=1
-    break
-  fi
-  sleep $((attempt * 5))
-done
-[[ "${fetch_succeeded}" == "1" ]] || fail "Unable to fetch ${PUBLIC_BRANCH}."
-fetched_commit="$(git rev-parse "refs/remotes/origin/${PUBLIC_BRANCH}")"
-[[ "${fetched_commit}" == "${TARGET_COMMIT}" ]] ||
-  fail "Fetched ${PUBLIC_BRANCH} at ${fetched_commit}; expected TARGET_COMMIT ${TARGET_COMMIT}."
+if [[ -n "${resolved_release_bundle}" ]]; then
+  echo "release_source=local_bundle"
+  git bundle verify "${resolved_release_bundle}" >/dev/null
+  git fetch --no-tags "${resolved_release_bundle}" "${TARGET_COMMIT}"
+  fetched_commit="$(git rev-parse FETCH_HEAD)"
+  [[ "${fetched_commit}" == "${TARGET_COMMIT}" ]] ||
+    fail "Fetched bundle at ${fetched_commit}; expected TARGET_COMMIT ${TARGET_COMMIT}."
+else
+  echo "release_source=github branch=${PUBLIC_BRANCH}"
+  fetch_succeeded=0
+  for attempt in 1 2 3 4 5; do
+    echo "fetch_attempt=${attempt}"
+    if git -c http.version=HTTP/1.1 fetch --no-tags --force origin \
+      "+refs/heads/${PUBLIC_BRANCH}:refs/remotes/origin/${PUBLIC_BRANCH}"; then
+      fetch_succeeded=1
+      break
+    fi
+    sleep $((attempt * 5))
+  done
+  [[ "${fetch_succeeded}" == "1" ]] || fail "Unable to fetch ${PUBLIC_BRANCH}."
+  fetched_commit="$(git rev-parse "refs/remotes/origin/${PUBLIC_BRANCH}")"
+  [[ "${fetched_commit}" == "${TARGET_COMMIT}" ]] ||
+    fail "Fetched ${PUBLIC_BRANCH} at ${fetched_commit}; expected TARGET_COMMIT ${TARGET_COMMIT}."
+fi
 git merge-base --is-ancestor "${current_commit}" "${TARGET_COMMIT}" ||
   fail "TARGET_COMMIT is not a fast-forward from the current checkout."
 git merge --ff-only "${TARGET_COMMIT}"
