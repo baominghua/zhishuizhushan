@@ -1252,6 +1252,20 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
     assert "不会重建 Nginx" in runbook
 
 
+def test_dji_material_publisher_shortcut_is_safe_for_windows_chinese_paths():
+    launcher = (ROOT / "ops/scripts/发布大疆素材到智慧竹山.cmd").read_bytes()
+    installer = (ROOT / "ops/scripts/install-dji-material-publisher.ps1").read_bytes()
+    installer_text = installer.decode("utf-8-sig")
+
+    assert all(byte < 128 for byte in launcher)
+    assert b"%LOCALAPPDATA%" not in launcher
+    assert launcher.count(b"%~dp0") == 1
+    assert installer.startswith(b"\xef\xbb\xbf")
+    assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer_text
+    assert "[Text.Encoding]::ASCII" in installer_text
+    assert 'CreateShortcut($shortcutPath)' in installer_text
+
+
 def test_primary_release_readiness_accepts_only_the_http_rollout_warning():
     validator = ROOT / "ops/scripts/verify-deployment-readiness.py"
     readiness = {

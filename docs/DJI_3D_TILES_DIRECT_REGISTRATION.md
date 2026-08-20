@@ -4,7 +4,15 @@
 
 ## Windows 一键发布
 
-双击仓库中的：
+首次使用或脚本更新后，在 Windows PowerShell 执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ops/scripts/install-dji-material-publisher.ps1
+```
+
+安装器会把发布工具复制到不含中文的稳定目录 `%LOCALAPPDATA%\SmartBamboo\Tools`，并在桌面生成同名的 `.lnk` 和 `.cmd` 两个入口。桌面入口不再直接引用仓库中文路径，避免 `cmd.exe` 解析乱码。
+
+安装完成后，优先双击桌面的 `发布大疆素材到智慧竹山.lnk`；也可以双击桌面或仓库中的 `.cmd`：
 
 ```text
 ops/scripts/发布大疆素材到智慧竹山.cmd
