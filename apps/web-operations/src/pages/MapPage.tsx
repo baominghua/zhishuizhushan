@@ -16,6 +16,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo
 
 import { api } from "../api/client";
 import type { ForestBlockOption, ForestBlockQuery, ImageryAsset } from "../api/types";
+import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import { MapCanvas } from "../components/MapCanvas";
 import { QueryState } from "../components/QueryState";
 import {
@@ -92,6 +93,7 @@ export function MapPage() {
   const [layers, setLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
   const [enabledSpatialAssetIds, setEnabledSpatialAssetIds] = useState<Set<string> | null>(null);
   const [focusedSpatialAssetId, setFocusedSpatialAssetId] = useState(targetSceneId);
+  const [spatial3dDisplaySettings, setSpatial3dDisplaySettings] = useState<Record<string, Spatial3dDisplaySettings>>({});
   const [homeRequest, setHomeRequest] = useState(0);
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
   const [areaFocusRequest, setAreaFocusRequest] = useState<MapAreaFocusRequest>({
@@ -257,6 +259,13 @@ export function MapPage() {
     setEnabledSpatialAssetIds(new Set([id]));
     setFocusedSpatialAssetId(id);
     setLayers((current) => ({ ...current, spatial3d: true }));
+  }
+
+  function updateSpatialAssetDisplay(id: string, patch: Partial<Spatial3dDisplaySettings>) {
+    setSpatial3dDisplaySettings((current) => {
+      const existing = current[id] ?? { opacity: 1, pointSize: 3 };
+      return { ...current, [id]: { ...existing, ...patch } };
+    });
   }
 
   function requestZoom(direction: MapZoomRequest["direction"]) {
@@ -506,6 +515,7 @@ export function MapPage() {
           imageryAssets={visibleImageryAssets}
           spatial3dAssets={displayedSpatial3dAssets}
           targetSpatialAssetId={focusedSpatialAssetId || undefined}
+          spatial3dDisplaySettings={spatial3dDisplaySettings}
           forestBlockFilterQuery={appliedFilterQuery}
         />
         {resultsOpen && (
@@ -616,6 +626,34 @@ export function MapPage() {
                       <span><strong>{asset.name}</strong><small>{spatialAssetFormat(asset)}</small></span>
                     </label>
                     <button type="button" onClick={() => showOnlySpatialAsset(asset.id)}>仅看此项</button>
+                    {(enabledSpatialAssetIds?.has(asset.id) ?? false) && (
+                      <div className="map-spatial-controls">
+                        <label>
+                          <span>透明度</span>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="1"
+                            step="0.1"
+                            value={spatial3dDisplaySettings[asset.id]?.opacity ?? 1}
+                            onChange={(event) => updateSpatialAssetDisplay(asset.id, { opacity: Number(event.target.value) })}
+                          />
+                        </label>
+                        {spatialAssetFormat(asset).startsWith("PNTS") && (
+                          <label>
+                            <span>点大小</span>
+                            <input
+                              type="range"
+                              min="1"
+                              max="8"
+                              step="1"
+                              value={spatial3dDisplaySettings[asset.id]?.pointSize ?? 3}
+                              onChange={(event) => updateSpatialAssetDisplay(asset.id, { pointSize: Number(event.target.value) })}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

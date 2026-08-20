@@ -8,6 +8,7 @@ import {
   ConstantPositionProperty,
   ConstantProperty,
   Credit,
+  Cesium3DTileStyle,
   Cesium3DTileset,
   GeoJsonDataSource,
   HeightReference,
@@ -57,8 +58,14 @@ interface CesiumGlobeProps {
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
   targetSpatialAssetId?: string;
+  spatial3dDisplaySettings: Record<string, Spatial3dDisplaySettings>;
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
+}
+
+export interface Spatial3dDisplaySettings {
+  opacity: number;
+  pointSize: number;
 }
 
 const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
@@ -247,6 +254,7 @@ export function CesiumGlobe({
   imageryAssets,
   spatial3dAssets,
   targetSpatialAssetId,
+  spatial3dDisplaySettings,
   situationAssets,
   onSelectSituationAsset,
 }: CesiumGlobeProps) {
@@ -257,7 +265,7 @@ export function CesiumGlobe({
   const labelLayerReadyRef = useRef(false);
   const labelsVisibleRef = useRef(layers.labels);
   const droneImageryLayersRef = useRef<ImageryLayer[]>([]);
-  const spatial3dTilesetsRef = useRef<Cesium3DTileset[]>([]);
+  const spatial3dTilesetsRef = useRef<Map<string, Cesium3DTileset>>(new Map());
   const blockDataSourceRef = useRef<GeoJsonDataSource | null>(null);
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
   const forestBlocksVisibleRef = useRef(layers.forestBlocks);
@@ -420,7 +428,7 @@ export function CesiumGlobe({
       labelLayerReadyRef.current = false;
       blockDataSourceRef.current = null;
       droneImageryLayersRef.current = [];
-      spatial3dTilesetsRef.current = [];
+      spatial3dTilesetsRef.current = new Map();
       if (!viewer.isDestroyed()) viewer.destroy();
     };
   }, [config, scene.home.height3d, scene.home.latitude, scene.home.longitude]);
@@ -467,7 +475,7 @@ export function CesiumGlobe({
     const activeViewer = viewer;
     let canceled = false;
     const previous = spatial3dTilesetsRef.current;
-    spatial3dTilesetsRef.current = [];
+    spatial3dTilesetsRef.current = new Map();
     previous.forEach((tileset) => {
       if (!activeViewer.isDestroyed() && activeViewer.scene.primitives.contains(tileset)) {
         activeViewer.scene.primitives.remove(tileset);
@@ -475,7 +483,7 @@ export function CesiumGlobe({
     });
 
     async function loadTilesets() {
-      const loaded: Cesium3DTileset[] = [];
+      const loaded = new Map<string, Cesium3DTileset>();
       for (const asset of spatial3dAssets) {
         if (!asset.tilesetUrl || canceled) continue;
         try {
@@ -487,8 +495,13 @@ export function CesiumGlobe({
             continue;
           }
           tileset.show = layers.spatial3d;
+          const settings = spatial3dDisplaySettings[asset.id] ?? { opacity: 1, pointSize: 3 };
+          tileset.style = new Cesium3DTileStyle({
+            color: `color('white', ${settings.opacity})`,
+            pointSize: String(settings.pointSize),
+          });
           activeViewer.scene.primitives.add(tileset);
-          loaded.push(tileset);
+          loaded.set(asset.id, tileset);
           spatial3dTilesetsRef.current = loaded;
           if (asset.id === targetSpatialAssetId) {
             await activeViewer.flyTo(tileset, { duration: 1.2 });
@@ -511,7 +524,7 @@ export function CesiumGlobe({
           activeViewer.scene.primitives.remove(tileset);
         }
       });
-      spatial3dTilesetsRef.current = [];
+      spatial3dTilesetsRef.current = new Map();
     };
   }, [spatial3dAssets, targetSpatialAssetId]);
 
@@ -521,6 +534,17 @@ export function CesiumGlobe({
     });
     viewerRef.current?.scene.requestRender();
   }, [layers.spatial3d]);
+
+  useEffect(() => {
+    spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
+      const settings = spatial3dDisplaySettings[assetId] ?? { opacity: 1, pointSize: 3 };
+      tileset.style = new Cesium3DTileStyle({
+        color: `color('white', ${settings.opacity})`,
+        pointSize: String(settings.pointSize),
+      });
+    });
+    viewerRef.current?.scene.requestRender();
+  }, [spatial3dDisplaySettings]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

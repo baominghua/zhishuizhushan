@@ -2280,6 +2280,26 @@ svg {
   cursor: pointer;
 }
 
+.map-spatial-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.map-spatial-controls label {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 26px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.map-spatial-controls input[type="range"] {
+  width: 100%;
+}
+
 .map-layer-error {
   margin: 0;
   padding: 10px 0 0;

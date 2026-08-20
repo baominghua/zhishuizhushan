@@ -11,6 +11,7 @@ import type {
   MapZoomRequest,
 } from "../maps/scene";
 import { OpenLayersMap } from "./OpenLayersMap";
+import type { Spatial3dDisplaySettings } from "./CesiumGlobe";
 
 const CesiumGlobe = lazy(async () => ({
   default: (await import("./CesiumGlobe")).CesiumGlobe,
@@ -32,6 +33,7 @@ interface MapCanvasProps {
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
   targetSpatialAssetId?: string;
+  spatial3dDisplaySettings?: Record<string, Spatial3dDisplaySettings>;
   forestBlockFilterQuery: string;
   situationAssets?: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
@@ -65,6 +67,7 @@ export function MapCanvas({
   imageryAssets,
   spatial3dAssets,
   targetSpatialAssetId,
+  spatial3dDisplaySettings = {},
   forestBlockFilterQuery,
   situationAssets = [],
   onSelectSituationAsset,
@@ -126,6 +129,7 @@ export function MapCanvas({
             imageryAssets={imageryAssets}
             spatial3dAssets={spatial3dAssets}
             targetSpatialAssetId={targetSpatialAssetId}
+            spatial3dDisplaySettings={spatial3dDisplaySettings}
             situationAssets={situationAssets}
             onSelectSituationAsset={onSelectSituationAsset}
           />
