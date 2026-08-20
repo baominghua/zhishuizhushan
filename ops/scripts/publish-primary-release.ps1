@@ -104,7 +104,10 @@ function Install-ReleaseSshKey {
     }
     $publicKey = [IO.File]::ReadAllText("$KeyPath.pub", [Text.Encoding]::UTF8).Trim()
     $publicKeyBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($publicKey + "`n"))
-    $remoteCommand = "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; key=`$(printf '%s' '$publicKeyBase64' | base64 -d); grep -Fqx `"`$key`" ~/.ssh/authorized_keys || printf '%s`n' `"`$key`" >> ~/.ssh/authorized_keys; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
+    # Keep the remote command free of nested shell quotes and variables.
+    # Windows OpenSSH can otherwise split the public-key comment into extra
+    # grep arguments before the command reaches the Linux shell.
+    $remoteCommand = "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; printf %s $publicKeyBase64 | base64 -d > ~/.ssh/.smart_bamboo_release_key; grep -Fqx -f ~/.ssh/.smart_bamboo_release_key ~/.ssh/authorized_keys || cat ~/.ssh/.smart_bamboo_release_key >> ~/.ssh/authorized_keys; rm -f ~/.ssh/.smart_bamboo_release_key; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys"
     Write-Host "首次配置本地直发，请输入一次服务器密码。" -ForegroundColor Yellow
     Invoke-Native -FilePath $SshExecutable -Arguments @("-p", "$SshPort", "-o", "StrictHostKeyChecking=accept-new", $Target, $remoteCommand) -FailureMessage "安装服务器 SSH 密钥失败"
 }

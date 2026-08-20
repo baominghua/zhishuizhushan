@@ -1297,6 +1297,8 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert '"--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit"' in publisher
     assert "[AllowEmptyString()][string[]]$Arguments" in publisher
     assert '"-N", \'""\'' in publisher
+    assert "grep -Fqx -f ~/.ssh/.smart_bamboo_release_key" in publisher
+    assert 'key=`$(printf' not in publisher
     assert '"docker", "save"' not in publisher
     assert "docker save $(ConvertTo-BashSingleQuoted -Value $imageName)" in publisher
     assert "gzip -dc \"`$image_archive\" | docker load" in publisher
