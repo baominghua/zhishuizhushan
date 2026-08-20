@@ -36,13 +36,12 @@ exit /b %PUBLISH_EXIT_CODE%
 '@
 [IO.File]::WriteAllText($launcherPath, $launcher, [Text.Encoding]::ASCII)
 
-$powershellPath = Join-Path $PSHOME "powershell.exe"
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $powershellPath
-$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$installedScript`" -IncludeImage"
-$shortcut.WorkingDirectory = $installDirectory
-$shortcut.IconLocation = "$powershellPath,0"
+$shortcut.TargetPath = $env:ComSpec
+$shortcut.Arguments = "/d /c `"`"$launcherPath`"`""
+$shortcut.WorkingDirectory = $desktopDirectory
+$shortcut.IconLocation = "$env:ComSpec,0"
 $shortcut.Description = "在本机构建镜像并直接上传发布智慧竹山平台"
 $shortcut.Save()
 

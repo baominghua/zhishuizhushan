@@ -1304,6 +1304,8 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer
     assert "[Text.Encoding]::ASCII" in installer
     assert "-IncludeImage" in installer
+    assert '$shortcut.TargetPath = $env:ComSpec' in installer
+    assert '$shortcut.Arguments = "/d /c' in installer
     assert 'RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"' in deploy_script
     assert 'PREBUILT_IMAGE="${PREBUILT_IMAGE:-}"' in deploy_script
     assert 'release_source=local_bundle' in deploy_script
