@@ -116,7 +116,9 @@ if ($DryRun) {
     return
 }
 
-Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @($target, "mkdir -p '$remoteDirectory' '$RemoteInbox/.releases/$ProjectName/geotiff'")) -FailureMessage "准备服务器目录失败"
+$remoteReleaseDirectory = "$RemoteInbox/.releases/$ProjectName/geotiff"
+$prepareCommand = "set -eu; mkdir -p -- '$remoteDirectory' '$remoteReleaseDirectory'; if [ ! -e '$remotePartial' ]; then : > '$remotePartial'; fi"
+Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @($target, $prepareCommand)) -FailureMessage "准备服务器目录和续传临时文件失败"
 
 $cacheDirectory = Join-Path $SourceRoot ".smart-bamboo-publish-cache"
 New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
@@ -150,4 +152,3 @@ try {
 Write-Host "`n发布完成：$platformPath" -ForegroundColor Green
 Write-Host "进入影像成果 → 上传并自动匹配 → GeoTIFF → 服务器/NAS 目录，粘贴路径后登记。"
 if (-not $SkipOpenBrowser) { Start-Process "$PlatformBaseUrl/v2/drone/imagery-assets" }
-
