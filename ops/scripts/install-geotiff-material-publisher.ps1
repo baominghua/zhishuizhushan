@@ -16,7 +16,11 @@ $launcherPath = Join-Path $desktopDirectory "发布二维影像到智慧竹山.c
 $shortcutPath = Join-Path $desktopDirectory "发布二维影像到智慧竹山.lnk"
 
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
-Copy-Item -LiteralPath $sourceScript -Destination $installedScript -Force
+# Windows PowerShell 5 treats UTF-8 files without a BOM as the active ANSI
+# code page. Write the installed copy with a BOM so Chinese prompts and regex
+# literals survive when the desktop CMD launches powershell.exe.
+$scriptContent = [IO.File]::ReadAllText($sourceScript, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($installedScript, $scriptContent, [Text.UTF8Encoding]::new($true))
 
 $launcher = @'
 @echo off
@@ -45,4 +49,3 @@ Write-Host "GeoTIFF publisher installed." -ForegroundColor Green
 Write-Host "CMD: $launcherPath"
 Write-Host "Shortcut: $shortcutPath"
 Write-Host "Tool: $installedScript"
-
