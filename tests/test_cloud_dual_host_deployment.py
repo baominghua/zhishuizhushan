@@ -1298,6 +1298,10 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert '"archive", "--format=tar"' in publisher
     assert '"/var/tmp/smart-bamboo-release.XXXXXX"' in publisher
     assert '"tar", "-xf", $linuxSourceArchive' in publisher
+    assert '"docker", "image", "inspect", $imageName' in publisher
+    assert "ConvertFrom-Json -InputObject $imageInspectJson" in publisher
+    assert "Labels.'org.opencontainers.image.revision'" in publisher
+    assert '"--format", \'{{index .Config.Labels "org.opencontainers.image.revision"}}\'' not in publisher
     assert "[AllowEmptyString()][string[]]$Arguments" in publisher
     assert '"-N", \'""\'' in publisher
     assert "grep -Fqx -f ~/.ssh/.smart_bamboo_release_key" in publisher

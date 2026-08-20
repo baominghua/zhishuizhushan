@@ -256,14 +256,17 @@ if ($IncludeImage) {
         & $wsl -d $WslDistribution -u root -- rm -rf -- $linuxBuildContext
         Remove-Item -LiteralPath $sourceArchivePath -Force -ErrorAction SilentlyContinue
     }
-    $imageRevision = Get-NativeText -FilePath $wsl -Arguments @(
+    # Do not pass a Go template containing quoted label keys through wsl.exe.
+    # Windows strips the nested quotes and Docker then treats `org` as a
+    # template function. Read the inspect JSON and resolve the label here.
+    $imageInspectJson = Get-NativeText -FilePath $wsl -Arguments @(
         "-d", $WslDistribution,
         "-u", "root",
         "--",
-        "docker", "image", "inspect",
-        "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}',
-        $imageName
+        "docker", "image", "inspect", $imageName
     ) -FailureMessage "读取本地镜像版本标签失败"
+    $imageMetadata = (ConvertFrom-Json -InputObject $imageInspectJson)[0]
+    $imageRevision = [string]$imageMetadata.Config.Labels.'org.opencontainers.image.revision'
     if ($imageRevision -ne $TargetCommit) {
         throw "本地镜像版本标签不匹配：$imageRevision"
     }
