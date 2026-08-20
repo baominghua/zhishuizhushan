@@ -1215,6 +1215,8 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
 
     assert 'EXPECTED_HOST="${EXPECTED_HOST:-ecs-98299861}"' in script
     assert 'EXPECTED_IP="${EXPECTED_IP:-192.168.0.32}"' in script
+    assert 'PUBLIC_BRANCH="${PUBLIC_BRANCH:-production-deploy}"' in script
+    assert 'refs/remotes/origin/${PUBLIC_BRANCH}' in script
     assert "TARGET_COMMIT must be a full 40-character Git commit" in script
     assert "git merge --ff-only" in script
     assert "git merge-base --is-ancestor" in script
@@ -1243,6 +1245,8 @@ def test_primary_release_rollout_is_exact_scoped_and_preserves_the_public_proxy(
         line for line in script.splitlines() if "up -d" in line
     )
     assert "deploy-primary-release.sh" in runbook
+    assert "--branch production-deploy" in runbook
+    assert "--branch codex/production-deploy" not in runbook
     assert "TARGET_COMMIT=" in runbook
     assert "RELEASE_TAG=" in runbook
     assert "不会重建 Nginx" in runbook

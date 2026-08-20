@@ -7,7 +7,7 @@ TARGET_COMMIT="${TARGET_COMMIT:-}"
 RELEASE_TAG="${RELEASE_TAG:-}"
 REPOSITORY="${REPOSITORY:-/opt/smart-bamboo}"
 ENV_FILE="${ENV_FILE:-/srv/smart-bamboo/config/primary.env}"
-PUBLIC_BRANCH="${PUBLIC_BRANCH:-codex/production-deploy}"
+PUBLIC_BRANCH="${PUBLIC_BRANCH:-production-deploy}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-40}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-5}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/smart-bamboo-primary-release.lock}"
@@ -165,15 +165,17 @@ echo "=== FETCH EXACT RELEASE ==="
 fetch_succeeded=0
 for attempt in 1 2 3 4 5; do
   echo "fetch_attempt=${attempt}"
-  if git -c http.version=HTTP/1.1 fetch --no-tags origin "${PUBLIC_BRANCH}"; then
+  if git -c http.version=HTTP/1.1 fetch --no-tags --force origin \
+    "+refs/heads/${PUBLIC_BRANCH}:refs/remotes/origin/${PUBLIC_BRANCH}"; then
     fetch_succeeded=1
     break
   fi
   sleep $((attempt * 5))
 done
 [[ "${fetch_succeeded}" == "1" ]] || fail "Unable to fetch ${PUBLIC_BRANCH}."
-[[ "$(git rev-parse FETCH_HEAD)" == "${TARGET_COMMIT}" ]] ||
-  fail "Fetched branch does not point to TARGET_COMMIT."
+fetched_commit="$(git rev-parse "refs/remotes/origin/${PUBLIC_BRANCH}")"
+[[ "${fetched_commit}" == "${TARGET_COMMIT}" ]] ||
+  fail "Fetched ${PUBLIC_BRANCH} at ${fetched_commit}; expected TARGET_COMMIT ${TARGET_COMMIT}."
 git merge-base --is-ancestor "${current_commit}" "${TARGET_COMMIT}" ||
   fail "TARGET_COMMIT is not a fast-forward from the current checkout."
 git merge --ff-only "${TARGET_COMMIT}"

@@ -27,7 +27,7 @@
 
 ```bash
 dnf install -y git
-git clone --depth 1 --branch codex/production-deploy https://github.com/baominghua/zhishuizhushan.git /opt/smart-bamboo
+git clone --depth 1 --branch production-deploy https://github.com/baominghua/zhishuizhushan.git /opt/smart-bamboo
 cd /opt/smart-bamboo
 bash ops/scripts/install-docker-bclinux.sh
 ```
