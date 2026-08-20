@@ -10,6 +10,7 @@ ENV_FILE="${ENV_FILE:-/srv/smart-bamboo/config/primary.env}"
 PUBLIC_BRANCH="${PUBLIC_BRANCH:-production-deploy}"
 RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"
 RELEASE_BUNDLE_ROOT="${RELEASE_BUNDLE_ROOT:-/srv/smart-bamboo/releases/incoming}"
+PREBUILT_IMAGE="${PREBUILT_IMAGE:-}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-40}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-5}"
 BASE_IMAGE_PULL_ATTEMPTS="${BASE_IMAGE_PULL_ATTEMPTS:-3}"
@@ -251,41 +252,57 @@ grep -Eq '^SMART_BAMBOO_DASHBOARD_TOKEN=.+' "${ENV_FILE}" ||
 
 "${compose[@]}" config --quiet
 
-echo "=== CACHE BASE IMAGES ==="
-mapfile -t base_images < <(
-  awk 'toupper($1) == "FROM" { print $2 }' "${REPOSITORY}/Dockerfile" |
-    awk '!seen[$0]++'
-)
-[[ "${#base_images[@]}" -gt 0 ]] || fail "Dockerfile does not declare a base image."
-for base_image in "${base_images[@]}"; do
-  [[ "${base_image}" != *'$'* ]] ||
-    fail "Dockerfile base image variables are not supported by this release script: ${base_image}"
-  if docker image inspect "${base_image}" >/dev/null 2>&1; then
-    echo "base_image_cached=${base_image}"
-    continue
-  fi
-
-  echo "base_image_missing=${base_image}"
-  echo "The running application remains online while this one-time image download runs."
-  image_pull_succeeded=0
-  for ((attempt = 1; attempt <= BASE_IMAGE_PULL_ATTEMPTS; attempt++)); do
-    echo "base_image_pull_attempt=${attempt}/${BASE_IMAGE_PULL_ATTEMPTS} image=${base_image}"
-    if timeout --foreground "${BASE_IMAGE_PULL_TIMEOUT_SECONDS}" \
-      docker pull "${base_image}"; then
-      image_pull_succeeded=1
-      break
-    fi
-    echo "base_image_pull_retry=${base_image}" >&2
-    sleep $((attempt * 5))
-  done
-  [[ "${image_pull_succeeded}" == "1" ]] ||
-    fail "Unable to cache base image ${base_image}; check Docker Hub connectivity."
-done
-
-echo "=== BUILD APPLICATION IMAGE ==="
-DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "${compose[@]}" build app
 new_image="smart-bamboo-app:${RELEASE_TAG}"
-docker image inspect "${new_image}" >/dev/null
+if [[ -n "${PREBUILT_IMAGE}" ]]; then
+  echo "=== VERIFY PREBUILT APPLICATION IMAGE ==="
+  [[ "${PREBUILT_IMAGE}" == "${new_image}" ]] ||
+    fail "PREBUILT_IMAGE must equal ${new_image}."
+  docker image inspect "${PREBUILT_IMAGE}" >/dev/null ||
+    fail "Prebuilt image is not loaded: ${PREBUILT_IMAGE}"
+  prebuilt_revision="$(
+    docker image inspect \
+      --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+      "${PREBUILT_IMAGE}"
+  )"
+  [[ "${prebuilt_revision}" == "${TARGET_COMMIT}" ]] ||
+    fail "Prebuilt image revision ${prebuilt_revision} does not match TARGET_COMMIT ${TARGET_COMMIT}."
+  echo "prebuilt_image_verified=${PREBUILT_IMAGE}"
+else
+  echo "=== CACHE BASE IMAGES ==="
+  mapfile -t base_images < <(
+    awk 'toupper($1) == "FROM" { print $2 }' "${REPOSITORY}/Dockerfile" |
+      awk '!seen[$0]++'
+  )
+  [[ "${#base_images[@]}" -gt 0 ]] || fail "Dockerfile does not declare a base image."
+  for base_image in "${base_images[@]}"; do
+    [[ "${base_image}" != *'$'* ]] ||
+      fail "Dockerfile base image variables are not supported by this release script: ${base_image}"
+    if docker image inspect "${base_image}" >/dev/null 2>&1; then
+      echo "base_image_cached=${base_image}"
+      continue
+    fi
+
+    echo "base_image_missing=${base_image}"
+    echo "The running application remains online while this one-time image download runs."
+    image_pull_succeeded=0
+    for ((attempt = 1; attempt <= BASE_IMAGE_PULL_ATTEMPTS; attempt++)); do
+      echo "base_image_pull_attempt=${attempt}/${BASE_IMAGE_PULL_ATTEMPTS} image=${base_image}"
+      if timeout --foreground "${BASE_IMAGE_PULL_TIMEOUT_SECONDS}" \
+        docker pull "${base_image}"; then
+        image_pull_succeeded=1
+        break
+      fi
+      echo "base_image_pull_retry=${base_image}" >&2
+      sleep $((attempt * 5))
+    done
+    [[ "${image_pull_succeeded}" == "1" ]] ||
+      fail "Unable to cache base image ${base_image}; check Docker Hub connectivity."
+  done
+
+  echo "=== BUILD APPLICATION IMAGE ==="
+  DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "${compose[@]}" build app
+  docker image inspect "${new_image}" >/dev/null
+fi
 
 echo "=== RECREATE APPLICATION ONLY ==="
 app_recreated=1

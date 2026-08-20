@@ -26,7 +26,7 @@ $launcher = @'
 @echo off
 chcp 65001 >nul
 title Smart Bamboo Direct Release Publisher
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\SmartBamboo\Tools\publish-primary-release.ps1" %*
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\SmartBamboo\Tools\publish-primary-release.ps1" -IncludeImage %*
 set "PUBLISH_EXIT_CODE=%ERRORLEVEL%"
 echo.
 if not "%PUBLISH_EXIT_CODE%"=="0" echo Release did not complete. Review the error above.
@@ -40,10 +40,10 @@ $powershellPath = Join-Path $PSHOME "powershell.exe"
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $powershellPath
-$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$installedScript`""
+$shortcut.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$installedScript`" -IncludeImage"
 $shortcut.WorkingDirectory = $installDirectory
 $shortcut.IconLocation = "$powershellPath,0"
-$shortcut.Description = "从本机直接上传并发布智慧竹山平台"
+$shortcut.Description = "在本机构建镜像并直接上传发布智慧竹山平台"
 $shortcut.Save()
 
 Write-Host "Smart Bamboo direct release publisher installed." -ForegroundColor Green

@@ -9,9 +9,13 @@ param(
     [int]$SshPort = 22,
     [string]$RemoteRepository = "/opt/smart-bamboo",
     [string]$RemoteBundleDirectory = "/srv/smart-bamboo/releases/incoming",
+    [string]$WslDistribution = "Ubuntu-24.04",
+    [string]$ImageCacheDirectory = "D:\SmartBambooReleaseCache",
     [switch]$InstallKey,
+    [switch]$IncludeImage,
     [switch]$Force,
     [switch]$KeepBundle,
+    [switch]$KeepImageArchive,
     [switch]$DryRun
 )
 
@@ -52,6 +56,26 @@ function Get-NativeText {
     return ($output -join "`n").Trim()
 }
 
+function ConvertTo-BashSingleQuoted {
+    param([Parameter(Mandatory)][string]$Value)
+    return "'" + $Value.Replace("'", "'`"'`"'") + "'"
+}
+
+function Get-Sha256Hex {
+    param([Parameter(Mandatory)][string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Install-ReleaseSshKey {
     param(
         [Parameter(Mandatory)][string]$SshExecutable,
@@ -75,6 +99,7 @@ $git = Require-Command -Name "git"
 $ssh = Require-Command -Name "ssh"
 $scp = Require-Command -Name "scp"
 $sshKeygen = Require-Command -Name "ssh-keygen"
+$wsl = if ($IncludeImage) { Require-Command -Name "wsl" } else { "" }
 
 if (-not $Repository) {
     $configPath = Join-Path $env:LOCALAPPDATA "SmartBamboo\Tools\release-publisher.json"
@@ -122,6 +147,9 @@ $cacheDirectory = Join-Path $env:LOCALAPPDATA "SmartBamboo\ReleaseCache"
 New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
 $bundlePath = Join-Path $cacheDirectory "$ReleaseTag.bundle"
 $remoteBundle = "$RemoteBundleDirectory/$ReleaseTag.bundle"
+$imageName = "smart-bamboo-app:$ReleaseTag"
+$imageArchivePath = Join-Path $ImageCacheDirectory "$ReleaseTag.image.tar.gz"
+$remoteImageArchive = "$RemoteBundleDirectory/$ReleaseTag.image.tar.gz"
 $keyPath = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".ssh\smart_bamboo_release_ed25519"
 $target = "$SshUser@$ServerHost"
 $sshCommon = @("-i", $keyPath, "-p", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new")
@@ -132,8 +160,14 @@ Write-Host "  本地仓库：$repositoryRoot"
 Write-Host "  提交：$TargetCommit"
 Write-Host "  发布标签：$ReleaseTag"
 Write-Host "  服务器：$target"
-Write-Host "  传输方式：Git Bundle → SSH（服务器无需访问 GitHub）"
-Write-Host "  说明：服务器仍会使用本地缓存的 Docker 基础镜像完成构建。"
+if ($IncludeImage) {
+    Write-Host "  传输方式：本机构建镜像 + Git Bundle → SSH"
+    Write-Host "  Docker：WSL $WslDistribution / $imageName"
+    Write-Host "  说明：服务器无需访问 GitHub 或 Docker Hub，也不会在服务器重新构建。"
+} else {
+    Write-Host "  传输方式：Git Bundle → SSH（服务器无需访问 GitHub）"
+    Write-Host "  说明：服务器使用本地缓存的 Docker 基础镜像完成构建。"
+}
 
 if (-not $Force -and -not $DryRun) {
     $answer = Read-Host "确认发布当前提交到生产服务器吗？输入 YES 继续"
@@ -145,15 +179,15 @@ if (-not $Force -and -not $DryRun) {
 if (Test-Path -LiteralPath $bundlePath -PathType Leaf) {
     Remove-Item -LiteralPath $bundlePath -Force
 }
-Write-Host "`n[1/4] 生成并校验 Git Bundle……" -ForegroundColor Cyan
+Write-Host "`n[$(if ($IncludeImage) { '1/7' } else { '1/4' })] 生成并校验 Git Bundle……" -ForegroundColor Cyan
 Invoke-Native -FilePath $git -Arguments @("-C", $repositoryRoot, "bundle", "create", $bundlePath, "HEAD") -FailureMessage "生成 Git Bundle 失败"
 Invoke-Native -FilePath $git -Arguments @("-C", $repositoryRoot, "bundle", "verify", $bundlePath) -FailureMessage "校验 Git Bundle 失败"
-$bundleHash = (Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$bundleHash = Get-Sha256Hex -Path $bundlePath
 $bundleSize = [Math]::Round((Get-Item -LiteralPath $bundlePath).Length / 1MB, 2)
 Write-Host "  Bundle：$bundleSize MB / SHA256 $bundleHash"
 
 if ($DryRun) {
-    Write-Host "DryRun 完成，未连接服务器。Bundle 保留在：$bundlePath" -ForegroundColor Yellow
+    Write-Host "DryRun 完成，未构建镜像、未连接服务器。Bundle 保留在：$bundlePath" -ForegroundColor Yellow
     return
 }
 
@@ -173,13 +207,84 @@ if (-not $keyWorks) {
     Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @("-o", "BatchMode=yes", $target, "true")) -FailureMessage "发布专用 SSH 密钥验证失败"
 }
 
-Write-Host "[2/4] 准备服务器接收目录……" -ForegroundColor Cyan
+$imageHash = ""
+$imageSize = 0
+if ($IncludeImage) {
+    Write-Host "[2/7] 在本机 WSL Docker 中构建生产镜像……" -ForegroundColor Cyan
+    $linuxRepository = Get-NativeText -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "wslpath", "-a", "-u", $repositoryRoot) -FailureMessage "转换项目 WSL 路径失败"
+    Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "docker", "info") -FailureMessage "WSL Docker Engine 未启动"
+    Invoke-Native -FilePath $wsl -Arguments @(
+        "-d", $WslDistribution,
+        "-u", "root",
+        "--",
+        "docker", "build",
+        "--progress", "plain",
+        "--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit",
+        "-t", $imageName,
+        "-f", "$linuxRepository/Dockerfile",
+        $linuxRepository
+    ) -FailureMessage "本机构建生产镜像失败"
+    $imageRevision = Get-NativeText -FilePath $wsl -Arguments @(
+        "-d", $WslDistribution,
+        "-u", "root",
+        "--",
+        "docker", "image", "inspect",
+        "--format", '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        $imageName
+    ) -FailureMessage "读取本地镜像版本标签失败"
+    if ($imageRevision -ne $TargetCommit) {
+        throw "本地镜像版本标签不匹配：$imageRevision"
+    }
+
+    Write-Host "[3/7] 导出并压缩生产镜像……" -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $ImageCacheDirectory -Force | Out-Null
+    $resolvedImageCache = (Resolve-Path -LiteralPath $ImageCacheDirectory).Path
+    if (Test-Path -LiteralPath $imageArchivePath -PathType Leaf) {
+        $existingArchive = (Resolve-Path -LiteralPath $imageArchivePath).Path
+        if (-not $existingArchive.StartsWith($resolvedImageCache + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "拒绝覆盖缓存目录之外的镜像包：$existingArchive"
+        }
+        Remove-Item -LiteralPath $existingArchive -Force
+    }
+    $linuxImageArchive = Get-NativeText -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "wslpath", "-a", "-u", $imageArchivePath) -FailureMessage "转换镜像包 WSL 路径失败"
+    $saveCommand = "set -o pipefail; docker save $(ConvertTo-BashSingleQuoted -Value $imageName) | gzip -1 > $(ConvertTo-BashSingleQuoted -Value $linuxImageArchive)"
+    Invoke-Native -FilePath $wsl -Arguments @("-d", $WslDistribution, "-u", "root", "--", "bash", "-lc", $saveCommand) -FailureMessage "导出生产镜像失败"
+    $imageHash = Get-Sha256Hex -Path $imageArchivePath
+    $imageSize = [Math]::Round((Get-Item -LiteralPath $imageArchivePath).Length / 1GB, 2)
+    Write-Host "  镜像包：$imageSize GB / SHA256 $imageHash"
+}
+
+Write-Host "[$(if ($IncludeImage) { '4/7' } else { '2/4' })] 准备服务器接收目录……" -ForegroundColor Cyan
 Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @($target, "mkdir -p '$RemoteBundleDirectory'")) -FailureMessage "准备服务器发布目录失败"
 
-Write-Host "[3/4] 从本机上传 Git Bundle……" -ForegroundColor Cyan
+Write-Host "[$(if ($IncludeImage) { '5/7' } else { '3/4' })] 从本机上传 Git Bundle……" -ForegroundColor Cyan
 Invoke-Native -FilePath $scp -Arguments @($scpCommon + @($bundlePath, "${target}:$remoteBundle")) -FailureMessage "上传 Git Bundle 失败"
 
-Write-Host "[4/4] 校验提交并执行生产发布……" -ForegroundColor Cyan
+if ($IncludeImage) {
+    Write-Host "[6/7] 从本机上传生产镜像包……" -ForegroundColor Cyan
+    Invoke-Native -FilePath $scp -Arguments @($scpCommon + @($imageArchivePath, "${target}:$remoteImageArchive")) -FailureMessage "上传生产镜像包失败"
+}
+
+Write-Host "[$(if ($IncludeImage) { '7/7' } else { '4/4' })] 校验提交并执行生产发布……" -ForegroundColor Cyan
+$remoteImageSetup = ""
+$prebuiltEnvironment = ""
+$remoteImageCleanup = ""
+if ($IncludeImage) {
+    $remoteImageSetup = @"
+image_archive='$remoteImageArchive'
+expected_image_hash='$imageHash'
+image_name='$imageName'
+test -f "`$image_archive"
+actual_image_hash=`$(sha256sum "`$image_archive" | awk '{print `$1}')
+test "`$actual_image_hash" = "`$expected_image_hash"
+gzip -dc "`$image_archive" | docker load
+docker image inspect "`$image_name" >/dev/null
+loaded_revision=`$(docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "`$image_name")
+test "`$loaded_revision" = '$TargetCommit'
+"@
+    $prebuiltEnvironment = 'PREBUILT_IMAGE="$image_name" '
+    $remoteImageCleanup = 'rm -f "$image_archive"'
+}
 $remoteScript = @"
 set -Eeuo pipefail
 bundle='$remoteBundle'
@@ -197,9 +302,11 @@ git fetch --no-tags "`$bundle" "`$target_commit"
 test "`$(git rev-parse FETCH_HEAD)" = "`$target_commit"
 git merge-base --is-ancestor HEAD "`$target_commit"
 git merge --ff-only "`$target_commit"
-RELEASE_BUNDLE="`$bundle" TARGET_COMMIT="`$target_commit" RELEASE_TAG="`$release_tag" \
+$remoteImageSetup
+${prebuiltEnvironment}RELEASE_BUNDLE="`$bundle" TARGET_COMMIT="`$target_commit" RELEASE_TAG="`$release_tag" \
   bash ops/scripts/deploy-primary-release.sh
 rm -f "`$bundle"
+$remoteImageCleanup
 "@
 $remoteScriptBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
 $executeCommand = "script_path=`$(mktemp /tmp/smart-bamboo-release-XXXXXX.sh); printf '%s' '$remoteScriptBase64' | base64 -d > `"`$script_path`"; bash `"`$script_path`"; status=`$?; rm -f `"`$script_path`"; exit `$status"
@@ -212,6 +319,15 @@ if (-not $KeepBundle) {
         throw "拒绝删除缓存目录之外的 Bundle：$resolvedBundle"
     }
     Remove-Item -LiteralPath $resolvedBundle -Force
+}
+
+if ($IncludeImage -and -not $KeepImageArchive) {
+    $resolvedImageArchive = (Resolve-Path -LiteralPath $imageArchivePath).Path
+    $resolvedImageCache = (Resolve-Path -LiteralPath $ImageCacheDirectory).Path
+    if (-not $resolvedImageArchive.StartsWith($resolvedImageCache + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝删除缓存目录之外的镜像包：$resolvedImageArchive"
+    }
+    Remove-Item -LiteralPath $resolvedImageArchive -Force
 }
 
 Write-Host "`n本地直发完成：$ReleaseTag" -ForegroundColor Green

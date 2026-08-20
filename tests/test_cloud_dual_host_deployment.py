@@ -1274,6 +1274,7 @@ def test_dji_material_publisher_shortcut_is_safe_for_windows_chinese_paths():
 
 def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     deploy_script = read_text("ops/scripts/deploy-primary-release.sh")
+    dockerfile = read_text("Dockerfile")
     publisher_bytes = (ROOT / "ops/scripts/publish-primary-release.ps1").read_bytes()
     installer_bytes = (
         ROOT / "ops/scripts/install-primary-release-publisher.ps1"
@@ -1285,16 +1286,28 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert publisher_bytes.startswith(b"\xef\xbb\xbf")
     assert installer_bytes.startswith(b"\xef\xbb\xbf")
     assert '"bundle", "create", $bundlePath, "HEAD"' in publisher
-    assert "Get-FileHash -LiteralPath $bundlePath -Algorithm SHA256" in publisher
+    assert "function Get-Sha256Hex" in publisher
+    assert "$bundleHash = Get-Sha256Hex -Path $bundlePath" in publisher
+    assert "$imageHash = Get-Sha256Hex -Path $imageArchivePath" in publisher
     assert 'git bundle verify "`$bundle"' in publisher
     assert 'git merge --ff-only "`$target_commit"' in publisher
     assert 'RELEASE_BUNDLE="`$bundle"' in publisher
+    assert '"--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit"' in publisher
+    assert '"docker", "save"' not in publisher
+    assert "docker save $(ConvertTo-BashSingleQuoted -Value $imageName)" in publisher
+    assert "gzip -dc \"`$image_archive\" | docker load" in publisher
+    assert 'PREBUILT_IMAGE="$image_name"' in publisher
     assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer
     assert "[Text.Encoding]::ASCII" in installer
+    assert "-IncludeImage" in installer
     assert 'RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"' in deploy_script
+    assert 'PREBUILT_IMAGE="${PREBUILT_IMAGE:-}"' in deploy_script
     assert 'release_source=local_bundle' in deploy_script
     assert 'git bundle verify "${resolved_release_bundle}"' in deploy_script
-    assert "源码传输不依赖服务器访问 GitHub" in guide
+    assert 'echo "=== VERIFY PREBUILT APPLICATION IMAGE ==="' in deploy_script
+    assert 'prebuilt_image_verified=${PREBUILT_IMAGE}' in deploy_script
+    assert 'org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"' in dockerfile
+    assert "绕过服务器访问 GitHub、Docker Hub" in guide
 
 
 def test_primary_release_readiness_accepts_only_the_http_rollout_warning():
