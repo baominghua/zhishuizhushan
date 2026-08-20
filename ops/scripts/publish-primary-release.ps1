@@ -34,7 +34,7 @@ function Require-Command {
 function Invoke-Native {
     param(
         [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Arguments,
         [Parameter(Mandatory)][string]$FailureMessage
     )
     & $FilePath @Arguments
@@ -46,7 +46,7 @@ function Invoke-Native {
 function Get-NativeText {
     param(
         [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyString()][string[]]$Arguments,
         [Parameter(Mandatory)][string]$FailureMessage
     )
     $output = @(& $FilePath @Arguments 2>&1)

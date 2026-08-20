@@ -1295,6 +1295,7 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'git merge --ff-only "`$target_commit"' in publisher
     assert 'RELEASE_BUNDLE="`$bundle"' in publisher
     assert '"--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit"' in publisher
+    assert "[AllowEmptyString()][string[]]$Arguments" in publisher
     assert '"docker", "save"' not in publisher
     assert "docker save $(ConvertTo-BashSingleQuoted -Value $imageName)" in publisher
     assert "gzip -dc \"`$image_archive\" | docker load" in publisher
