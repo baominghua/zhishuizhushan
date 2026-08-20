@@ -1,0 +1,22 @@
+{
+  "name": "smart-bamboo-map-publisher",
+  "version": "1.0.0",
+  "description": "Windows publishing assistant for Smart Bamboo GeoTIFF, LAS/LAZ and DJI 3D Tiles assets.",
+  "author": {
+    "name": "福建武夷福森农林科技有限公司"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "智慧竹山地图发布助手",
+    "shortDescription": "扫描、分类并发布二维影像、点云和 DJI 三维成果。",
+    "longDescription": "提供可配置的 Windows 图形发布助手，自动扫描文件夹并识别 GeoTIFF、LAS/LAZ、B3DM 和 PNTS，支持手工选择、SSH/SFTP 断点传输、原子替换和发布路径输出。",
+    "developerName": "福建武夷福森农林科技有限公司",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "扫描我的大疆素材并生成发布清单。",
+      "说明如何把 GeoTIFF 和 DJI 3D Tiles 发布到智慧竹山。"
+    ],
+    "brandColor": "#0F6B55"
+  }
+}

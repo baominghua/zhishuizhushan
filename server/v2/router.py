@@ -24,6 +24,7 @@ from .costs import router as costs_router
 from .governance import router as governance_router
 from .intelligence import router as intelligence_router
 from .roadmap_extensions import router as roadmap_extensions_router
+from .tools import router as tools_router
 
 
 router = APIRouter(prefix="/api/v2")
@@ -51,3 +52,4 @@ router.include_router(costs_router)
 router.include_router(governance_router)
 router.include_router(intelligence_router)
 router.include_router(roadmap_extensions_router)
+router.include_router(tools_router)

@@ -1,0 +1,9 @@
+{
+  "serverHost": "36.140.138.117",
+  "sshUser": "root",
+  "sshPort": 22,
+  "sshKeyPath": "%USERPROFILE%\\.ssh\\smart_bamboo_release_ed25519",
+  "remoteInbox": "/srv/smart-bamboo/data/remote-sensing/inbox",
+  "platformInbox": "/app/data/remote-sensing/inbox",
+  "platformBaseUrl": "https://36.140.138.117:18081"
+}

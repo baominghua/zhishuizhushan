@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { type FormEvent, useDeferredValue, useMemo, useRef, useState } from "react";
 
-import { api } from "../api/client";
+import { api, downloadFile } from "../api/client";
 import type {
   ForestBlockOption,
   ImageryAsset,
@@ -81,11 +81,15 @@ export function ImageryAssetsPage() {
   const remove = useMutation({ mutationFn: api.deleteImageryAsset, onSuccess: async () => { setSelected(null); await refresh(); } });
   const restore = useMutation({ mutationFn: api.restoreImageryAsset, onSuccess: async ({ scene }) => { setSelected(scene); await refresh(); } });
   const publish = useMutation({ mutationFn: api.publishImageryAsset, onSuccess: async ({ scene }) => { setSelected(scene); await refresh(); } });
+  const downloadPublisher = useMutation({
+    mutationFn: () => downloadFile("/api/v2/tools/map-publisher/download", "智慧竹山地图发布助手.zip"),
+    onError: (error) => window.alert(error instanceof Error ? error.message : "发布助手下载失败"),
+  });
 
   return <div className="standard-page ledger-page imagery-assets-page">
     <section className="page-heading ledger-heading">
       <div><span className="eyebrow">低空成果 / 空间资产</span><h1>影像与点云成果</h1><p>GeoTIFF 自动分析有效覆盖林班；LAS/LAZ 按航飞任务断点续传并生成 COPC、3D Tiles。</p></div>
-      <div className="heading-actions"><button className="button secondary" type="button" onClick={() => ledger.refetch()}><RefreshCw aria-hidden="true" />刷新</button><button className="button primary" type="button" disabled={!canCreate} onClick={() => setCreating(true)}><Plus aria-hidden="true" />上传成果</button></div>
+      <div className="heading-actions"><button className="button secondary" type="button" disabled={!canCreate || downloadPublisher.isPending} onClick={() => downloadPublisher.mutate()}><Download aria-hidden="true" />{downloadPublisher.isPending ? "正在下载" : "地图发布助手"}</button><button className="button secondary" type="button" onClick={() => ledger.refetch()}><RefreshCw aria-hidden="true" />刷新</button><button className="button primary" type="button" disabled={!canCreate} onClick={() => setCreating(true)}><Plus aria-hidden="true" />上传成果</button></div>
     </section>
     <section className="domain-summary-strip">
       <Summary label="成果总数" value={metrics.total} detail="正式空间资产" />

@@ -1,0 +1,124 @@
+﻿[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$SourcePath,
+    [Parameter(Mandatory)][ValidateSet("orthophoto", "dsm", "dtm", "tiles-b3dm", "tiles-pnts", "pointcloud-las")][string]$Kind,
+    [Parameter(Mandatory)][string]$ProjectName,
+    [Parameter(Mandatory)][string]$ServerHost,
+    [string]$SshUser = "root",
+    [ValidateRange(1, 65535)][int]$SshPort = 22,
+    [Parameter(Mandatory)][string]$SshKeyPath,
+    [string]$RemoteInbox = "/srv/smart-bamboo/data/remote-sensing/inbox",
+    [string]$PlatformInbox = "/app/data/remote-sensing/inbox",
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+function Require-Command([string]$Name) {
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if (-not $command) { throw "缺少命令 $Name，请在 Windows 可选功能中安装 OpenSSH 客户端。" }
+    return $command.Source
+}
+
+function Invoke-Native([string]$FilePath, [string[]]$Arguments, [string]$FailureMessage) {
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$FailureMessage（退出码 $LASTEXITCODE）" }
+}
+
+function Assert-SafeName([string]$Value, [string]$Label) {
+    if ($Value -notmatch '^[\p{L}\p{Nd}][\p{L}\p{Nd}._-]{0,63}$') {
+        throw "$Label 只能包含中文、字母、数字、点、下划线或短横线，且最长 64 个字符。"
+    }
+}
+
+function Assert-RemoteRoot([string]$Value, [string]$Label) {
+    if ($Value -notmatch '^/[A-Za-z0-9._/-]+$' -or $Value.Contains('..')) { throw "$Label 不是安全的 Linux 绝对路径。" }
+}
+
+Assert-SafeName $ProjectName "项目名"
+Assert-RemoteRoot $RemoteInbox "服务器素材根目录"
+Assert-RemoteRoot $PlatformInbox "平台路径根目录"
+$source = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
+$keyPath = [Environment]::ExpandEnvironmentVariables($SshKeyPath)
+if (-not (Test-Path -LiteralPath $keyPath -PathType Leaf)) { throw "SSH 私钥不存在：$keyPath" }
+
+$ssh = Require-Command "ssh"
+$target = "$SshUser@$ServerHost"
+$sshCommon = @("-i", $keyPath, "-p", "$SshPort", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new")
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$cacheRoot = Join-Path $env:LOCALAPPDATA "SmartBamboo\MapPublisher\Cache"
+New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+
+if ($Kind -in @("orthophoto", "dsm", "dtm")) {
+    if ($source.PSIsContainer -or $source.Extension -notin @(".tif", ".tiff")) { throw "二维成果必须是 TIF/TIFF 文件。" }
+    $sftp = Require-Command "sftp"
+    $remoteFileName = if ($Kind -eq "orthophoto") { "orthophoto.tif" } elseif ($Kind -eq "dsm") { "dsm.tif" } else { "dtm.tif" }
+    $remoteDirectory = "$RemoteInbox/$ProjectName/geotiff"
+    $remoteDestination = "$remoteDirectory/$remoteFileName"
+    $remotePartial = "$remoteDestination.uploading"
+    $platformPath = "$PlatformInbox/$ProjectName/geotiff/$remoteFileName"
+
+    Write-Host "准备发布 $Kind：$($source.FullName)"
+    Write-Host "目标路径：$platformPath"
+    if (-not $DryRun) {
+        $prepare = "set -eu; mkdir -p -- '$remoteDirectory' '$RemoteInbox/.releases/$ProjectName/geotiff'; if [ ! -e '$remotePartial' ]; then : > '$remotePartial'; fi"
+        Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
+        $batch = Join-Path $cacheRoot "sftp-$([Guid]::NewGuid().ToString('N')).txt"
+        $escapedLocal = $source.FullName.Replace('"', '\"')
+        $escapedRemote = $remotePartial.Replace('"', '\"')
+        [IO.File]::WriteAllText($batch, "reput `"$escapedLocal`" `"$escapedRemote`"`n", [Text.UTF8Encoding]::new($false))
+        try {
+            Invoke-Native $sftp @("-b", $batch, "-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new", $target) "SFTP 上传失败；重新发布同一项可续传"
+        } finally {
+            if (Test-Path -LiteralPath $batch) { Remove-Item -LiteralPath $batch -Force }
+        }
+        $hash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $backup = "$RemoteInbox/.releases/$ProjectName/geotiff/$remoteFileName-$timestamp"
+        $finalize = "set -eu; test -f '$remotePartial'; remote_hash=`$(sha256sum '$remotePartial' | awk '{print `$1}'); test `"`$remote_hash`" = '$hash'; if [ -e '$remoteDestination' ]; then mv '$remoteDestination' '$backup'; fi; mv '$remotePartial' '$remoteDestination'; chmod a+r '$remoteDestination'"
+        Invoke-Native $ssh ($sshCommon + @($target, $finalize)) "服务器校验或原子切换失败"
+    }
+} else {
+    if (-not $source.PSIsContainer) { throw "三维或点云成果必须选择文件夹。" }
+    $tar = Require-Command "tar"
+    $scp = Require-Command "scp"
+    $datasetName = $source.Name
+    Assert-SafeName $datasetName "成果目录名"
+    if ($Kind -like "tiles-*") {
+        $tileset = Join-Path $source.FullName "tileset.json"
+        if (-not (Test-Path -LiteralPath $tileset -PathType Leaf)) { throw "DJI 3D Tiles 目录缺少根 tileset.json。" }
+        $expectedExtension = if ($Kind -eq "tiles-b3dm") { ".b3dm" } else { ".pnts" }
+        if (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Filter "*$expectedExtension" -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            throw "目录中没有找到 $expectedExtension 瓦片。"
+        }
+    } elseif (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Include *.las,*.laz -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        throw "点云目录中没有 LAS/LAZ 文件。"
+    }
+    $remoteDestination = "$RemoteInbox/$ProjectName/$datasetName"
+    $platformPath = "$PlatformInbox/$ProjectName/$datasetName"
+    $archiveName = "$ProjectName-$datasetName-$timestamp.tar"
+    $archivePath = Join-Path $cacheRoot $archiveName
+    $remoteArchive = "$RemoteInbox/.incoming/$archiveName"
+    Write-Host "准备发布 $Kind：$($source.FullName)"
+    Write-Host "目标路径：$platformPath"
+    if (-not $DryRun) {
+        Invoke-Native $tar @("-cf", $archivePath, "-C", $source.Parent.FullName, $datasetName) "打包成果失败"
+        try {
+            $prepare = "set -eu; mkdir -p '$RemoteInbox/.incoming' '$RemoteInbox/.releases/$ProjectName' '$RemoteInbox/$ProjectName'"
+            Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
+            Invoke-Native $scp @("-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new", $archivePath, "${target}:$remoteArchive") "上传成果包失败"
+            $stage = "$RemoteInbox/.incoming/$ProjectName-$datasetName-$timestamp"
+            $backup = "$RemoteInbox/.releases/$ProjectName/$datasetName-$timestamp"
+            $required = if ($Kind -like "tiles-*") { "test -f '`$stage/$datasetName/tileset.json';" } else { "find '`$stage/$datasetName' -type f \( -iname '*.las' -o -iname '*.laz' \) | grep -q .;" }
+            $remoteScript = "set -euo pipefail; stage='$stage'; archive='$remoteArchive'; destination='$remoteDestination'; backup='$backup'; mkdir -p `"`$stage`"; tar -xf `"`$archive`" -C `"`$stage`"; $required if [ -e `"`$destination`" ]; then mv `"`$destination`" `"`$backup`"; fi; mv `"`$stage/$datasetName`" `"`$destination`"; rmdir `"`$stage`"; chmod -R a+rX `"`$destination`"; rm -f `"`$archive`""
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+            $execute = "script_path=`$(mktemp /tmp/smart-bamboo-map-XXXXXX.sh); printf '%s' '$encoded' | base64 -d > `"`$script_path`"; bash `"`$script_path`"; status=`$?; rm -f `"`$script_path`"; exit `$status"
+            Invoke-Native $ssh ($sshCommon + @($target, $execute)) "服务器解包或原子切换失败"
+        } finally {
+            if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
+        }
+    }
+}
+
+$result = [ordered]@{ success = $true; kind = $Kind; source = $source.FullName; projectName = $ProjectName; platformPath = $platformPath; dryRun = [bool]$DryRun }
+Write-Output "SMART_BAMBOO_RESULT=$($result | ConvertTo-Json -Compress)"
