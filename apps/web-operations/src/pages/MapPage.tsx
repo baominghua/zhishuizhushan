@@ -149,7 +149,9 @@ export function MapPage() {
   });
   const visibleImageryAssets = useMemo(
     () => (imageryAssets.data?.scenes ?? []).filter((asset) =>
-      asset.visible !== false && ["orthophoto", "dsm", "dtm"].includes(asset.assetType || "orthophoto")),
+      // DSM/DTM are elevation products, not colour basemaps. Rendering them as
+      // ordinary RGB imagery creates opaque grey seams and doubles tile traffic.
+      asset.visible !== false && (asset.assetType || "orthophoto") === "orthophoto"),
     [imageryAssets.data?.scenes],
   );
   const spatial3dAssetsQuery = useQuery({

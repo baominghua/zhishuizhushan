@@ -90,6 +90,11 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "FAR_VIEW_PITCH_RESET_HEIGHT = 300_000" in cesium
     assert "restoreFarViewPitch(viewer, height)" in cesium
     assert "targetHeight >= FAR_VIEW_PITCH_RESET_HEIGHT ? FAR_VIEW_PITCH" in cesium
+    assert '(asset.assetType || "orthophoto") === "orthophoto"' in page
+    assert "Rectangle.fromDegrees(west, south, east, north)" in cesium
+    assert 'maximumScreenSpaceError: asset.assetType === "pointcloud" ? 16 : 10' in cesium
+    assert "cacheSize: 512" in open_layers
+    assert "preload: 1" in open_layers
 
     map_page = (web_root / "pages" / "MapPage.tsx").read_text(encoding="utf-8")
     assert 'aria-label="放大地图"' in map_page

@@ -485,10 +485,16 @@ export function CesiumGlobe({
       if (viewer.imageryLayers.contains(layer)) viewer.imageryLayers.remove(layer, true);
     });
     const nextLayers = imageryAssets.map((asset) => {
+      const [west, south, east, north] = asset.bounds ?? [];
+      const rectangle = [west, south, east, north].every(Number.isFinite)
+        && west < east && south < north
+        ? Rectangle.fromDegrees(west, south, east, north)
+        : undefined;
       const layer = viewer.imageryLayers.addImageryProvider(new UrlTemplateImageryProvider({
         url: asset.tileUrl,
         maximumLevel: 22,
         tilingScheme: new WebMercatorTilingScheme(),
+        rectangle,
         credit: new Credit(asset.name),
       }));
       layer.alpha = Number.isFinite(asset.opacity) ? asset.opacity : 0.9;
@@ -501,7 +507,12 @@ export function CesiumGlobe({
     return () => nextLayers.forEach((layer) => {
       if (!viewer.isDestroyed() && viewer.imageryLayers.contains(layer)) viewer.imageryLayers.remove(layer, true);
     });
-  }, [imageryAssets, layers.droneImagery]);
+  }, [imageryAssets]);
+
+  useEffect(() => {
+    droneImageryLayersRef.current.forEach((layer) => { layer.show = layers.droneImagery; });
+    viewerRef.current?.scene.requestRender();
+  }, [layers.droneImagery]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -530,7 +541,16 @@ export function CesiumGlobe({
         pendingSpatial3dLoadsRef.current.set(asset.id, loadToken);
         try {
           const tileset = await Cesium3DTileset.fromUrl(asset.tilesetUrl, {
-            maximumScreenSpaceError: 8,
+            // Start with a coarse useful frame and refine only where the user is
+            // looking. Point clouds need a looser SSE than textured B3DM models.
+            maximumScreenSpaceError: asset.assetType === "pointcloud" ? 16 : 10,
+            cacheBytes: 256 * 1024 * 1024,
+            maximumCacheOverflowBytes: 128 * 1024 * 1024,
+            foveatedScreenSpaceError: true,
+            foveatedConeSize: 0.2,
+            foveatedMinimumScreenSpaceErrorRelaxation: 4,
+            preloadWhenHidden: false,
+            preloadFlightDestinations: false,
           });
           const loadIsCurrent = pendingSpatial3dLoadsRef.current.get(asset.id) === loadToken;
           if (!loadIsCurrent || !desiredSpatial3dAssetIdsRef.current.has(asset.id)

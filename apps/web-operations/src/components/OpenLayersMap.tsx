@@ -271,16 +271,29 @@ export function OpenLayersMap({
     if (!map) return;
     droneImageryLayersRef.current.forEach((layer) => map.removeLayer(layer));
     const nextLayers = imageryAssets.map((asset, index) => new TileLayer({
-      source: new XYZ({ url: asset.tileUrl, maxZoom: 22, transition: 0 }),
+      source: new XYZ({
+        url: asset.tileUrl,
+        maxZoom: 22,
+        transition: 120,
+        cacheSize: 512,
+      }),
       opacity: Number.isFinite(asset.opacity) ? asset.opacity : 0.9,
       visible: layers.droneImagery,
       zIndex: 10 + index,
+      preload: 1,
+      extent: asset.bounds?.length === 4
+        ? transformExtent(asset.bounds, "EPSG:4326", "EPSG:3857")
+        : undefined,
       properties: { title: asset.name, assetId: asset.id },
     }));
     nextLayers.forEach((layer) => map.addLayer(layer));
     droneImageryLayersRef.current = nextLayers;
     return () => nextLayers.forEach((layer) => map.removeLayer(layer));
-  }, [imageryAssets, layers.droneImagery]);
+  }, [imageryAssets]);
+
+  useEffect(() => {
+    droneImageryLayersRef.current.forEach((layer) => layer.setVisible(layers.droneImagery));
+  }, [layers.droneImagery]);
 
   useEffect(() => {
     const source = situationSourceRef.current;
