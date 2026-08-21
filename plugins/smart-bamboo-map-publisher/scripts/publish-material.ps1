@@ -22,8 +22,40 @@ function Require-Command([string]$Name) {
 }
 
 function Invoke-Native([string]$FilePath, [string[]]$Arguments, [string]$FailureMessage) {
-    & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$FailureMessage（退出码 $LASTEXITCODE）" }
+    # Windows PowerShell 5.1 converts native stderr into error records when the
+    # caller redirects this script's error stream. SSH login banners therefore
+    # used to become terminating NativeCommandError records even when ssh
+    # exited successfully. Let the native process finish and trust its exit code.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $nativeExitCode = $null
+    try {
+        $ErrorActionPreference = "Continue"
+        & $FilePath @Arguments 2>&1 | ForEach-Object {
+            $outputText = if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.Exception.Message } else { [string]$_ }
+            if (-not [string]::IsNullOrWhiteSpace($outputText)) { Write-Output $outputText }
+        }
+        $nativeExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($null -eq $nativeExitCode -or $nativeExitCode -ne 0) { throw "$FailureMessage（退出码 $nativeExitCode）" }
+}
+
+function New-RemoteActivationScript(
+    [string]$Stage,
+    [string]$RemoteArchive,
+    [string]$RemoteDestination,
+    [string]$Backup,
+    [string]$DatasetName,
+    [string]$Kind
+) {
+    $requiredPath = "$Stage/$DatasetName"
+    $required = if ($Kind -like "tiles-*") {
+        "test -f '$requiredPath/tileset.json';"
+    } else {
+        "find '$requiredPath' -type f \( -iname '*.las' -o -iname '*.laz' \) | grep -q .;"
+    }
+    return "set -euo pipefail; stage='$Stage'; archive='$RemoteArchive'; destination='$RemoteDestination'; backup='$Backup'; mkdir -p `"`$stage`"; tar -xf `"`$archive`" -C `"`$stage`"; $required if [ -e `"`$destination`" ]; then mv `"`$destination`" `"`$backup`"; fi; mv `"`$stage/$DatasetName`" `"`$destination`"; rmdir `"`$stage`"; chmod -R a+rX `"`$destination`"; rm -f `"`$archive`""
 }
 
 function Assert-SafeName([string]$Value, [string]$Label) {
@@ -109,8 +141,7 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
             Invoke-Native $scp @("-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new", $archivePath, "${target}:$remoteArchive") "上传成果包失败"
             $stage = "$RemoteInbox/.incoming/$ProjectName-$datasetName-$timestamp"
             $backup = "$RemoteInbox/.releases/$ProjectName/$datasetName-$timestamp"
-            $required = if ($Kind -like "tiles-*") { "test -f '`$stage/$datasetName/tileset.json';" } else { "find '`$stage/$datasetName' -type f \( -iname '*.las' -o -iname '*.laz' \) | grep -q .;" }
-            $remoteScript = "set -euo pipefail; stage='$stage'; archive='$remoteArchive'; destination='$remoteDestination'; backup='$backup'; mkdir -p `"`$stage`"; tar -xf `"`$archive`" -C `"`$stage`"; $required if [ -e `"`$destination`" ]; then mv `"`$destination`" `"`$backup`"; fi; mv `"`$stage/$datasetName`" `"`$destination`"; rmdir `"`$stage`"; chmod -R a+rX `"`$destination`"; rm -f `"`$archive`""
+            $remoteScript = New-RemoteActivationScript $stage $remoteArchive $remoteDestination $backup $datasetName $Kind
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
             $execute = "script_path=`$(mktemp /tmp/smart-bamboo-map-XXXXXX.sh); printf '%s' '$encoded' | base64 -d > `"`$script_path`"; bash `"`$script_path`"; status=`$?; rm -f `"`$script_path`"; exit `$status"
             Invoke-Native $ssh ($sshCommon + @($target, $execute)) "服务器解包或原子切换失败"

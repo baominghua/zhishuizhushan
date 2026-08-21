@@ -9,6 +9,16 @@ $ErrorActionPreference = "Stop"
 $manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $publisher = Join-Path $PSScriptRoot "publish-material.ps1"
 $results = @()
+
+function Get-PublishErrorMessage([System.Management.Automation.ErrorRecord]$Record) {
+    $message = [string]$Record.Exception.Message
+    if (-not [string]::IsNullOrWhiteSpace($message)) { return $message.Trim() }
+    $recordText = [string]$Record
+    if (-not [string]::IsNullOrWhiteSpace($recordText) -and $recordText -ne $Record.Exception.GetType().FullName) { return $recordText.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($Record.FullyQualifiedErrorId)) { return $Record.FullyQualifiedErrorId.Trim() }
+    return "未知发布错误，请保留运行日志并联系管理员。"
+}
+
 try {
     foreach ($item in @($manifest.items)) {
         "[$(Get-Date -Format HH:mm:ss)] 开始：$($item.kind) / $($item.sourcePath)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
@@ -35,7 +45,8 @@ try {
     }
     @{ success = $true; items = $results } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
 } catch {
-    "[$(Get-Date -Format HH:mm:ss)] 失败：$($_.Exception.Message)" | Add-Content -LiteralPath $LogPath -Encoding UTF8
-    @{ success = $false; error = $_.Exception.Message; items = $results } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+    $errorMessage = Get-PublishErrorMessage $_
+    "[$(Get-Date -Format HH:mm:ss)] 失败：$errorMessage" | Add-Content -LiteralPath $LogPath -Encoding UTF8
+    @{ success = $false; error = $errorMessage; items = $results } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
     exit 1
 }
