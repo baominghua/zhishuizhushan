@@ -6,6 +6,7 @@ import type {
   MapAreaFocusRequest,
   MapLayerState,
   MapSceneModel,
+  MapViewMetrics,
   MapViewMode,
   MapViewport,
   MapZoomRequest,
@@ -31,6 +32,7 @@ interface MapCanvasProps {
   selectedBlockId: string | null;
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
+  onViewMetricsChange?: (metrics: MapViewMetrics) => void;
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
   targetSpatialAssetId?: string;
@@ -60,6 +62,7 @@ export function MapCanvas({
   selectedBlockId,
   onSelectBlock,
   onViewportChange,
+  onViewMetricsChange,
   imageryAssets,
   spatial3dAssets,
   targetSpatialAssetId,
@@ -105,6 +108,7 @@ export function MapCanvas({
           selectedBlockId={selectedBlockId}
           onSelectBlock={onSelectBlock}
           onViewportChange={onViewportChange}
+          onViewMetricsChange={onViewMetricsChange}
           imageryAssets={imageryAssets}
           forestBlockFilterQuery={forestBlockFilterQuery}
           situationAssets={situationAssets}

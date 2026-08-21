@@ -7,6 +7,9 @@ import { WorkspacePage } from "./pages/WorkspacePage";
 const MapPage = lazy(async () => ({
   default: (await import("./pages/MapPage")).MapPage,
 }));
+const AssetViewerPage = lazy(async () => ({
+  default: (await import("./pages/AssetViewerPage")).AssetViewerPage,
+}));
 const ImportsPage = lazy(async () => ({
   default: (await import("./pages/ImportsPage")).ImportsPage,
 }));
@@ -63,6 +66,7 @@ const rootRoute = createRootRoute({ component: AppShell });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", beforeLoad: () => { throw redirect({ to: "/workspace" }); } });
 const workspaceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workspace", component: WorkspacePage });
 const mapRoute = createRoute({ getParentRoute: () => rootRoute, path: "/map", component: MapPage });
+const assetViewerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/asset-viewer", component: AssetViewerPage });
 const forestBlocksRoute = createRoute({ getParentRoute: () => rootRoute, path: "/resources/forest-blocks", component: ForestBlocksPage });
 const forestSubcompartmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/resources/forest-subcompartments", component: ForestSubcompartmentsPage });
 const forestRightsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/resources/forest-rights", component: ForestRightsPage });
@@ -99,7 +103,7 @@ const integrationHubRoute = createRoute({ getParentRoute: () => rootRoute, path:
 const workforceDevelopmentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workforce", component: WorkforceDevelopmentPage });
 const governanceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/governance", component: GovernancePage });
 
-const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, assetViewerRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
 
 export const router = createRouter({ routeTree, basepath: "/v2", defaultPreload: "intent" });
 

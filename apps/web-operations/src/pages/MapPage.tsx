@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Filter,
+  ExternalLink,
   Globe2,
   Layers,
   LocateFixed,
@@ -19,6 +20,7 @@ import { api } from "../api/client";
 import type { ForestBlockOption, ForestBlockQuery, ImageryAsset } from "../api/types";
 import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import { MapCanvas } from "../components/MapCanvas";
+import { ImageClarityStatus } from "../components/ImageClarityStatus";
 import { QueryState } from "../components/QueryState";
 import {
   featureToOption,
@@ -31,6 +33,7 @@ import {
   DEFAULT_MAP_VIEWPORT,
   type MapAreaFocusRequest,
   type MapLayerState,
+  type MapViewMetrics,
   type MapViewport,
   type MapViewMode,
   type MapZoomRequest,
@@ -124,6 +127,7 @@ export function MapPage() {
     bbox: DEFAULT_MAP_VIEWPORT.bbox,
   });
   const [viewport, setViewport] = useState<MapViewport>(DEFAULT_MAP_VIEWPORT);
+  const [viewMetrics, setViewMetrics] = useState<MapViewMetrics | null>(null);
   const scene = useMemo(() => createMapScene(selected), [selected]);
 
   const appliedFilterQuery = useMemo(() => filterQueryString(appliedFilters), [appliedFilters]);
@@ -245,6 +249,21 @@ export function MapPage() {
     () => selected ? allMapAnnotations.filter((annotation) => annotation.blockCode === selected.code) : [],
     [allMapAnnotations, selected],
   );
+  const selectedViewerLinks = useMemo(() => {
+    const seen = new Set<string>();
+    return selectedAnnotations.flatMap((annotation) => {
+      if (annotation.sourceType !== "imagery") return [];
+      return (annotation.sourceIds ?? (annotation.sourceId ? [annotation.sourceId] : [])).flatMap((id, index) => {
+        if (seen.has(id)) return [];
+        seen.add(id);
+        return [{
+          id,
+          label: index === 0 ? MAP_ANNOTATION_LABELS[annotation.kind] : `${MAP_ANNOTATION_LABELS[annotation.kind]} ${index + 1}`,
+          mode: annotation.kind === "orthophoto" ? "2d" : "3d",
+        }];
+      });
+    });
+  }, [selectedAnnotations]);
 
   useEffect(() => {
     window.localStorage.setItem(MAP_MODE_STORAGE_KEY, mode);
@@ -608,6 +627,7 @@ export function MapPage() {
           selectedBlockId={selected?.id ?? null}
           onSelectBlock={selectMapBlock}
           onViewportChange={updateViewport}
+          onViewMetricsChange={setViewMetrics}
           imageryAssets={displayedImageryAssets}
           spatial3dAssets={displayedSpatial3dAssets}
           targetSpatialAssetId={focusedSpatialAssetId || undefined}
@@ -620,6 +640,9 @@ export function MapPage() {
           }}
           detailMode={detailMode}
         />
+        {mode === "2d" && (
+          <ImageClarityStatus metrics={viewMetrics} asset={displayedImageryAssets[0]} />
+        )}
         {resultsOpen && (
           <aside className="map-results">
             <header>
@@ -865,6 +888,25 @@ export function MapPage() {
                 <div><dt>面积</dt><dd>{selected.areaMu == null ? "待补充" : `${selected.areaMu} 亩`}</dd></div>
                 <div><dt>空间边界</dt><dd>{selected.hasGeometry ? "已入库" : "待补图"}</dd></div>
               </dl>
+              {selectedViewerLinks.length > 0 && (
+                <div className="map-object-viewer-links">
+                  <strong>影像成果查看</strong>
+                  <small>在独立窗口查看，不改变当前 GIS 位置</small>
+                  <div>
+                    {selectedViewerLinks.map((item) => (
+                      <a
+                        className="button secondary"
+                        href={`/v2/asset-viewer?sceneId=${encodeURIComponent(item.id)}&mode=${item.mode}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        key={item.id}
+                      >
+                        <ExternalLink aria-hidden="true" />{item.label}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </aside>
         )}

@@ -25,6 +25,13 @@ export interface MapViewport {
   zoom: number;
 }
 
+export interface MapViewMetrics {
+  zoom: number;
+  latitude: number;
+  metresPerPixel: number;
+  cameraHeight?: number;
+}
+
 export interface MapSceneModel {
   home: {
     longitude: number;

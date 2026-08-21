@@ -7,7 +7,7 @@ import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import VectorTileLayer from "ol/layer/VectorTile";
 import Point from "ol/geom/Point";
-import { fromLonLat, transformExtent } from "ol/proj";
+import { fromLonLat, toLonLat, transformExtent } from "ol/proj";
 import VectorSource from "ol/source/Vector";
 import VectorTileSource from "ol/source/VectorTile";
 import XYZ from "ol/source/XYZ";
@@ -23,6 +23,7 @@ import type {
   MapAreaFocusRequest,
   MapLayerState,
   MapSceneModel,
+  MapViewMetrics,
   MapViewport,
   MapZoomRequest,
 } from "../maps/scene";
@@ -38,6 +39,7 @@ interface OpenLayersMapProps {
   selectedBlockId: string | null;
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
+  onViewMetricsChange?: (metrics: MapViewMetrics) => void;
   imageryAssets: ImageryAsset[];
   forestBlockFilterQuery: string;
   situationAssets: MapSituationAsset[];
@@ -137,6 +139,7 @@ export function OpenLayersMap({
   selectedBlockId,
   onSelectBlock,
   onViewportChange,
+  onViewMetricsChange,
   imageryAssets,
   forestBlockFilterQuery,
   situationAssets,
@@ -157,6 +160,7 @@ export function OpenLayersMap({
   const selectBlockRef = useRef(onSelectBlock);
   const selectSituationRef = useRef(onSelectSituationAsset);
   const viewportChangeRef = useRef(onViewportChange);
+  const viewMetricsChangeRef = useRef(onViewMetricsChange);
   const lastFocusedBlockRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -170,6 +174,10 @@ export function OpenLayersMap({
   useEffect(() => {
     viewportChangeRef.current = onViewportChange;
   }, [onViewportChange]);
+
+  useEffect(() => {
+    viewMetricsChangeRef.current = onViewMetricsChange;
+  }, [onViewMetricsChange]);
 
   useEffect(() => {
     if (!mapElement.current) return;
@@ -224,6 +232,19 @@ export function OpenLayersMap({
       });
     };
 
+    const reportViewMetrics = () => {
+      const view = map.getView();
+      const zoom = view.getZoom() ?? scene.home.zoom2d;
+      const projectedResolution = view.getResolution() ?? WEB_MERCATOR_MAX_RESOLUTION / (2 ** zoom);
+      const center = view.getCenter();
+      const latitude = center ? toLonLat(center)[1] : scene.home.latitude;
+      viewMetricsChangeRef.current?.({
+        zoom,
+        latitude,
+        metresPerPixel: projectedResolution * Math.max(0.01, Math.cos(latitude * Math.PI / 180)),
+      });
+    };
+
     map.on("singleclick", (event) => {
       const situation = map.forEachFeatureAtPixel(event.pixel, (candidate, layer) =>
         layer === situationLayer ? candidate : undefined,
@@ -241,6 +262,8 @@ export function OpenLayersMap({
     });
 
     map.on("moveend", reportViewport);
+    map.on("moveend", reportViewMetrics);
+    map.getView().on("change:resolution", reportViewMetrics);
     map.on("pointermove", (event) => {
       if (!mapElement.current) return;
       mapElement.current.style.cursor = map.hasFeatureAtPixel(event.pixel, {
@@ -254,6 +277,7 @@ export function OpenLayersMap({
     selectedLayerRef.current = selectedLayer;
     situationLayerRef.current = situationLayer;
     reportViewport();
+    reportViewMetrics();
 
     return () => {
       map.setTarget(undefined);

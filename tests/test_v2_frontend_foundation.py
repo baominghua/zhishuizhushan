@@ -93,7 +93,11 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "targetHeight >= FAR_VIEW_PITCH_RESET_HEIGHT ? FAR_VIEW_PITCH" in cesium
     assert '(asset.assetType || "orthophoto") === "orthophoto"' in page
     assert "Rectangle.fromDegrees(west, south, east, north)" in cesium
-    assert 'detailMode ? (asset.assetType === "pointcloud" ? 4 : 2)' in cesium
+    assert "function tilesetTuning" in cesium
+    assert 'qualityMode === "detail" || detailMode' in cesium
+    assert "function focusTileset" in cesium
+    assert "focusTileset(activeViewer, tileset, 1.2)" in cesium
+    assert "const sphere = targetTileset.boundingSphere" in cesium
     assert "detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT" in cesium
     assert "asset.maximumZoom ?? 22" in open_layers
     assert "cacheSize: 512" in open_layers
@@ -657,6 +661,41 @@ def test_imagery_assets_use_a_dedicated_ledger_and_published_map_layer():
     assert 'body.append("linkedBlockCodes"' in client
     assert 'toggleLayer("droneImagery")' in map_page
     assert "published: true" in map_page
+
+
+def test_imagery_assets_have_independent_2d_and_3d_inspection_workspaces():
+    web_root = ROOT_DIR / "apps" / "web-operations"
+    router = (web_root / "src" / "router.tsx").read_text(encoding="utf-8")
+    shell = (web_root / "src" / "components" / "AppShell.tsx").read_text(
+        encoding="utf-8"
+    )
+    page = (web_root / "src" / "pages" / "AssetViewerPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    map_page = (web_root / "src" / "pages" / "MapPage.tsx").read_text(
+        encoding="utf-8"
+    )
+    open_layers = (
+        web_root / "src" / "components" / "OpenLayersMap.tsx"
+    ).read_text(encoding="utf-8")
+    clarity = (
+        web_root / "src" / "components" / "ImageClarityStatus.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert 'path: "/asset-viewer"' in router
+    assert 'pathname === "/asset-viewer"' in shell
+    assert "ImageClarityStatus" in page
+    assert "showBasemap" in page
+    assert "qualityMode={quality}" in page
+    assert "onSpatialLoadProgress" in page
+    assert "eastOffset" in page and "northOffset" in page and "heightOffset" in page
+    assert "localStorage.setItem" in page
+    assert "disabled" in page and "回波" in page and "反射强度" in page and "轨迹" in page
+    assert "formatElevationRange(asset.nativeBounds)" in page
+    assert "/v2/asset-viewer?sceneId=" in map_page
+    assert "onViewMetricsChange" in open_layers
+    assert "metresPerPixel" in open_layers
+    assert "不会增加真实细节" in clarity
 
 
 def test_forest_block_editor_uses_national_administrative_division_selector():

@@ -12,11 +12,13 @@ import {
   Cesium3DTileset,
   GeoJsonDataSource,
   HeightReference,
+  HeadingPitchRange,
   HorizontalOrigin,
   ImageryLayer,
   JulianDate,
   LabelGraphics,
   LabelStyle,
+  Matrix4,
   Math as CesiumMath,
   NearFarScalar,
   OpenStreetMapImageryProvider,
@@ -62,11 +64,16 @@ interface CesiumGlobeProps {
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
   detailMode: boolean;
+  qualityMode?: "smooth" | "standard" | "detail";
+  onSpatialLoadProgress?: (progress: { pending: number; processing: number; ready: boolean }) => void;
 }
 
 export interface Spatial3dDisplaySettings {
   opacity: number;
   pointSize: number;
+  eastOffset?: number;
+  northOffset?: number;
+  heightOffset?: number;
 }
 
 const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
@@ -123,6 +130,53 @@ function retireSpatialTileset(viewer: Viewer, tileset: Cesium3DTileset) {
   };
   stopListening = viewer.scene.postRender.addEventListener(removeAfterRender);
   viewer.scene.requestRender();
+}
+
+function tilesetTuning(assetType: string | undefined, qualityMode: CesiumGlobeProps["qualityMode"], detailMode: boolean) {
+  const pointcloud = assetType === "pointcloud";
+  if (qualityMode === "smooth") return { error: pointcloud ? 16 : 10, cacheBytes: 256 * 1024 * 1024 };
+  if (qualityMode === "detail" || detailMode) return { error: pointcloud ? 4 : 2, cacheBytes: 768 * 1024 * 1024 };
+  return { error: pointcloud ? 10 : 6, cacheBytes: 384 * 1024 * 1024 };
+}
+
+function spatialAssetType(asset: ImageryAsset) {
+  return asset.assetType === "pointcloud"
+    || asset.tilesetContentType?.toLowerCase() === "pnts"
+    || Boolean(asset.tileFormats?.pnts)
+    ? "pointcloud"
+    : asset.assetType;
+}
+
+function applySpatialTilesetTransform(
+  tileset: Cesium3DTileset,
+  baseMatrix: Matrix4,
+  settings: Spatial3dDisplaySettings,
+) {
+  const center = tileset.boundingSphere.center;
+  const position = Cartographic.fromCartesian(center);
+  const east = new Cartesian3(-Math.sin(position.longitude), Math.cos(position.longitude), 0);
+  const north = new Cartesian3(
+    -Math.sin(position.latitude) * Math.cos(position.longitude),
+    -Math.sin(position.latitude) * Math.sin(position.longitude),
+    Math.cos(position.latitude),
+  );
+  const up = new Cartesian3(
+    Math.cos(position.latitude) * Math.cos(position.longitude),
+    Math.cos(position.latitude) * Math.sin(position.longitude),
+    Math.sin(position.latitude),
+  );
+  const translation = Cartesian3.multiplyByScalar(east, settings.eastOffset ?? 0, new Cartesian3());
+  Cartesian3.add(translation, Cartesian3.multiplyByScalar(north, settings.northOffset ?? 0, new Cartesian3()), translation);
+  Cartesian3.add(translation, Cartesian3.multiplyByScalar(up, settings.heightOffset ?? 0, new Cartesian3()), translation);
+  tileset.modelMatrix = Matrix4.multiply(Matrix4.fromTranslation(translation), baseMatrix, new Matrix4());
+}
+
+function focusTileset(viewer: Viewer, tileset: Cesium3DTileset, duration = 0.8) {
+  const sphere = BoundingSphere.clone(tileset.boundingSphere);
+  viewer.camera.flyToBoundingSphere(sphere, {
+    duration,
+    offset: new HeadingPitchRange(0, CesiumMath.toRadians(-42), Math.max(25, sphere.radius * 2.6)),
+  });
 }
 const BLOCK_LABEL_MAX_HEIGHT = 120_000;
 const BLOCK_LABEL_GAP = 8;
@@ -304,6 +358,8 @@ export function CesiumGlobe({
   situationAssets,
   onSelectSituationAsset,
   detailMode,
+  qualityMode,
+  onSpatialLoadProgress,
 }: CesiumGlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -316,6 +372,7 @@ export function CesiumGlobe({
   const desiredSpatial3dAssetIdsRef = useRef<Set<string>>(new Set());
   const pendingSpatial3dLoadsRef = useRef<Map<string, symbol>>(new Map());
   const spatial3dAssetTypesRef = useRef<Map<string, string | undefined>>(new Map());
+  const spatial3dBaseMatricesRef = useRef<Map<string, Matrix4>>(new Map());
   const targetSpatialAssetIdRef = useRef(targetSpatialAssetId);
   const blockDataSourceRef = useRef<GeoJsonDataSource | null>(null);
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
@@ -483,6 +540,7 @@ export function CesiumGlobe({
       desiredSpatial3dAssetIdsRef.current = new Set();
       pendingSpatial3dLoadsRef.current.clear();
       spatial3dAssetTypesRef.current.clear();
+      spatial3dBaseMatricesRef.current.clear();
       if (!viewer.isDestroyed()) viewer.destroy();
     };
   }, [config, scene.home.height3d, scene.home.latitude, scene.home.longitude]);
@@ -503,12 +561,12 @@ export function CesiumGlobe({
     if (!viewer) return;
     viewer.scene.screenSpaceCameraController.minimumZoomDistance = detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT;
     spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
-      const pointcloud = spatial3dAssetTypesRef.current.get(assetId) === "pointcloud";
-      tileset.maximumScreenSpaceError = detailMode ? (pointcloud ? 4 : 2) : (pointcloud ? 10 : 6);
-      tileset.cacheBytes = detailMode ? 768 * 1024 * 1024 : 384 * 1024 * 1024;
+      const tuning = tilesetTuning(spatial3dAssetTypesRef.current.get(assetId), qualityMode, detailMode);
+      tileset.maximumScreenSpaceError = tuning.error;
+      tileset.cacheBytes = tuning.cacheBytes;
     });
     viewer.scene.requestRender();
-  }, [detailMode]);
+  }, [detailMode, qualityMode]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -553,12 +611,13 @@ export function CesiumGlobe({
     const desiredIds = new Set(spatial3dAssets.map((asset) => asset.id));
     desiredSpatial3dAssetIdsRef.current = desiredIds;
     spatial3dAssetTypesRef.current = new Map(
-      spatial3dAssets.map((asset) => [asset.id, asset.assetType]),
+      spatial3dAssets.map((asset) => [asset.id, spatialAssetType(asset)]),
     );
 
     spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
       if (desiredIds.has(assetId)) return;
       spatial3dTilesetsRef.current.delete(assetId);
+      spatial3dBaseMatricesRef.current.delete(assetId);
       retireSpatialTileset(activeViewer, tileset);
     });
     pendingSpatial3dLoadsRef.current.forEach((_loadToken, assetId) => {
@@ -572,11 +631,13 @@ export function CesiumGlobe({
         const loadToken = Symbol(asset.id);
         pendingSpatial3dLoadsRef.current.set(asset.id, loadToken);
         try {
+          const resolvedAssetType = spatialAssetType(asset);
+          const tuning = tilesetTuning(resolvedAssetType, qualityMode, detailMode);
           const tileset = await Cesium3DTileset.fromUrl(asset.tilesetUrl, {
             // Start with a coarse useful frame and refine only where the user is
             // looking. Point clouds need a looser SSE than textured B3DM models.
-            maximumScreenSpaceError: detailMode ? (asset.assetType === "pointcloud" ? 4 : 2) : (asset.assetType === "pointcloud" ? 10 : 6),
-            cacheBytes: detailMode ? 768 * 1024 * 1024 : 384 * 1024 * 1024,
+            maximumScreenSpaceError: tuning.error,
+            cacheBytes: tuning.cacheBytes,
             maximumCacheOverflowBytes: 128 * 1024 * 1024,
             foveatedScreenSpaceError: true,
             foveatedConeSize: 0.2,
@@ -592,14 +653,16 @@ export function CesiumGlobe({
           }
           tileset.show = layers.spatial3d;
           const settings = spatial3dDisplaySettings[asset.id] ?? { opacity: 1, pointSize: 3 };
-          applySpatialTilesetStyle(tileset, asset.assetType, settings);
+          applySpatialTilesetStyle(tileset, resolvedAssetType, settings);
           activeViewer.scene.primitives.add(tileset);
           spatial3dTilesetsRef.current.set(asset.id, tileset);
+          spatial3dBaseMatricesRef.current.set(asset.id, Matrix4.clone(tileset.modelMatrix));
+          applySpatialTilesetTransform(tileset, spatial3dBaseMatricesRef.current.get(asset.id)!, settings);
+          tileset.loadProgress.addEventListener((pending, processing) => {
+            onSpatialLoadProgress?.({ pending, processing, ready: pending === 0 && processing === 0 });
+          });
           if (asset.id === targetSpatialAssetIdRef.current) {
-            activeViewer.camera.flyToBoundingSphere(
-              BoundingSphere.clone(tileset.boundingSphere),
-              { duration: 1.2 },
-            );
+            focusTileset(activeViewer, tileset, 1.2);
           }
         } catch {
           // Keep loading the remaining registered datasets when one directory is unavailable.
@@ -613,7 +676,7 @@ export function CesiumGlobe({
     }
 
     void loadTilesets();
-  }, [detailMode, spatial3dAssets]);
+  }, [detailMode, onSpatialLoadProgress, qualityMode, spatial3dAssets]);
 
   useEffect(() => {
     targetSpatialAssetIdRef.current = targetSpatialAssetId;
@@ -622,10 +685,7 @@ export function CesiumGlobe({
       ? spatial3dTilesetsRef.current.get(targetSpatialAssetId)
       : undefined;
     if (!viewer || viewer.isDestroyed() || !tileset || tileset.isDestroyed()) return;
-    viewer.camera.flyToBoundingSphere(
-      BoundingSphere.clone(tileset.boundingSphere),
-      { duration: 1.2 },
-    );
+    focusTileset(viewer, tileset, 1.2);
   }, [targetSpatialAssetId]);
 
   useEffect(() => {
@@ -643,6 +703,8 @@ export function CesiumGlobe({
         spatial3dAssetTypesRef.current.get(assetId),
         settings,
       );
+      const baseMatrix = spatial3dBaseMatricesRef.current.get(assetId);
+      if (baseMatrix) applySpatialTilesetTransform(tileset, baseMatrix, settings);
     });
     viewerRef.current?.scene.requestRender();
   }, [spatial3dDisplaySettings]);
@@ -759,6 +821,37 @@ export function CesiumGlobe({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || zoomRequest.sequence === 0) return;
+
+    const targetTileset = targetSpatialAssetIdRef.current
+      ? spatial3dTilesetsRef.current.get(targetSpatialAssetIdRef.current)
+      : undefined;
+    if (targetTileset && !targetTileset.isDestroyed()) {
+      const sphere = targetTileset.boundingSphere;
+      const fromCenter = Cartesian3.subtract(viewer.camera.positionWC, sphere.center, new Cartesian3());
+      const currentDistance = Cartesian3.magnitude(fromCenter);
+      if (Number.isFinite(currentDistance) && currentDistance > 0) {
+        const factor = zoomRequest.direction === "in" ? 0.58 : 1.72;
+        const targetDistance = Math.min(
+          Math.max(sphere.radius * 120, 2_000),
+          Math.max(Math.max(sphere.radius * 0.08, 2), currentDistance * factor),
+        );
+        const destination = Cartesian3.add(
+          sphere.center,
+          Cartesian3.multiplyByScalar(Cartesian3.normalize(fromCenter, new Cartesian3()), targetDistance, new Cartesian3()),
+          new Cartesian3(),
+        );
+        viewer.camera.cancelFlight();
+        viewer.camera.flyTo({
+          destination,
+          duration: 0.35,
+          orientation: {
+            direction: Cartesian3.normalize(Cartesian3.subtract(sphere.center, destination, new Cartesian3()), new Cartesian3()),
+            up: viewer.camera.upWC,
+          },
+        });
+        return;
+      }
+    }
 
     const position = viewer.camera.positionCartographic;
     const values = [position.longitude, position.latitude, position.height];
