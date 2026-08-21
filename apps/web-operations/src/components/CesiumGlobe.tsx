@@ -61,6 +61,7 @@ interface CesiumGlobeProps {
   spatial3dDisplaySettings: Record<string, Spatial3dDisplaySettings>;
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
+  detailMode: boolean;
 }
 
 export interface Spatial3dDisplaySettings {
@@ -73,6 +74,20 @@ const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
   helmet: "#61e4b1",
   dock: "#63c8ff",
   mission: "#d79bff",
+  orthophoto: "#25b8e8",
+  pointcloud: "#9b7bff",
+  mesh: "#ff9f43",
+  demonstration: "#ffe16d",
+};
+const SITUATION_OFFSETS: Record<MapSituationAsset["kind"], [number, number]> = {
+  camera: [-15, 0],
+  helmet: [15, 0],
+  dock: [-11, -15],
+  mission: [11, -15],
+  orthophoto: [-20, 18],
+  pointcloud: [0, 23],
+  mesh: [20, 18],
+  demonstration: [0, -28],
 };
 
 // Level 18 imagery still carries useful detail below the former 2.5 km clamp.
@@ -288,6 +303,7 @@ export function CesiumGlobe({
   spatial3dDisplaySettings,
   situationAssets,
   onSelectSituationAsset,
+  detailMode,
 }: CesiumGlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -435,8 +451,8 @@ export function CesiumGlobe({
     viewer.screenSpaceEventHandler.setInputAction((movement: { position: Cartesian2 }) => {
       const picked = viewer.scene.pick(movement.position) as { id?: { id?: string } } | undefined;
       const id = picked?.id?.id;
-      if (id?.startsWith("situation:")) {
-        selectSituationRef.current?.(id.slice("situation:".length));
+      if (id?.startsWith("map-annotation:")) {
+        selectSituationRef.current?.(id.slice("map-annotation:".length));
       } else if (id) {
         selectBlockRef.current(id);
       }
@@ -481,6 +497,18 @@ export function CesiumGlobe({
     if (blockDataSourceRef.current) blockDataSourceRef.current.show = layers.forestBlocks;
     viewerRef.current?.scene.requestRender();
   }, [layers.forestBlocks, layers.imagery, layers.labels]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT;
+    spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
+      const pointcloud = spatial3dAssetTypesRef.current.get(assetId) === "pointcloud";
+      tileset.maximumScreenSpaceError = detailMode ? (pointcloud ? 4 : 2) : (pointcloud ? 10 : 6);
+      tileset.cacheBytes = detailMode ? 768 * 1024 * 1024 : 384 * 1024 * 1024;
+    });
+    viewer.scene.requestRender();
+  }, [detailMode]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -547,8 +575,8 @@ export function CesiumGlobe({
           const tileset = await Cesium3DTileset.fromUrl(asset.tilesetUrl, {
             // Start with a coarse useful frame and refine only where the user is
             // looking. Point clouds need a looser SSE than textured B3DM models.
-            maximumScreenSpaceError: asset.assetType === "pointcloud" ? 10 : 6,
-            cacheBytes: 384 * 1024 * 1024,
+            maximumScreenSpaceError: detailMode ? (asset.assetType === "pointcloud" ? 4 : 2) : (asset.assetType === "pointcloud" ? 10 : 6),
+            cacheBytes: detailMode ? 768 * 1024 * 1024 : 384 * 1024 * 1024,
             maximumCacheOverflowBytes: 128 * 1024 * 1024,
             foveatedScreenSpaceError: true,
             foveatedConeSize: 0.2,
@@ -585,7 +613,7 @@ export function CesiumGlobe({
     }
 
     void loadTilesets();
-  }, [spatial3dAssets]);
+  }, [detailMode, spatial3dAssets]);
 
   useEffect(() => {
     targetSpatialAssetIdRef.current = targetSpatialAssetId;
@@ -622,31 +650,34 @@ export function CesiumGlobe({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    const entities = situationAssets.map((asset) => viewer.entities.add({
-      id: `situation:${asset.id}`,
-      position: Cartesian3.fromDegrees(asset.longitude, asset.latitude, 8),
-      point: new PointGraphics({
-        pixelSize: 13,
-        color: Color.fromCssColorString(SITUATION_COLORS[asset.kind]),
-        outlineColor: Color.fromCssColorString("#062b24"),
-        outlineWidth: 3,
-        heightReference: HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      }),
-      label: new LabelGraphics({
-        text: asset.label,
-        font: "600 13px 'Microsoft YaHei', sans-serif",
-        fillColor: Color.WHITE,
-        outlineColor: Color.fromCssColorString("#03241e"),
-        outlineWidth: 4,
-        style: LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cartesian2(0, -24),
-        heightReference: HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new NearFarScalar(2_000, 1, 160_000, 0.65),
-        translucencyByDistance: new NearFarScalar(80_000, 1, 400_000, 0),
-      }),
-    }));
+    const entities = situationAssets.map((asset) => {
+      const [offsetX, offsetY] = SITUATION_OFFSETS[asset.kind];
+      return viewer.entities.add({
+        id: `map-annotation:${asset.id}`,
+        position: Cartesian3.fromDegrees(asset.longitude, asset.latitude, 8),
+        point: new PointGraphics({
+          pixelSize: 13,
+          color: Color.fromCssColorString(SITUATION_COLORS[asset.kind]),
+          outlineColor: Color.fromCssColorString("#062b24"),
+          outlineWidth: 3,
+          heightReference: HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        }),
+        label: new LabelGraphics({
+          text: asset.mapLabel ?? asset.label,
+          font: "600 13px 'Microsoft YaHei', sans-serif",
+          fillColor: Color.WHITE,
+          outlineColor: Color.fromCssColorString("#03241e"),
+          outlineWidth: 4,
+          style: LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cartesian2(offsetX, offsetY - 24),
+          heightReference: HeightReference.CLAMP_TO_GROUND,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new NearFarScalar(2_000, 1, 160_000, 0.65),
+          translucencyByDistance: new NearFarScalar(80_000, 1, 400_000, 0),
+        }),
+      });
+    });
     viewer.scene.requestRender();
     return () => entities.forEach((entity) => {
       if (!viewer.isDestroyed()) viewer.entities.remove(entity);
@@ -736,7 +767,7 @@ export function CesiumGlobe({
     const heightFactor = zoomRequest.direction === "in" ? 0.55 : 1.8;
     const targetHeight = Math.min(
       20_000_000,
-      Math.max(MINIMUM_SHARP_CAMERA_HEIGHT, position.height * heightFactor),
+      Math.max(detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT, position.height * heightFactor),
     );
     viewer.camera.cancelFlight();
     viewer.camera.flyTo({
@@ -748,7 +779,7 @@ export function CesiumGlobe({
         roll: targetHeight >= FAR_VIEW_PITCH_RESET_HEIGHT ? 0 : viewer.camera.roll,
       },
     });
-  }, [zoomRequest]);
+  }, [detailMode, zoomRequest]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

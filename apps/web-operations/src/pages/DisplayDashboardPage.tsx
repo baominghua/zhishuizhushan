@@ -38,9 +38,17 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { api } from "../api/client";
-import type { CockpitMetric, CockpitRankingItem, ForestBlockFeatureCollection, ForestBlockGeometry, ForestBlockOption, SituationAssetKind, SituationAssetRecord } from "../api/types";
-import { MapCanvas, type MapSituationAsset } from "../components/MapCanvas";
+import type { CockpitMetric, CockpitRankingItem, ForestBlockFeatureCollection, ForestBlockOption, SituationAssetKind, SituationAssetRecord } from "../api/types";
+import { MapCanvas } from "../components/MapCanvas";
 import { createMapScene, DEFAULT_MAP_LAYERS, DEFAULT_MAP_VIEWPORT, type MapViewport, type MapViewMode } from "../maps/scene";
+import {
+  buildMapAnnotations,
+  DEFAULT_MAP_ANNOTATION_VISIBILITY,
+  filterMapAnnotations,
+  MAP_ANNOTATION_KINDS,
+  MAP_ANNOTATION_LABELS,
+  type MapAnnotationKind,
+} from "../maps/mapAnnotations";
 
 const EMPTY_FEATURES: ForestBlockFeatureCollection = {
   type: "FeatureCollection",
@@ -62,52 +70,18 @@ const CARBON_METRICS: Array<[string, string, LucideIcon]> = [
   ["ccerRegisteredAmount", "CCER 核证量", ShieldAlert],
 ];
 
-const KIND_LABELS: Record<SituationAssetKind, string> = { camera: "高位卡口", helmet: "安全帽", dock: "无人机机巢", mission: "无人机任务" };
-
-function geometryAnchor(geometry: ForestBlockGeometry | null): [number, number] | null {
-  if (!geometry) return null;
-  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
-  const rings = polygons
-    .map((polygon) => (polygon as unknown[][])[0] as unknown[] | undefined)
-    .filter((ring): ring is unknown[] => Array.isArray(ring) && ring.length >= 3);
-  let bestArea = 0;
-  let bestLongitude: number | null = null;
-  let bestLatitude: number | null = null;
-  rings.forEach((ring) => {
-    const points = ring.filter((point): point is number[] => Array.isArray(point) && point.length >= 2);
-    let crossSum = 0;
-    let longitudeSum = 0;
-    let latitudeSum = 0;
-    for (let index = 0; index < points.length; index += 1) {
-      const current = points[index];
-      const next = points[(index + 1) % points.length];
-      const cross = current[0] * next[1] - next[0] * current[1];
-      crossSum += cross;
-      longitudeSum += (current[0] + next[0]) * cross;
-      latitudeSum += (current[1] + next[1]) * cross;
-    }
-    if (Math.abs(crossSum) < 1e-12) return;
-    const area = Math.abs(crossSum / 2);
-    if (area > bestArea) {
-      bestArea = area;
-      bestLongitude = longitudeSum / (3 * crossSum);
-      bestLatitude = latitudeSum / (3 * crossSum);
-    }
-  });
-  return bestLongitude !== null && bestLatitude !== null ? [bestLongitude, bestLatitude] : null;
-}
-
 export function DisplayDashboardPage() {
   const [now, setNow] = useState(() => new Date());
   const [topic, setTopic] = useState<"overview" | "carbon">("overview");
   const [fullscreen, setFullscreen] = useState(Boolean(document.fullscreenElement));
   const [mode, setMode] = useState<MapViewMode>("2d");
+  const [detailMode, setDetailMode] = useState(false);
   const [leftRailOpen, setLeftRailOpen] = useState(true);
   const [rightRailOpen, setRightRailOpen] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [visibleKinds, setVisibleKinds] = useState<Record<SituationAssetKind, boolean>>({ camera: true, helmet: true, dock: true, mission: true });
+  const [visibleKinds, setVisibleKinds] = useState<Record<MapAnnotationKind, boolean>>(DEFAULT_MAP_ANNOTATION_VISIBILITY);
   const [selectedSituationAsset, setSelectedSituationAsset] = useState<SituationAssetRecord | null>(null);
   const [cameraPlaying, setCameraPlaying] = useState(true);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
@@ -115,6 +89,12 @@ export function DisplayDashboardPage() {
   const dashboard = useQuery({ queryKey: ["display-dashboard"], queryFn: api.leadershipCockpit, refetchInterval: 60_000 });
   const mapConfig = useQuery({ queryKey: ["map-config"], queryFn: api.mapConfig, staleTime: 60_000 });
   const situationLedger = useQuery({ queryKey: ["display-situation-assets"], queryFn: api.situationAssets, refetchInterval: 30_000 });
+  const annotationAssets = useQuery({
+    queryKey: ["display-annotation-assets", viewport.bbox.join(",")],
+    queryFn: () => api.imageryAssets({ bbox: viewport.bbox.join(","), limit: 100 }),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
   const mapBlocks = useQuery({
     queryKey: ["display-map-blocks", viewport.bbox.join(","), viewport.zoom, searchKeyword],
     queryFn: () => api.forestBlockMap({ bbox: viewport.bbox.join(","), zoom: viewport.zoom, maxFeatures: 2500, q: searchKeyword || undefined }),
@@ -143,21 +123,21 @@ export function DisplayDashboardPage() {
   const data = dashboard.data;
   const metrics = topic === "overview" ? OVERVIEW_METRICS : CARBON_METRICS;
   const ranking = (data?.carbon.districtRanking ?? []) as CockpitRankingItem[];
-  const visibleSituationRecords = useMemo(
-    () => (situationLedger.data?.items ?? []).filter((asset) => visibleKinds[asset.kind] && (!searchKeyword || `${asset.name} ${asset.subtitle} ${asset.blockCode} ${KIND_LABELS[asset.kind]}`.includes(searchKeyword))),
-    [searchKeyword, situationLedger.data, visibleKinds],
+  const allMapAnnotations = useMemo(() => buildMapAnnotations({
+    blocks: situationBlocks.data,
+    situationRecords: situationLedger.data?.items,
+    imageryAssets: annotationAssets.data?.scenes,
+  }), [annotationAssets.data?.scenes, situationBlocks.data, situationLedger.data?.items]);
+  const situationAssets = useMemo(
+    () => filterMapAnnotations(allMapAnnotations, visibleKinds, searchKeyword),
+    [allMapAnnotations, searchKeyword, visibleKinds],
   );
-  const situationAssets = useMemo<MapSituationAsset[]>(() => {
-    const featuresByCode = new Map(
-      (situationBlocks.data?.features ?? []).map((feature) => [feature.properties.blockCode, feature]),
-    );
-    return visibleSituationRecords.flatMap((asset) => {
-      const anchor = asset.longitude !== null && asset.latitude !== null
-        ? [asset.longitude, asset.latitude] as [number, number]
-        : geometryAnchor(featuresByCode.get(asset.blockCode)?.geometry ?? null);
-      return anchor ? [{ id: asset.id, kind: asset.kind, label: asset.name, longitude: anchor[0], latitude: anchor[1] }] : [];
-    });
-  }, [situationBlocks.data, visibleSituationRecords]);
+  const selectedBlockAnnotations = useMemo(
+    () => selectedBlock.data
+      ? allMapAnnotations.filter((annotation) => annotation.blockCode === selectedBlock.data.blockCode)
+      : [],
+    [allMapAnnotations, selectedBlock.data],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
@@ -186,7 +166,7 @@ export function DisplayDashboardPage() {
   function resetSearch() {
     setSearchDraft("");
     setSearchKeyword("");
-    setVisibleKinds({ camera: true, helmet: true, dock: true, mission: true });
+    setVisibleKinds(DEFAULT_MAP_ANNOTATION_VISIBILITY);
   }
 
   function selectSearchResult(block: ForestBlockOption) {
@@ -230,6 +210,7 @@ export function DisplayDashboardPage() {
           <div className="display-map-mode" aria-label="地图视角">
             <button className={mode === "2d" ? "active" : ""} type="button" onClick={() => setMode("2d")} aria-pressed={mode === "2d"}><MapIcon /><span>二维</span></button>
             <button className={mode === "3d" ? "active" : ""} type="button" onClick={() => setMode("3d")} aria-pressed={mode === "3d"}><Globe2 /><span>三维</span></button>
+            <button className={detailMode ? "active" : ""} type="button" onClick={() => setDetailMode((value) => !value)} aria-pressed={detailMode} title="继续放大并提高三维细节"><Search /><span>精细</span></button>
           </div>
           <button className={`display-filter-trigger ${filterOpen ? "active" : ""}`} type="button" onClick={() => setFilterOpen((current) => !current)} aria-expanded={filterOpen} aria-controls="display-map-filter"><SlidersHorizontal /><span>搜索筛选</span>{searchKeyword && <i />}</button>
           {filterOpen && <section className="display-map-filter" id="display-map-filter" aria-label="地图搜索筛选">
@@ -243,8 +224,8 @@ export function DisplayDashboardPage() {
               {(blockSearch.data?.items ?? []).map((block) => <button key={block.id} type="button" onClick={() => selectSearchResult(block)}><span><strong>{block.name}</strong><small>{block.code} · {block.location || "区划待补"}</small></span><MapPinned /></button>)}
               {!blockSearch.isLoading && blockSearch.data?.items.length === 0 && <span>未找到匹配的正式林班</span>}
             </div>}
-            <fieldset><legend>设备与任务图层</legend>{(Object.keys(KIND_LABELS) as SituationAssetKind[]).map((kind) => <label key={kind}><input type="checkbox" checked={visibleKinds[kind]} onChange={() => setVisibleKinds((current) => ({ ...current, [kind]: !current[kind] }))} /><span><Check />{KIND_LABELS[kind]}</span></label>)}</fieldset>
-            <footer><button type="button" onClick={resetSearch}>重置</button><small>正式林班筛选会同步到 GIS 查询</small></footer>
+            <fieldset><legend>设备、影像与示范点</legend>{MAP_ANNOTATION_KINDS.map((kind) => <label key={kind}><input type="checkbox" checked={visibleKinds[kind]} onChange={() => setVisibleKinds((current) => ({ ...current, [kind]: !current[kind] }))} /><span><Check />{MAP_ANNOTATION_LABELS[kind]}</span></label>)}</fieldset>
+            <footer><button type="button" onClick={resetSearch}>重置</button><small>与 GIS 一张图使用同一套成果关联和示范点标签</small></footer>
           </section>}
           <MapCanvas
             config={mapConfig.data}
@@ -264,19 +245,26 @@ export function DisplayDashboardPage() {
             forestBlockFilterQuery={searchKeyword ? new URLSearchParams({ q: searchKeyword }).toString() : ""}
             situationAssets={situationAssets}
             onSelectSituationAsset={(id) => {
-              const asset = visibleSituationRecords.find((item) => item.id === id);
+              const annotation = allMapAnnotations.find((item) => item.id === id);
+              const asset = annotation?.sourceType === "situation"
+                ? situationLedger.data?.items.find((item) => item.id === annotation.sourceId)
+                : undefined;
               if (asset) {
-                setSelectedSituationAsset(asset);
+                setSelectedSituationAsset(asset as SituationAssetRecord);
                 setCameraPlaying(true);
+              } else if (annotation?.blockId) {
+                setSelectedBlockId(annotation.blockId);
               }
             }}
+            detailMode={detailMode}
           />
           <div className="display-map-title"><span>竹林资源一张图</span><small>{mode === "3d" ? "三维地球" : "二维地图"} · 当前层级 {viewport.zoom} · 点击林班查看空间台账</small></div>
-          <div className="display-demo-note"><Radio /><span>设备态势数据</span><small>{situationLedger.data?.total ?? 0} 条后台台账记录</small></div>
+          <div className="display-demo-note"><Radio /><span>统一空间标注</span><small>{situationAssets.length} 个设备、影像或示范点</small></div>
           {selectedBlockId && <article className="display-block-popover">
             <button type="button" onClick={() => setSelectedBlockId(null)} aria-label="关闭林班详情"><X /></button>
             {selectedBlock.isLoading ? <p>正在读取林班详情</p> : selectedBlock.data ? <>
               <small>当前林班</small><h2>{selectedBlock.data.name || selectedBlock.data.blockCode}</h2>
+              {selectedBlockAnnotations.length > 0 && <div className="map-object-badges">{selectedBlockAnnotations.map((annotation) => <span className={`map-object-badge ${annotation.kind}`} key={annotation.id}>{MAP_ANNOTATION_LABELS[annotation.kind]}</span>)}</div>}
               <dl><div><dt>林班编号</dt><dd>{selectedBlock.data.blockCode}</dd></div><div><dt>行政区划</dt><dd>{[selectedBlock.data.townName, selectedBlock.data.villageName].filter(Boolean).join(" / ") || "未填写"}</dd></div><div><dt>面积</dt><dd>{selectedBlock.data.areaMu ?? "--"} 亩</dd></div><div><dt>风险等级</dt><dd>{selectedBlock.data.riskLevel || "未填写"}</dd></div></dl>
               <a href={`/v2/map?blockId=${encodeURIComponent(selectedBlock.data.id)}`}>进入 GIS 详情</a>
             </> : <p>该林班详情暂时无法读取</p>}
@@ -314,7 +302,7 @@ function SituationAssetIcon({ kind }: { kind: SituationAssetKind }) {
 function SituationAssetDialog({ asset, playing, onTogglePlaying, onClose }: { asset: SituationAssetRecord; playing: boolean; onTogglePlaying: () => void; onClose: () => void }) {
   return <div className="display-device-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="display-device-dialog" role="dialog" aria-modal="true" aria-labelledby="display-device-title">
-      <header><span><SituationAssetIcon kind={asset.kind} /></span><div><small>{KIND_LABELS[asset.kind]} · 后台台账</small><h2 id="display-device-title">{asset.name}</h2><p>{asset.subtitle}</p></div><button type="button" onClick={onClose} aria-label="关闭设备详情"><X /></button></header>
+      <header><span><SituationAssetIcon kind={asset.kind} /></span><div><small>{MAP_ANNOTATION_LABELS[asset.kind]} · 后台台账</small><h2 id="display-device-title">{asset.name}</h2><p>{asset.subtitle}</p></div><button type="button" onClick={onClose} aria-label="关闭设备详情"><X /></button></header>
       {asset.kind === "camera" && <div className={`display-camera-feed ${playing ? "is-playing" : "is-paused"}`}>
         <div className="camera-feed-scene"><Trees /><span className="camera-road" /><span className="camera-person"><UsersRound /></span></div>
         <div className="camera-feed-top"><span><i />LIVE</span><time>{new Date().toLocaleString("zh-CN", { hour12: false })}</time></div>

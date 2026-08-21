@@ -5,6 +5,7 @@ import {
   Layers,
   LocateFixed,
   Map as MapIcon,
+  ScanSearch,
   Maximize2,
   Minimize2,
   Search,
@@ -34,6 +35,14 @@ import {
   type MapViewMode,
   type MapZoomRequest,
 } from "../maps/scene";
+import {
+  buildMapAnnotations,
+  DEFAULT_MAP_ANNOTATION_VISIBILITY,
+  filterMapAnnotations,
+  MAP_ANNOTATION_KINDS,
+  MAP_ANNOTATION_LABELS,
+  type MapAnnotationKind,
+} from "../maps/mapAnnotations";
 
 const MAP_MODE_STORAGE_KEY = "smart-bamboo-v2-map-mode";
 
@@ -98,6 +107,11 @@ export function MapPage() {
   const detailRef = useRef<HTMLElement>(null);
   const detailDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [mode, setMode] = useState<MapViewMode>(initialMapMode);
+  const [detailMode, setDetailMode] = useState(false);
+  const [showMapAnnotations, setShowMapAnnotations] = useState(true);
+  const [annotationVisibility, setAnnotationVisibility] = useState<Record<MapAnnotationKind, boolean>>(
+    DEFAULT_MAP_ANNOTATION_VISIBILITY,
+  );
   const [layers, setLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
   const [enabledImageryAssetIds, setEnabledImageryAssetIds] = useState<Set<string> | null>(null);
   const [enabledSpatialAssetIds, setEnabledSpatialAssetIds] = useState<Set<string> | null>(null);
@@ -145,7 +159,7 @@ export function MapPage() {
       maxFeatures: 2000,
       ...appliedFilters,
     }),
-    enabled: layers.forestBlocks && mode === "3d",
+    enabled: layers.forestBlocks,
     staleTime: 30_000,
     placeholderData: (previous) => previous,
   });
@@ -182,6 +196,17 @@ export function MapPage() {
     enabled: Boolean(targetSceneId),
     staleTime: 60_000,
   });
+  const situationLedger = useQuery({
+    queryKey: ["map-situation-assets"],
+    queryFn: api.situationAssets,
+    refetchInterval: 30_000,
+  });
+  const annotationAssets = useQuery({
+    queryKey: ["map-annotation-assets", viewport.bbox.join(",")],
+    queryFn: () => api.imageryAssets({ bbox: viewport.bbox.join(","), limit: 100 }),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
   const visibleSpatial3dAssets = useMemo(() => {
     const items: ImageryAsset[] = [...(spatial3dAssetsQuery.data?.scenes ?? [])];
     if (targetSpatialAsset.data && !items.some((item) => item.id === targetSpatialAsset.data?.id)) {
@@ -206,6 +231,19 @@ export function MapPage() {
   const mapFeatures = useMemo(
     () => mergeSelectedForestBlock(mode === "3d" ? mapBlocks.data : undefined, selectedDetail.data),
     [mapBlocks.data, mode, selectedDetail.data],
+  );
+  const allMapAnnotations = useMemo(() => buildMapAnnotations({
+    blocks: mapBlocks.data,
+    situationRecords: situationLedger.data?.items,
+    imageryAssets: annotationAssets.data?.scenes,
+  }), [annotationAssets.data?.scenes, mapBlocks.data, situationLedger.data?.items]);
+  const visibleMapAnnotations = useMemo(
+    () => showMapAnnotations ? filterMapAnnotations(allMapAnnotations, annotationVisibility, query) : [],
+    [allMapAnnotations, annotationVisibility, query, showMapAnnotations],
+  );
+  const selectedAnnotations = useMemo(
+    () => selected ? allMapAnnotations.filter((annotation) => annotation.blockCode === selected.code) : [],
+    [allMapAnnotations, selected],
   );
 
   useEffect(() => {
@@ -479,6 +517,15 @@ export function MapPage() {
             </button>
           </div>
           <button
+            className={`button secondary map-detail-mode ${detailMode ? "active" : ""}`}
+            type="button"
+            onClick={() => setDetailMode((value) => !value)}
+            aria-pressed={detailMode}
+            title={detailMode ? "关闭精细查看，恢复常规资源占用" : "允许继续放大并提高三维模型精度"}
+          >
+            <ScanSearch aria-hidden="true" />精细查看
+          </button>
+          <button
             className="icon-button map-home-button"
             type="button"
             onClick={() => setHomeRequest((value) => value + 1)}
@@ -566,6 +613,12 @@ export function MapPage() {
           targetSpatialAssetId={focusedSpatialAssetId || undefined}
           spatial3dDisplaySettings={spatial3dDisplaySettings}
           forestBlockFilterQuery={appliedFilterQuery}
+          situationAssets={visibleMapAnnotations}
+          onSelectSituationAsset={(id) => {
+            const annotation = allMapAnnotations.find((item) => item.id === id);
+            if (annotation?.blockId) void selectMapBlock(annotation.blockId);
+          }}
+          detailMode={detailMode}
         />
         {resultsOpen && (
           <aside className="map-results">
@@ -620,6 +673,22 @@ export function MapPage() {
               <label><span>健康状态</span><select value={draftFilters.healthStatus} onChange={(event) => updateDraftFilter("healthStatus", event.target.value)}><option value="">全部状态</option>{(filterFacets.data?.healthStatuses ?? []).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
               <label><span>风险等级</span><select value={draftFilters.riskLevel} onChange={(event) => updateDraftFilter("riskLevel", event.target.value)}><option value="">全部风险</option>{(filterFacets.data?.riskLevels ?? []).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
+            <fieldset className="map-annotation-filter">
+              <legend>空间成果与示范点</legend>
+              <div>
+                {MAP_ANNOTATION_KINDS.map((kind) => (
+                  <label key={kind}>
+                    <input
+                      type="checkbox"
+                      checked={annotationVisibility[kind]}
+                      onChange={() => setAnnotationVisibility((current) => ({ ...current, [kind]: !current[kind] }))}
+                    />
+                    <span>{MAP_ANNOTATION_LABELS[kind]}</span>
+                    <small>{allMapAnnotations.filter((annotation) => annotation.kind === kind).length}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             {filterFacets.error && <p className="map-filter-error">筛选选项读取失败，请稍后重试</p>}
             <div className="map-filter-summary"><span>当前条件命中</span><strong>{filterPreview.isFetching ? "读取中" : `${filterPreview.data?.total ?? 0} 个林班`}</strong></div>
             <footer>
@@ -652,6 +721,10 @@ export function MapPage() {
             <label>
               <input type="checkbox" checked={layers.imagery} onChange={() => toggleLayer("imagery")} />
               <span><strong>卫星影像</strong><small>天地图影像底图</small></span>
+            </label>
+            <label>
+              <input type="checkbox" checked={showMapAnnotations} onChange={() => setShowMapAnnotations((value) => !value)} />
+              <span><strong>成果与示范标注</strong><small>{visibleMapAnnotations.length} 个当前可见提示，GIS 与前端大屏口径一致</small></span>
             </label>
             <label>
               <input type="checkbox" checked={layers.droneImagery} onChange={() => toggleLayer("droneImagery")} />
@@ -776,6 +849,16 @@ export function MapPage() {
               </div>
             </div>
             <div className="map-object-body">
+              {selectedAnnotations.length > 0 && (
+                <div className="map-object-badges" aria-label="林班空间成果">
+                  {selectedAnnotations.map((annotation) => (
+                    <span className={`map-object-badge ${annotation.kind}`} key={annotation.id}>
+                      {MAP_ANNOTATION_LABELS[annotation.kind]}
+                      {annotation.subtitle && <small>{annotation.subtitle}</small>}
+                    </span>
+                  ))}
+                </div>
+              )}
               <dl>
                 <div><dt>林班编号</dt><dd>{selected.code}</dd></div>
                 <div><dt>行政区划</dt><dd>{selected.location || "待补充"}</dd></div>

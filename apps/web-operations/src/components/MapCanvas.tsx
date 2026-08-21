@@ -12,6 +12,7 @@ import type {
 } from "../maps/scene";
 import { OpenLayersMap } from "./OpenLayersMap";
 import type { Spatial3dDisplaySettings } from "./CesiumGlobe";
+import type { MapAnnotation } from "../maps/mapAnnotations";
 
 const CesiumGlobe = lazy(async () => ({
   default: (await import("./CesiumGlobe")).CesiumGlobe,
@@ -37,15 +38,10 @@ interface MapCanvasProps {
   forestBlockFilterQuery: string;
   situationAssets?: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
+  detailMode?: boolean;
 }
 
-export interface MapSituationAsset {
-  id: string;
-  kind: "camera" | "helmet" | "dock" | "mission";
-  label: string;
-  longitude: number;
-  latitude: number;
-}
+export type MapSituationAsset = MapAnnotation;
 
 function LoadingState({ children }: { children: string }) {
   return <div className="map-service-state" role="status">{children}</div>;
@@ -71,6 +67,7 @@ export function MapCanvas({
   forestBlockFilterQuery,
   situationAssets = [],
   onSelectSituationAsset,
+  detailMode = false,
 }: MapCanvasProps) {
   if (loading) return <LoadingState>正在连接地图服务</LoadingState>;
 
@@ -112,6 +109,7 @@ export function MapCanvas({
           forestBlockFilterQuery={forestBlockFilterQuery}
           situationAssets={situationAssets}
           onSelectSituationAsset={onSelectSituationAsset}
+          detailMode={detailMode}
         />
       ) : (
         <Suspense fallback={<LoadingState>正在启动三维地球</LoadingState>}>
@@ -132,6 +130,7 @@ export function MapCanvas({
             spatial3dDisplaySettings={spatial3dDisplaySettings}
             situationAssets={situationAssets}
             onSelectSituationAsset={onSelectSituationAsset}
+            detailMode={detailMode}
           />
         </Suspense>
       )}

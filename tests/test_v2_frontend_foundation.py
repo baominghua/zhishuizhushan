@@ -53,7 +53,8 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "/api/map/forest-blocks.geojson" in client
     assert "bbox: viewport.bbox.join" in page
     assert "maxFeatures: 2000" in page
-    assert 'enabled: layers.forestBlocks && mode === "3d"' in page
+    assert "enabled: layers.forestBlocks" in page
+    assert "buildMapAnnotations" in page
     assert "mergeSelectedForestBlock" in page
     assert "林班边界" in page
     assert "featureCollection" in canvas
@@ -92,7 +93,9 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "targetHeight >= FAR_VIEW_PITCH_RESET_HEIGHT ? FAR_VIEW_PITCH" in cesium
     assert '(asset.assetType || "orthophoto") === "orthophoto"' in page
     assert "Rectangle.fromDegrees(west, south, east, north)" in cesium
-    assert 'maximumScreenSpaceError: asset.assetType === "pointcloud" ? 10 : 6' in cesium
+    assert 'detailMode ? (asset.assetType === "pointcloud" ? 4 : 2)' in cesium
+    assert "detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT" in cesium
+    assert "asset.maximumZoom ?? 22" in open_layers
     assert "cacheSize: 512" in open_layers
     assert "preload: 1" in open_layers
     assert "maxZoom: 18, padding: [88, 88, 88, 88]" in open_layers
@@ -713,11 +716,17 @@ def test_v2_standalone_display_wall_uses_live_cockpit_and_gis_data():
     assert "暂无数据" in page
     assert "搜索与图层" in page
     assert "situationAssets={situationAssets}" in page
-    assert "geometryAnchor" in page
+    assert "buildMapAnnotations" in page
+    assert "MAP_ANNOTATION_KINDS" in page
+    assert "api.imageryAssets" in page
     assert "api.situationAssets" in page
     assert "DEMO_ASSETS" not in page
-    assert "高位卡口" in page and "安全帽" in page
-    assert "无人机机巢" in page and "无人机任务" in page
+    annotations = (web_root / "src" / "maps" / "mapAnnotations.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "高位卡口" in annotations and "安全帽" in annotations
+    assert "无人机机巢" in annotations and "无人机任务" in annotations
+    assert "无人机正射" in annotations and "实景三维" in annotations
     assert "实时视频播放窗口" in page
     assert "进入运营后台" in page
     assert "前端大屏" in shell

@@ -42,6 +42,7 @@ interface OpenLayersMapProps {
   forestBlockFilterQuery: string;
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
+  detailMode: boolean;
 }
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
@@ -51,21 +52,38 @@ const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
   helmet: "#61e4b1",
   dock: "#63c8ff",
   mission: "#d79bff",
+  orthophoto: "#25b8e8",
+  pointcloud: "#9b7bff",
+  mesh: "#ff9f43",
+  demonstration: "#ffe16d",
+};
+const SITUATION_OFFSETS: Record<MapSituationAsset["kind"], [number, number]> = {
+  camera: [-15, 0],
+  helmet: [15, 0],
+  dock: [-11, -15],
+  mission: [11, -15],
+  orthophoto: [-20, 18],
+  pointcloud: [0, 23],
+  mesh: [20, 18],
+  demonstration: [0, -28],
 };
 
 function createSituationStyle(feature: FeatureLike) {
   const kind = String(feature.get("kind")) as MapSituationAsset["kind"];
   const color = SITUATION_COLORS[kind] || "#ffffff";
+  const [offsetX, offsetY] = SITUATION_OFFSETS[kind] || [0, 0];
   return new Style({
     image: new CircleStyle({
       radius: 8,
       fill: new Fill({ color }),
       stroke: new Stroke({ color: "#062b24", width: 3 }),
+      displacement: [offsetX, offsetY],
     }),
     text: new Text({
       text: String(feature.get("label") || ""),
       font: "600 12px system-ui, sans-serif",
-      offsetY: -19,
+      offsetX,
+      offsetY: offsetY - 19,
       fill: new Fill({ color: "#ffffff" }),
       stroke: new Stroke({ color: "rgba(3, 29, 24, 0.98)", width: 4 }),
     }),
@@ -123,6 +141,7 @@ export function OpenLayersMap({
   forestBlockFilterQuery,
   situationAssets,
   onSelectSituationAsset,
+  detailMode,
 }: OpenLayersMapProps) {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -181,7 +200,6 @@ export function OpenLayersMap({
     });
     const situationLayer = new VectorLayer({
       source: situationSourceRef.current,
-      declutter: "situation-assets",
       zIndex: 80,
       style: createSituationStyle,
     });
@@ -191,6 +209,7 @@ export function OpenLayersMap({
       view: new View({
         center: fromLonLat([scene.home.longitude, scene.home.latitude]),
         zoom: scene.home.zoom2d,
+        maxZoom: 28,
       }),
     });
 
@@ -273,9 +292,10 @@ export function OpenLayersMap({
     const nextLayers = imageryAssets.map((asset, index) => new TileLayer({
       source: new XYZ({
         url: asset.tileUrl,
-        maxZoom: 22,
+        maxZoom: asset.maximumZoom ?? 22,
         transition: 120,
         cacheSize: 512,
+        interpolate: !detailMode,
       }),
       opacity: Number.isFinite(asset.opacity) ? asset.opacity : 0.9,
       visible: layers.droneImagery,
@@ -289,7 +309,15 @@ export function OpenLayersMap({
     nextLayers.forEach((layer) => map.addLayer(layer));
     droneImageryLayersRef.current = nextLayers;
     return () => nextLayers.forEach((layer) => map.removeLayer(layer));
-  }, [imageryAssets]);
+  }, [detailMode, imageryAssets]);
+
+  useEffect(() => {
+    const view = mapRef.current?.getView();
+    if (!view) return;
+    const maximumZoom = detailMode ? 28 : 23;
+    view.setMaxZoom(maximumZoom);
+    if ((view.getZoom() ?? 0) > maximumZoom) view.animate({ zoom: maximumZoom, duration: 260 });
+  }, [detailMode]);
 
   useEffect(() => {
     droneImageryLayersRef.current.forEach((layer) => layer.setVisible(layers.droneImagery));
@@ -302,7 +330,7 @@ export function OpenLayersMap({
       geometry: new Point(fromLonLat([asset.longitude, asset.latitude])),
       situationAssetId: asset.id,
       kind: asset.kind,
-      label: asset.label,
+      label: asset.mapLabel ?? asset.label,
     })));
   }, [situationAssets]);
 
@@ -349,8 +377,8 @@ export function OpenLayersMap({
     const view = map.getView();
     const currentZoom = view.getZoom() ?? scene.home.zoom2d;
     const delta = zoomRequest.direction === "in" ? 1 : -1;
-    view.animate({ zoom: Math.min(19, Math.max(2, currentZoom + delta)), duration: 260 });
-  }, [scene.home.zoom2d, zoomRequest]);
+    view.animate({ zoom: Math.min(detailMode ? 28 : 23, Math.max(2, currentZoom + delta)), duration: 260 });
+  }, [detailMode, scene.home.zoom2d, zoomRequest]);
 
   useEffect(() => {
     const map = mapRef.current;

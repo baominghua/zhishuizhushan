@@ -2358,6 +2358,47 @@ svg {
   border-radius: 6px;
 }
 
+.map-annotation-filter {
+  margin: 0 16px 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fbf9;
+}
+
+.map-annotation-filter legend {
+  padding: 0 5px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.map-annotation-filter > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.map-annotation-filter label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.map-annotation-filter label small {
+  min-width: 20px;
+  padding: 2px 5px;
+  color: var(--accent);
+  border-radius: 9px;
+  background: #e5f5ed;
+  text-align: center;
+}
+
 .map-filter-summary {
   display: flex;
   align-items: center;
@@ -2468,6 +2509,32 @@ svg {
 .map-object-actions .icon-button { width: 32px; min-width: 32px; height: 32px; background: #ffffff; }
 .map-object-actions svg { width: 16px; height: 16px; }
 .map-object-body { min-height: 0; flex: 1; overflow: auto; padding: 16px 18px 20px; }
+
+.map-object-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.map-object-badge {
+  display: grid;
+  gap: 2px;
+  min-width: 108px;
+  padding: 8px 10px;
+  color: #0c4a3b;
+  border: 1px solid #a9ddc8;
+  border-radius: 6px;
+  background: #ebf8f2;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.map-object-badge small { color: var(--muted); font-size: 9px; font-weight: 500; }
+.map-object-badge.orthophoto { border-color: #91d8ef; background: #eefaff; }
+.map-object-badge.pointcloud { border-color: #c5b6ff; background: #f5f1ff; }
+.map-object-badge.mesh { border-color: #ffc98f; background: #fff7ed; }
+.map-object-badge.demonstration { border-color: #ead16b; background: #fffbea; }
 
 .map-object dl {
   margin: 0;
