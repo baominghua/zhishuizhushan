@@ -187,6 +187,12 @@ TILE_CACHE_ENABLED = env_bool("REMOTE_SENSING_TILE_CACHE", True)
 TILE_CACHE_MAX_BYTES = max(0, env_int("REMOTE_SENSING_TILE_CACHE_MAX_BYTES", 0))
 TILE_CACHE_MAX_AGE_DAYS = max(0.0, env_float("REMOTE_SENSING_TILE_CACHE_MAX_AGE_DAYS", 0))
 CACHE_PRUNE_INTERVAL = max(5, env_int("REMOTE_SENSING_CACHE_PRUNE_INTERVAL", 60))
+RASTER_TILE_WEBP_QUALITY = min(100, max(1, env_int("REMOTE_SENSING_TILE_WEBP_QUALITY", 85)))
+RASTER_TILE_BROWSER_MAX_AGE = max(3600, env_int("REMOTE_SENSING_TILE_BROWSER_MAX_AGE", 2592000))
+RASTER_TILE_PREWARM_ENABLED = env_bool("REMOTE_SENSING_TILE_PREWARM", True)
+RASTER_TILE_PREWARM_MIN_ZOOM = min(24, max(0, env_int("REMOTE_SENSING_TILE_PREWARM_MIN_ZOOM", 14)))
+RASTER_TILE_PREWARM_MAX_ZOOM = min(24, max(0, env_int("REMOTE_SENSING_TILE_PREWARM_MAX_ZOOM", 20)))
+RASTER_TILE_PREWARM_MAX_TILES = max(0, env_int("REMOTE_SENSING_TILE_PREWARM_MAX_TILES", 512))
 GEOSERVER_BASE_URL = os.environ.get("REMOTE_SENSING_GEOSERVER_URL", "").strip().rstrip("/")
 GEOSERVER_WMS_URL = os.environ.get("REMOTE_SENSING_GEOSERVER_WMS_URL", "").strip()
 GEOSERVER_WFS_URL = os.environ.get("REMOTE_SENSING_GEOSERVER_WFS_URL", "").strip()
@@ -1686,20 +1692,31 @@ def resolve_import_path(path_value: str) -> Path:
 
 def convert_to_cog(source_path: Path, cog_path: Path) -> None:
     rasterio = require_rasterio()
+    from rasterio.enums import ColorInterp
     from rasterio.shutil import copy as rio_copy
+    from rasterio.vrt import WarpedVRT
 
     cog_path.parent.mkdir(parents=True, exist_ok=True)
+    options = {
+        "driver": "COG",
+        "compress": "DEFLATE",
+        "blocksize": 512,
+        "overview_resampling": "average",
+        "BIGTIFF": "IF_SAFER",
+        "num_threads": "ALL_CPUS",
+    }
     with rasterio.Env(GDAL_NUM_THREADS="ALL_CPUS", GDAL_TIFF_INTERNAL_MASK=True):
-        rio_copy(
-            str(source_path),
-            str(cog_path),
-            driver="COG",
-            compress="DEFLATE",
-            blocksize=512,
-            overview_resampling="nearest",
-            BIGTIFF="IF_SAFER",
-            num_threads="ALL_CPUS",
-        )
+        with rasterio.open(source_path) as source:
+            # DJI orthophotos commonly contain both a real alpha band and a
+            # legacy NoData value. Copying through this VRT removes only the
+            # conflicting NoData metadata before the COG is created, so the
+            # alpha collar stays transparent without rewriting/breaking COG
+            # layout after creation.
+            if ColorInterp.alpha in source.colorinterp and source.nodata is not None:
+                with WarpedVRT(source, nodata=None) as display_source:
+                    rio_copy(display_source, str(cog_path), **options)
+            else:
+                rio_copy(source, str(cog_path), **options)
 
 
 def raster_metadata(cog_path: Path, fallback_bounds: list[float] | None = None) -> dict[str, Any]:
@@ -1716,6 +1733,20 @@ def raster_metadata(cog_path: Path, fallback_bounds: list[float] | None = None) 
             crs = ""
 
         xres, yres = dataset.res
+        center_latitude = (bounds[1] + bounds[3]) / 2
+        width_metres = abs(bounds[2] - bounds[0]) * 111_320 * math.cos(math.radians(center_latitude))
+        height_metres = abs(bounds[3] - bounds[1]) * 110_574
+        metres_per_pixel = max(
+            width_metres / max(1, dataset.width),
+            height_metres / max(1, dataset.height),
+        )
+        native_zoom = math.ceil(
+            math.log2(
+                156_543.03392804097
+                * max(0.01, math.cos(math.radians(center_latitude)))
+                / max(0.001, metres_per_pixel)
+            )
+        )
         return {
             "bounds": [round(float(item), 8) for item in bounds],
             "crs": crs,
@@ -1724,6 +1755,8 @@ def raster_metadata(cog_path: Path, fallback_bounds: list[float] | None = None) 
             "bands": dataset.count,
             "dtype": dataset.dtypes[0] if dataset.dtypes else "",
             "resolution": f"{abs(xres):.6g} x {abs(yres):.6g}",
+            "metresPerPixel": round(metres_per_pixel, 6),
+            "maximumZoom": min(24, max(0, native_zoom)),
         }
 
 
@@ -1764,6 +1797,9 @@ def build_scene_record(
         "height": raster_info["height"],
         "bands": raster_info["bands"],
         "dtype": raster_info["dtype"],
+        "metresPerPixel": raster_info["metresPerPixel"],
+        "maximumZoom": raster_info["maximumZoom"],
+        "tileFormat": "webp",
         "cogPath": catalog_path(cog_path),
         "originalPath": catalog_path(source_path),
         "deleteOriginalOnSceneDelete": delete_original,
@@ -1960,15 +1996,42 @@ def public_service_token_query(request: Request) -> str:
     return f"?token={urllib.parse.quote(token)}" if token else ""
 
 
+def scene_maximum_zoom(scene: dict[str, Any]) -> int:
+    configured = scene.get("maximumZoom")
+    if isinstance(configured, (int, float)) and math.isfinite(float(configured)):
+        return min(24, max(0, int(configured)))
+    bounds = list(scene.get("bounds") or [])
+    width = int(scene.get("width") or 0)
+    height = int(scene.get("height") or 0)
+    if len(bounds) != 4 or width <= 0 or height <= 0:
+        return 22
+    west, south, east, north = [float(value) for value in bounds]
+    center_latitude = (south + north) / 2
+    metres_per_pixel = max(
+        abs(east - west) * 111_320 * math.cos(math.radians(center_latitude)) / width,
+        abs(north - south) * 110_574 / height,
+    )
+    native_zoom = math.ceil(
+        math.log2(
+            156_543.03392804097
+            * max(0.01, math.cos(math.radians(center_latitude)))
+            / max(0.001, metres_per_pixel)
+        )
+    )
+    return min(24, max(0, native_zoom))
+
+
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
-    tile_url = f"/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.png{token_query}"
+    tile_url = f"/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.webp{token_query}"
     is_3d_asset = str(scene.get("assetType") or "") == "pointcloud" or bool(
         str(scene.get("tilesetPath") or "").strip()
     )
     return {
         **scene,
+        "maximumZoom": scene_maximum_zoom(scene),
+        "tileFormat": "webp",
         "tileUrl": "" if is_3d_asset else tile_url,
         "tileJsonUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/tilejson.json{token_query}",
         "thumbnailUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/thumbnail.png{token_query}",
@@ -3190,9 +3253,127 @@ def satellite_track_dashboard_payload() -> dict[str, Any]:
     }
 
 
-def tile_cache_path(scene_id: str, z: int, x: int, y: int, bidx: list[int] | None) -> Path:
+def tile_cache_path(
+    scene_id: str,
+    z: int,
+    x: int,
+    y: int,
+    bidx: list[int] | None,
+    image_format: str = "webp",
+) -> Path:
     band_key = "-".join(str(item) for item in (bidx or [])) or "default"
-    return CACHE_DIR / scene_id / str(z) / str(x) / f"{y}-{band_key}.png"
+    extension = "png" if image_format.lower() == "png" else "webp"
+    return CACHE_DIR / scene_id / str(z) / str(x) / f"{y}-{band_key}.{extension}"
+
+
+def raster_tile_coordinates(
+    bounds: list[float],
+    *,
+    min_zoom: int,
+    max_zoom: int,
+    max_tiles: int = 0,
+) -> list[tuple[int, int, int]]:
+    if len(bounds) != 4:
+        return []
+    west, south, east, north = [float(value) for value in bounds]
+    if not (-180 <= west < east <= 180 and -85.05112878 <= south < north <= 85.05112878):
+        return []
+
+    coordinates: list[tuple[int, int, int]] = []
+    for zoom in range(max(0, min_zoom), min(24, max_zoom) + 1):
+        min_x = tianditu_tile_x(west, zoom)
+        max_x = tianditu_tile_x(east, zoom)
+        min_y = tianditu_tile_y(north, zoom)
+        max_y = tianditu_tile_y(south, zoom)
+        level = [
+            (zoom, x, y)
+            for x in range(min_x, max_x + 1)
+            for y in range(min_y, max_y + 1)
+        ]
+        remaining = max_tiles - len(coordinates) if max_tiles else len(level)
+        if remaining <= 0:
+            break
+        if len(level) > remaining:
+            center_x = (min_x + max_x) / 2
+            center_y = (min_y + max_y) / 2
+            level.sort(key=lambda tile: (tile[1] - center_x) ** 2 + (tile[2] - center_y) ** 2)
+            level = level[:remaining]
+        coordinates.extend(level)
+        if max_tiles and len(coordinates) >= max_tiles:
+            break
+    return coordinates
+
+
+def render_cog_tile(
+    cog_path: Path,
+    x: int,
+    y: int,
+    z: int,
+    bidx: list[int] | None,
+    image_format: str,
+) -> bytes:
+    COGReader = require_rio_tiler()
+    with COGReader(str(cog_path)) as cog:
+        image = cog.tile(x, y, z, indexes=bidx)
+        if image_format == "webp":
+            return image.render(img_format="WEBP", quality=RASTER_TILE_WEBP_QUALITY)
+        return image.render(img_format="PNG")
+
+
+def write_raster_cache_tile(cache_path: Path, content: bytes) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_name(f".{cache_path.name}.{uuid.uuid4().hex}.part")
+    temporary.write_bytes(content)
+    temporary.replace(cache_path)
+
+
+def prewarm_scene_tiles(scene_id: str) -> dict[str, int]:
+    if not RASTER_TILE_PREWARM_ENABLED or RASTER_TILE_PREWARM_MAX_TILES <= 0:
+        return {"tiles": 0, "cacheHits": 0, "rendered": 0, "failed": 0}
+    scene = find_scene(scene_id)
+    cog_path = resolve_catalog_path(str(scene.get("cogPath") or ""))
+    if not cog_path.exists():
+        return {"tiles": 0, "cacheHits": 0, "rendered": 0, "failed": 1}
+    maximum_zoom = min(
+        int(scene.get("maximumZoom") or 22),
+        max(RASTER_TILE_PREWARM_MIN_ZOOM, RASTER_TILE_PREWARM_MAX_ZOOM),
+    )
+    coordinates = raster_tile_coordinates(
+        list(scene.get("bounds") or []),
+        min_zoom=min(RASTER_TILE_PREWARM_MIN_ZOOM, maximum_zoom),
+        max_zoom=maximum_zoom,
+        max_tiles=RASTER_TILE_PREWARM_MAX_TILES,
+    )
+    cache_hits = 0
+    rendered = 0
+    failed = 0
+    for zoom, x, y in coordinates:
+        cache_path = tile_cache_path(scene_id, zoom, x, y, None, "webp")
+        if cache_path.exists():
+            cache_hits += 1
+            continue
+        try:
+            content = render_cog_tile(cog_path, x, y, zoom, None, "webp")
+            write_raster_cache_tile(cache_path, content)
+            rendered += 1
+        except Exception:
+            failed += 1
+    maybe_prune_cache("tiles", CACHE_DIR, TILE_CACHE_MAX_BYTES, TILE_CACHE_MAX_AGE_DAYS)
+    return {
+        "tiles": len(coordinates),
+        "cacheHits": cache_hits,
+        "rendered": rendered,
+        "failed": failed,
+    }
+
+
+def schedule_scene_tile_prewarm(scene: dict[str, Any]) -> None:
+    if (
+        RASTER_TILE_PREWARM_ENABLED
+        and RASTER_TILE_PREWARM_MAX_TILES > 0
+        and str(scene.get("assetType") or "orthophoto") == "orthophoto"
+    ):
+        TASK_EXECUTOR.submit(prewarm_scene_tiles, str(scene["id"]))
 
 
 def thumbnail_cache_path(scene_id: str, cog_path: Path, max_size: int) -> Path:
@@ -3205,8 +3386,8 @@ def directory_cache_stats(root: Path, enabled: bool = True, extra: dict[str, Any
     ensure_dirs()
     count = 0
     size = 0
-    for path in root.rglob("*.png"):
-        if path.is_file():
+    for path in root.rglob("*"):
+        if path.is_file() and path.suffix.lower() in {".png", ".webp"}:
             count += 1
             size += path.stat().st_size
     return {"enabled": enabled, "path": str(root), "files": count, "bytes": size, **(extra or {})}
@@ -3741,6 +3922,7 @@ def run_conversion_task(task_id: str) -> None:
             scene=scene,
             completedAt=now_iso(),
         )
+        schedule_scene_tile_prewarm(scene)
     except Exception as exc:
         update_task(task_id, status="failed", progress=100, message=str(exc), failedAt=now_iso())
 
@@ -5798,6 +5980,7 @@ async def upload_scene(
         raise HTTPException(status_code=422, detail=f"GDAL COG conversion failed: {exc}") from exc
 
     save_scene(scene)
+    schedule_scene_tile_prewarm(scene)
     return public_scene(scene, request)
 
 
@@ -6349,7 +6532,7 @@ def tilejson(scene_id: str, request: Request) -> dict[str, Any]:
         "name": scene["name"],
         "bounds": scene["bounds"],
         "minzoom": 0,
-        "maxzoom": 22,
+        "maxzoom": scene["maximumZoom"],
         "tiles": [scene["tileUrl"]],
     }
 
@@ -6393,6 +6576,61 @@ def scene_thumbnail(
     )
 
 
+def scene_tile_response(
+    request: Request,
+    scene_id: str,
+    z: int,
+    x: int,
+    y: int,
+    bidx: list[int] | None = Query(default=None),
+    image_format: str = "webp",
+) -> Response:
+    scene = find_allowed_scene(scene_id, request)
+    cog_path = resolve_catalog_path(str(scene["cogPath"]))
+    if not cog_path.exists():
+        raise HTTPException(status_code=404, detail="COG file not found")
+
+    normalized_format = "png" if image_format.lower() == "png" else "webp"
+    media_type = "image/png" if normalized_format == "png" else "image/webp"
+    cache_path = tile_cache_path(scene_id, z, x, y, bidx, normalized_format)
+    cache_control = (
+        f"public, max-age={RASTER_TILE_BROWSER_MAX_AGE}, "
+        "stale-while-revalidate=86400, immutable"
+    )
+    if TILE_CACHE_ENABLED and cache_path.exists():
+        return Response(
+            content=cache_path.read_bytes(),
+            media_type=media_type,
+            headers={"Cache-Control": cache_control, "X-Tile-Cache": "HIT"},
+        )
+
+    try:
+        content = render_cog_tile(cog_path, x, y, z, bidx, normalized_format)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Tile render failed: {exc}") from exc
+
+    if TILE_CACHE_ENABLED:
+        write_raster_cache_tile(cache_path, content)
+        maybe_prune_cache("tiles", CACHE_DIR, TILE_CACHE_MAX_BYTES, TILE_CACHE_MAX_AGE_DAYS)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": cache_control, "X-Tile-Cache": "MISS"},
+    )
+
+
+@app.get("/api/scenes/{scene_id}/tiles/{z}/{x}/{y}.webp")
+def webp_tile(
+    request: Request,
+    scene_id: str,
+    z: int,
+    x: int,
+    y: int,
+    bidx: list[int] | None = Query(default=None),
+) -> Response:
+    return scene_tile_response(request, scene_id, z, x, y, bidx, "webp")
+
+
 @app.get("/api/scenes/{scene_id}/tiles/{z}/{x}/{y}.png")
 def tile(
     request: Request,
@@ -6402,32 +6640,7 @@ def tile(
     y: int,
     bidx: list[int] | None = Query(default=None),
 ) -> Response:
-    scene = find_allowed_scene(scene_id, request)
-    cog_path = resolve_catalog_path(str(scene["cogPath"]))
-    if not cog_path.exists():
-        raise HTTPException(status_code=404, detail="COG file not found")
-
-    cache_path = tile_cache_path(scene_id, z, x, y, bidx)
-    if TILE_CACHE_ENABLED and cache_path.exists():
-        return Response(
-            content=cache_path.read_bytes(),
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400", "X-Tile-Cache": "HIT"},
-        )
-
-    COGReader = require_rio_tiler()
-    try:
-        with COGReader(str(cog_path)) as cog:
-            image = cog.tile(x, y, z, indexes=bidx)
-            content = image.render(img_format="PNG")
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Tile render failed: {exc}") from exc
-
-    if TILE_CACHE_ENABLED:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_bytes(content)
-        maybe_prune_cache("tiles", CACHE_DIR, TILE_CACHE_MAX_BYTES, TILE_CACHE_MAX_AGE_DAYS)
-    return Response(content=content, media_type="image/png", headers={"Cache-Control": "public, max-age=86400", "X-Tile-Cache": "MISS"})
+    return scene_tile_response(request, scene_id, z, x, y, bidx, "png")
 
 
 @app.get("/api/cache/tiles")

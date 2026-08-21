@@ -185,7 +185,7 @@ def test_tianditu_upstream_request_does_not_fallback_to_referer_for_server_key(
 
 def test_public_scene_exposes_thumbnail_url(isolated_env):
     app_module = reload_app_module()
-    app_module.save_scene(sample_scene("scene-thumbnail-url"))
+    app_module.save_scene(sample_scene("scene-thumbnail-url") | {"maximumZoom": 23})
     client = TestClient(app_module.app)
 
     response = client.get(
@@ -196,7 +196,121 @@ def test_public_scene_exposes_thumbnail_url(isolated_env):
     assert response.status_code == 200
     payload = response.json()
     assert payload["thumbnailUrl"] == "/api/scenes/scene-thumbnail-url/thumbnail.png"
+    assert payload["tileUrl"] == "/api/scenes/scene-thumbnail-url/tiles/{z}/{x}/{y}.webp"
+    assert payload["tileFormat"] == "webp"
+    assert payload["maximumZoom"] == 23
     assert "://" not in payload["thumbnailUrl"]
+
+
+def test_scene_webp_tile_renders_and_uses_long_lived_cache(isolated_env, monkeypatch):
+    app_module = reload_app_module()
+    cog_path = app_module.COG_DIR / "webp-source.tif"
+    cog_path.parent.mkdir(parents=True, exist_ok=True)
+    cog_path.write_bytes(b"fake-cog")
+    app_module.save_scene(
+        sample_scene("scene-webp-cache")
+        | {"cogPath": "cogs/webp-source.tif", "maximumZoom": 21}
+    )
+    calls = []
+
+    class FakeImage:
+        def render(self, img_format="PNG", **options):
+            calls.append(("render", img_format, options))
+            return b"RIFF-webp-tile"
+
+    class FakeReader:
+        def __init__(self, path):
+            calls.append(("open", path))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def tile(self, x, y, z, indexes=None):
+            calls.append(("tile", x, y, z, indexes))
+            return FakeImage()
+
+    monkeypatch.setattr(app_module, "require_rio_tiler", lambda: FakeReader)
+    client = TestClient(app_module.app)
+    headers = {"X-RS-Roles": "imagery.scenes.view"}
+
+    first = client.get(
+        "/api/scenes/scene-webp-cache/tiles/18/217184/110824.webp",
+        headers=headers,
+    )
+    second = client.get(
+        "/api/scenes/scene-webp-cache/tiles/18/217184/110824.webp",
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("image/webp")
+    assert first.headers["X-Tile-Cache"] == "MISS"
+    assert "max-age=2592000" in first.headers["Cache-Control"]
+    assert "immutable" in first.headers["Cache-Control"]
+    assert second.headers["X-Tile-Cache"] == "HIT"
+    assert calls == [
+        ("open", str(cog_path)),
+        ("tile", 217184, 110824, 18, None),
+        ("render", "WEBP", {"quality": 85}),
+    ]
+
+
+def test_raster_prewarm_coordinates_are_capped_and_prioritize_lower_zooms(isolated_env):
+    app_module = reload_app_module()
+
+    coordinates = app_module.raster_tile_coordinates(
+        [118.25546898, 26.77256702, 118.25836259, 26.7762834],
+        min_zoom=14,
+        max_zoom=23,
+        max_tiles=32,
+    )
+
+    assert len(coordinates) == 32
+    assert coordinates[0][0] == 14
+    assert max(zoom for zoom, _, _ in coordinates) < 23
+
+
+def test_convert_to_cog_prefers_alpha_mask_without_rewriting_cog(isolated_env):
+    import numpy as np
+    import rasterio
+    from rasterio.enums import ColorInterp
+    from rasterio.transform import from_origin
+
+    app_module = reload_app_module()
+    source = isolated_env / "rgba-with-nodata.tif"
+    target = app_module.COG_DIR / "rgba-display-cog.tif"
+    pixels = np.full((4, 1024, 1024), 120, dtype="uint8")
+    pixels[3, :64, :] = 0
+    with rasterio.open(
+        source,
+        "w",
+        driver="GTiff",
+        width=1024,
+        height=1024,
+        count=4,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(118, 27, 0.00001, 0.00001),
+        nodata=0,
+    ) as dataset:
+        dataset.write(pixels)
+        dataset.colorinterp = (
+            ColorInterp.red,
+            ColorInterp.green,
+            ColorInterp.blue,
+            ColorInterp.alpha,
+        )
+
+    app_module.convert_to_cog(source, target)
+
+    with rasterio.open(target) as dataset:
+        assert dataset.nodata is None
+        assert ColorInterp.alpha in dataset.colorinterp
+        assert dataset.overviews(1)
+        assert dataset.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG"
 
 
 def test_public_scene_uses_same_origin_paths_for_3d_tiles(isolated_env):

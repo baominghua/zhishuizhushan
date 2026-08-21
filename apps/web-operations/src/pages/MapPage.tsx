@@ -76,6 +76,12 @@ function spatialAssetFormat(asset: ImageryAsset) {
   return asset.assetType === "pointcloud" ? "三维点云" : "三维模型";
 }
 
+function isPointCloudAsset(asset: ImageryAsset) {
+  return asset.assetType === "pointcloud"
+    || asset.tilesetContentType?.toLowerCase() === "pnts"
+    || Boolean(asset.tileFormats?.pnts);
+}
+
 export function MapPage() {
   const targetSceneId = useMemo(() => new URLSearchParams(window.location.search).get("sceneId") || "", []);
   const [resultsOpen, setResultsOpen] = useState(false);
@@ -93,6 +99,7 @@ export function MapPage() {
   const detailDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const [mode, setMode] = useState<MapViewMode>(initialMapMode);
   const [layers, setLayers] = useState<MapLayerState>(DEFAULT_MAP_LAYERS);
+  const [enabledImageryAssetIds, setEnabledImageryAssetIds] = useState<Set<string> | null>(null);
   const [enabledSpatialAssetIds, setEnabledSpatialAssetIds] = useState<Set<string> | null>(null);
   const [focusedSpatialAssetId, setFocusedSpatialAssetId] = useState(targetSceneId);
   const [spatial3dDisplaySettings, setSpatial3dDisplaySettings] = useState<Record<string, Spatial3dDisplaySettings>>({});
@@ -155,6 +162,12 @@ export function MapPage() {
       // ordinary RGB imagery creates opaque grey seams and doubles tile traffic.
       asset.visible !== false && (asset.assetType || "orthophoto") === "orthophoto"),
     [imageryAssets.data?.scenes],
+  );
+  const displayedImageryAssets = useMemo(
+    () => enabledImageryAssetIds === null
+      ? []
+      : visibleImageryAssets.filter((asset) => enabledImageryAssetIds.has(asset.id)),
+    [enabledImageryAssetIds, visibleImageryAssets],
   );
   const spatial3dAssetsQuery = useQuery({
     queryKey: ["spatial-3d-assets", viewport.bbox.join(",")],
@@ -235,6 +248,17 @@ export function MapPage() {
   }, [targetSpatialAsset.data]);
 
   useEffect(() => {
+    if (visibleImageryAssets.length === 0) return;
+    setEnabledImageryAssetIds((current) => {
+      if (current && visibleImageryAssets.some((asset) => current.has(asset.id))) return current;
+      const initialId = visibleImageryAssets.some((asset) => asset.id === targetSceneId)
+        ? targetSceneId
+        : visibleImageryAssets[0].id;
+      return new Set([initialId]);
+    });
+  }, [targetSceneId, visibleImageryAssets]);
+
+  useEffect(() => {
     if (enabledSpatialAssetIds !== null || visibleSpatial3dAssets.length === 0) return;
     const initialId = visibleSpatial3dAssets.some((asset) => asset.id === targetSceneId)
       ? targetSceneId
@@ -264,6 +288,20 @@ export function MapPage() {
       else next.add(id);
       return next;
     });
+  }
+
+  function toggleImageryAsset(id: string) {
+    setEnabledImageryAssetIds((current) => {
+      const next = new Set(current ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function showOnlyImageryAsset(id: string) {
+    setEnabledImageryAssetIds(new Set([id]));
+    setLayers((current) => ({ ...current, droneImagery: true }));
   }
 
   function showOnlySpatialAsset(id: string) {
@@ -523,7 +561,7 @@ export function MapPage() {
           selectedBlockId={selected?.id ?? null}
           onSelectBlock={selectMapBlock}
           onViewportChange={updateViewport}
-          imageryAssets={visibleImageryAssets}
+          imageryAssets={displayedImageryAssets}
           spatial3dAssets={displayedSpatial3dAssets}
           targetSpatialAssetId={focusedSpatialAssetId || undefined}
           spatial3dDisplaySettings={spatial3dDisplaySettings}
@@ -617,8 +655,29 @@ export function MapPage() {
             </label>
             <label>
               <input type="checkbox" checked={layers.droneImagery} onChange={() => toggleLayer("droneImagery")} />
-              <span><strong>无人机正射成果</strong><small>{imageryAssets.isFetching ? "正在读取当前视窗" : `${visibleImageryAssets.length} 个已发布成果`}</small></span>
+              <span><strong>无人机正射成果</strong><small>{imageryAssets.isFetching ? "正在读取当前视窗" : `${displayedImageryAssets.length}/${visibleImageryAssets.length} 个已显示`}</small></span>
             </label>
+            {layers.droneImagery && visibleImageryAssets.length > 0 && (
+              <div className="map-spatial-assets" aria-label="二维正射成果列表">
+                <small>默认只显示一项，减少大影像并发；需要时可手动叠加对比</small>
+                {visibleImageryAssets.map((asset) => (
+                  <div className="map-spatial-asset" key={asset.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={enabledImageryAssetIds?.has(asset.id) ?? false}
+                        onChange={() => toggleImageryAsset(asset.id)}
+                      />
+                      <span>
+                        <strong>{asset.name}</strong>
+                        <small>WebP 瓦片 · 最高 {asset.maximumZoom ?? 22} 级</small>
+                      </span>
+                    </label>
+                    <button type="button" onClick={() => showOnlyImageryAsset(asset.id)}>仅看此项</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <label>
               <input type="checkbox" checked={layers.spatial3d} disabled={mode !== "3d"} onChange={() => toggleLayer("spatial3d")} />
               <span><strong>三维点云与模型</strong><small>{mode !== "3d" ? "切换到三维地球后可用" : spatial3dAssetsQuery.isFetching ? "正在校验当前视窗" : `${displayedSpatial3dAssets.length}/${visibleSpatial3dAssets.length} 个已显示`}</small></span>
@@ -639,18 +698,20 @@ export function MapPage() {
                     <button type="button" onClick={() => showOnlySpatialAsset(asset.id)}>仅看此项</button>
                     {(enabledSpatialAssetIds?.has(asset.id) ?? false) && (
                       <div className="map-spatial-controls">
-                        <label>
-                          <span>透明度</span>
-                          <input
-                            type="range"
-                            min="0.1"
-                            max="1"
-                            step="0.1"
-                            value={spatial3dDisplaySettings[asset.id]?.opacity ?? 1}
-                            onChange={(event) => updateSpatialAssetDisplay(asset.id, { opacity: Number(event.target.value) })}
-                          />
-                        </label>
-                        {spatialAssetFormat(asset).startsWith("PNTS") && (
+                        {!isPointCloudAsset(asset) && (
+                          <label>
+                            <span>透明度</span>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="1"
+                              step="0.1"
+                              value={spatial3dDisplaySettings[asset.id]?.opacity ?? 1}
+                              onChange={(event) => updateSpatialAssetDisplay(asset.id, { opacity: Number(event.target.value) })}
+                            />
+                          </label>
+                        )}
+                        {isPointCloudAsset(asset) && (
                           <label>
                             <span>点大小</span>
                             <input

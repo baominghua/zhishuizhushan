@@ -84,11 +84,15 @@ function applySpatialTilesetStyle(
   assetType: string | undefined,
   settings: Spatial3dDisplaySettings,
 ) {
-  const style: { color: string; pointSize?: string } = {
+  if (assetType === "pointcloud") {
+    // Do not assign a constant color here. DJI PNTS tiles carry per-point RGB,
+    // and a white style discards the canopy colour that operators need to see.
+    tileset.style = new Cesium3DTileStyle({ pointSize: String(settings.pointSize) });
+    return;
+  }
+  tileset.style = new Cesium3DTileStyle({
     color: `color('white', ${settings.opacity})`,
-  };
-  if (assetType === "pointcloud") style.pointSize = String(settings.pointSize);
-  tileset.style = new Cesium3DTileStyle(style);
+  });
 }
 
 function retireSpatialTileset(viewer: Viewer, tileset: Cesium3DTileset) {
@@ -492,7 +496,7 @@ export function CesiumGlobe({
         : undefined;
       const layer = viewer.imageryLayers.addImageryProvider(new UrlTemplateImageryProvider({
         url: asset.tileUrl,
-        maximumLevel: 22,
+        maximumLevel: asset.maximumZoom ?? 22,
         tilingScheme: new WebMercatorTilingScheme(),
         rectangle,
         credit: new Credit(asset.name),
@@ -543,8 +547,8 @@ export function CesiumGlobe({
           const tileset = await Cesium3DTileset.fromUrl(asset.tilesetUrl, {
             // Start with a coarse useful frame and refine only where the user is
             // looking. Point clouds need a looser SSE than textured B3DM models.
-            maximumScreenSpaceError: asset.assetType === "pointcloud" ? 16 : 10,
-            cacheBytes: 256 * 1024 * 1024,
+            maximumScreenSpaceError: asset.assetType === "pointcloud" ? 10 : 6,
+            cacheBytes: 384 * 1024 * 1024,
             maximumCacheOverflowBytes: 128 * 1024 * 1024,
             foveatedScreenSpaceError: true,
             foveatedConeSize: 0.2,

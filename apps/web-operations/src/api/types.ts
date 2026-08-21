@@ -248,6 +248,9 @@ export interface ImageryAsset {
   tileUrl: string;
   tileJsonUrl: string;
   thumbnailUrl: string;
+  tileFormat?: "webp" | "png" | string;
+  metresPerPixel?: number;
+  maximumZoom?: number;
   coverageAnalysis?: SpatialCoverageAnalysis;
   footprint?: { type: string; coordinates: unknown };
   pointCount?: number;
