@@ -145,9 +145,12 @@ def test_mysql_schema_upgrade_inspects_existing_indexes_before_alter():
     ]
     assert "information_schema.columns" in cursor.calls[7]
     assert cursor.calls[8] == (
-        "ALTER TABLE import_batch_block_links ADD COLUMN target_json JSON NULL"
+        "ALTER TABLE mobile_evidence ADD COLUMN deleted_at DATETIME(6) NULL AFTER created_at"
     )
     assert cursor.calls[9] == (
+        "ALTER TABLE import_batch_block_links ADD COLUMN target_json JSON NULL"
+    )
+    assert cursor.calls[10] == (
         "ALTER TABLE import_batch_right_links ADD COLUMN target_json JSON NULL"
     )
 
