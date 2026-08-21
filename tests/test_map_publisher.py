@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -33,6 +35,9 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         batch_script = archive.read(
             "智慧竹山地图发布助手/scripts/publish-batch.ps1"
         ).decode("utf-8")
+        assistant_script = archive.read(
+            "智慧竹山地图发布助手/scripts/SmartBambooMapPublisher.ps1"
+        ).decode("utf-8")
         assert '$previousErrorActionPreference = $ErrorActionPreference' in material_script
         assert '$ErrorActionPreference = "Continue"' in material_script
         assert "$nativeExitCode = $LASTEXITCODE" in material_script
@@ -40,6 +45,16 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert '"test -f \'$requiredPath/tileset.json\';"' in material_script
         assert "Get-PublishErrorMessage" in batch_script
         assert "error = $errorMessage" in batch_script
+        assert 'x:Name="SelectAllButton"' in assistant_script
+        assert 'x:Name="ClearAllButton"' in assistant_script
+        assert 'Header="发布路径"' in assistant_script
+        assert 'x:Name="CopyRowPathButton"' in assistant_script
+        assert 'PlatformPath = ""' in assistant_script
+        assert "Set-Clipboard -Value $path" in assistant_script
+
+        xaml_match = re.search(r"\[xml\]\$xaml = @'\r?\n(.*?)\r?\n'@", assistant_script, re.DOTALL)
+        assert xaml_match is not None
+        ET.fromstring(xaml_match.group(1))
 
 
 @pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")

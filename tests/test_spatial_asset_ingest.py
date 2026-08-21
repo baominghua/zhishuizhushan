@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import importlib
 import struct
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from rasterio.transform import from_origin
 
 from server.modules.forest_blocks import bbox_intersects
 from server.modules.spatial_assets import (
+    convert_point_cloud_to_copc,
     convert_point_cloud_to_3dtiles,
     coverage_analysis,
     effective_raster_footprint,
@@ -183,6 +185,35 @@ def test_py3dtiles_conversion_leaves_destination_creation_to_converter(tmp_path,
         str(output),
         str(source),
     ]
+
+
+def test_copc_conversion_recenters_large_projected_coordinates(tmp_path, monkeypatch):
+    source = tmp_path / "cloud0.las"
+    write_las_14_with_wkt(
+        source,
+        bounds=(5038000.0, 3002800.0, 514.0, 5039764.81, 3003800.0, 757.0),
+    )
+    output = tmp_path / "result" / "dataset.copc.laz"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("server.modules.spatial_assets.shutil.which", lambda _value: "pdal")
+
+    def fake_converter(command, label):
+        captured["command"] = command
+        captured["label"] = label
+
+    monkeypatch.setattr("server.modules.spatial_assets._run_converter", fake_converter)
+
+    convert_point_cloud_to_copc([source], output)
+
+    pipeline_path = output.with_suffix(".pipeline.json")
+    document = json.loads(pipeline_path.read_text(encoding="utf-8"))
+    writer = document["pipeline"][-1]
+    assert captured["label"] == "PDAL COPC"
+    assert writer["forward"] == "vlr"
+    assert writer["scale_x"] == pytest.approx(0.001)
+    assert writer["offset_x"] == pytest.approx((5038000.0 + 5039764.81) / 2)
+    assert abs((5039764.81 - writer["offset_x"]) / writer["scale_x"]) < (2**31) - 1024
 
 
 def test_dji_tileset_inspection_reads_pnts_and_normalizes_legacy_asset_version(tmp_path):
@@ -358,9 +389,14 @@ def test_point_cloud_directory_registration_excludes_hidden_temp_tree(app_client
     assert source_paths[0].endswith("cloud0.las")
 
 
-def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client):
+def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkeypatch):
     import server.app as app_module
     import server.modules.forest_scene_links as scene_links_module
+
+    # Other storage-backend tests reload this module with temporary settings.
+    # Reload it here so the JSON-backed app client and direct setup helper share
+    # the same isolated data directory during a full-suite run.
+    importlib.reload(scene_links_module)
 
     block = app_client.post(
         "/api/forest-blocks",
@@ -379,6 +415,7 @@ def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client):
         "allowedUsers": [],
     }
     app_module.save_scene(scene)
+    monkeypatch.setattr(scene_links_module, "require_catalog_scene", lambda _scene_id: scene)
     scene_links_module.save_scene_links(
         [
             {

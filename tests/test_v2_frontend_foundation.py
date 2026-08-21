@@ -758,6 +758,11 @@ def test_v2_standalone_display_wall_uses_live_cockpit_and_gis_data():
     assert "buildMapAnnotations" in page
     assert "MAP_ANNOTATION_KINDS" in page
     assert "api.imageryAssets" in page
+    assert "layers={layers}" in page
+    assert "imageryAssets={displayedImageryAssets}" in page
+    assert "spatial3dAssets={displayedSpatial3dAssets}" in page
+    assert "地图图层" in page and "无人机正射成果" in page
+    assert "DisplayAnnotationDialog" in page
     assert "api.situationAssets" in page
     assert "DEMO_ASSETS" not in page
     annotations = (web_root / "src" / "maps" / "mapAnnotations.ts").read_text(
@@ -769,3 +774,15 @@ def test_v2_standalone_display_wall_uses_live_cockpit_and_gis_data():
     assert "实时视频播放窗口" in page
     assert "进入运营后台" in page
     assert "前端大屏" in shell
+
+
+def test_gis_annotation_selection_keeps_point_details_separate_from_forest_blocks():
+    page = (
+        ROOT_DIR / "apps" / "web-operations" / "src" / "pages" / "MapPage.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "selectedMapAnnotationId" in page
+    assert "onSelectSituationAsset={selectMapAnnotation}" in page
+    assert "<MapAnnotationCard" in page
+    assert "查看关联林班" in page
+    assert "setSelectedMapAnnotationId(null)" in page

@@ -17,7 +17,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api/client";
-import type { ForestBlockOption, ForestBlockQuery, ImageryAsset } from "../api/types";
+import type { ForestBlockOption, ForestBlockQuery, ImageryAsset, SituationAssetRecord } from "../api/types";
 import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import { MapCanvas } from "../components/MapCanvas";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
@@ -44,6 +44,7 @@ import {
   filterMapAnnotations,
   MAP_ANNOTATION_KINDS,
   MAP_ANNOTATION_LABELS,
+  type MapAnnotation,
   type MapAnnotationKind,
 } from "../maps/mapAnnotations";
 
@@ -104,6 +105,7 @@ export function MapPage() {
   const [appliedFilters, setAppliedFilters] = useState<MapFilterValues>(EMPTY_MAP_FILTERS);
   const [activeTown, setActiveTown] = useState<string | null>("黄坑镇");
   const [selected, setSelected] = useState<ForestBlockOption | null>(null);
+  const [selectedMapAnnotationId, setSelectedMapAnnotationId] = useState<string | null>(null);
   const [detailPosition, setDetailPosition] = useState<{ x: number; y: number } | null>(null);
   const [detailMaximized, setDetailMaximized] = useState(false);
   const mapStageRef = useRef<HTMLDivElement>(null);
@@ -249,6 +251,21 @@ export function MapPage() {
     () => selected ? allMapAnnotations.filter((annotation) => annotation.blockCode === selected.code) : [],
     [allMapAnnotations, selected],
   );
+  const selectedMapAnnotation = useMemo(
+    () => allMapAnnotations.find((annotation) => annotation.id === selectedMapAnnotationId) ?? null,
+    [allMapAnnotations, selectedMapAnnotationId],
+  );
+  const selectedSituationRecord = useMemo(
+    () => selectedMapAnnotation?.sourceType === "situation"
+      ? situationLedger.data?.items.find((item) => item.id === selectedMapAnnotation.sourceId) ?? null
+      : null,
+    [selectedMapAnnotation, situationLedger.data?.items],
+  );
+  const selectedAnnotationAssets = useMemo(() => {
+    if (selectedMapAnnotation?.sourceType !== "imagery") return [];
+    const ids = new Set(selectedMapAnnotation.sourceIds ?? (selectedMapAnnotation.sourceId ? [selectedMapAnnotation.sourceId] : []));
+    return (annotationAssets.data?.scenes ?? []).filter((asset) => ids.has(asset.id));
+  }, [annotationAssets.data?.scenes, selectedMapAnnotation]);
   const selectedViewerLinks = useMemo(() => {
     const seen = new Set<string>();
     return selectedAnnotations.flatMap((annotation) => {
@@ -431,6 +448,7 @@ export function MapPage() {
   }, []);
 
   const selectMapBlock = useCallback(async (id: string) => {
+    setSelectedMapAnnotationId(null);
     const feature = mapFeatures.features.find((candidate) => candidate.id === id);
     if (feature) {
       setSelected(featureToOption(feature));
@@ -442,6 +460,13 @@ export function MapPage() {
       // A tile may have gone stale between selection and detail loading.
     }
   }, [mapFeatures.features]);
+
+  function selectMapAnnotation(id: string) {
+    setSelectedMapAnnotationId(id);
+    setSelected(null);
+    setResultsOpen(false);
+    setFiltersOpen(false);
+  }
 
   function startDetailDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (detailMaximized || !mapStageRef.current || !detailRef.current) return;
@@ -634,10 +659,7 @@ export function MapPage() {
           spatial3dDisplaySettings={spatial3dDisplaySettings}
           forestBlockFilterQuery={appliedFilterQuery}
           situationAssets={visibleMapAnnotations}
-          onSelectSituationAsset={(id) => {
-            const annotation = allMapAnnotations.find((item) => item.id === id);
-            if (annotation?.blockId) void selectMapBlock(annotation.blockId);
-          }}
+          onSelectSituationAsset={selectMapAnnotation}
           detailMode={detailMode}
         />
         {mode === "2d" && (
@@ -833,6 +855,17 @@ export function MapPage() {
             {mapBlocks.error && <p className="map-layer-error">林班边界读取失败，请稍后重试</p>}
           </aside>
         )}
+        {selectedMapAnnotation && (
+          <MapAnnotationCard
+            annotation={selectedMapAnnotation}
+            situation={selectedSituationRecord}
+            imageryAssets={selectedAnnotationAssets}
+            onClose={() => setSelectedMapAnnotationId(null)}
+            onOpenBlock={selectedMapAnnotation.blockId
+              ? () => void selectMapBlock(selectedMapAnnotation.blockId!)
+              : undefined}
+          />
+        )}
         {selected && (
           <aside
             className={`map-object ${detailPosition ? "positioned" : "centered"} ${detailMaximized ? "maximized" : ""}`}
@@ -913,6 +946,41 @@ export function MapPage() {
       </div>
     </div>
   );
+}
+
+function MapAnnotationCard({
+  annotation,
+  situation,
+  imageryAssets,
+  onClose,
+  onOpenBlock,
+}: {
+  annotation: MapAnnotation;
+  situation: SituationAssetRecord | null;
+  imageryAssets: ImageryAsset[];
+  onClose: () => void;
+  onOpenBlock?: () => void;
+}) {
+  return <aside className="map-annotation-card" aria-label="空间点位详情">
+    <header>
+      <div><small>{MAP_ANNOTATION_LABELS[annotation.kind]}</small><strong>{annotation.label}</strong></div>
+      <button className="icon-button" type="button" onClick={onClose} aria-label="关闭点位详情"><X /></button>
+    </header>
+    {annotation.subtitle && <p>{annotation.subtitle}</p>}
+    <dl>
+      {annotation.blockCode && <div><dt>关联林班</dt><dd>{annotation.blockCode}</dd></div>}
+      <div><dt>空间位置</dt><dd>{annotation.longitude.toFixed(6)}, {annotation.latitude.toFixed(6)}</dd></div>
+      {situation && <><div><dt>运行状态</dt><dd>{situation.status}</dd></div>{situation.parameters.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</>}
+    </dl>
+    {imageryAssets.length > 0 && <div className="map-annotation-viewers">
+      <strong>影像成果</strong>
+      {imageryAssets.map((asset) => <a key={asset.id} href={`/v2/asset-viewer?sceneId=${encodeURIComponent(asset.id)}&mode=${asset.assetType === "orthophoto" ? "2d" : "3d"}`} target="_blank" rel="noreferrer"><ExternalLink />{asset.name}</a>)}
+    </div>}
+    <footer>
+      {situation && <a className="button secondary" href={situation.managementPath}>打开后台台账</a>}
+      {onOpenBlock && <button className="button secondary" type="button" onClick={onOpenBlock}>查看关联林班</button>}
+    </footer>
+  </aside>;
 }
 
 function geometryBounds(geometry: Record<string, unknown> | null): MapViewport["bbox"] | null {

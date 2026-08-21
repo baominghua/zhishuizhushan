@@ -205,6 +205,8 @@ def read_las_header(path: Path) -> dict[str, Any]:
             if version == "1.4" and len(header) >= 255
             else 0
         )
+        scale_x, scale_y, scale_z = struct.unpack_from("<ddd", header, 131)
+        offset_x, offset_y, offset_z = struct.unpack_from("<ddd", header, 155)
         max_x, min_x, max_y, min_y, max_z, min_z = struct.unpack_from("<dddddd", header, 179)
         wkt = ""
         source.seek(header_size)
@@ -231,6 +233,8 @@ def read_las_header(path: Path) -> dict[str, Any]:
         "version": version,
         "pointFormat": point_format,
         "pointCount": int(extended_point_count or legacy_point_count),
+        "scale": [float(scale_x), float(scale_y), float(scale_z)],
+        "offset": [float(offset_x), float(offset_y), float(offset_z)],
         "nativeBounds": [float(min_x), float(min_y), float(min_z), float(max_x), float(max_y), float(max_z)],
         "crs": crs,
         "crsWkt": wkt,
@@ -594,12 +598,33 @@ def convert_point_cloud_to_copc(
     if len(readers) > 1:
         pipeline.append({"type": "filters.merge", "tag": "merged", "inputs": writer_inputs})
         writer_inputs = ["merged"]
+    headers = [read_las_header(path) for path in source_paths]
+    axis_options: dict[str, float] = {}
+    axis_names = ("x", "y", "z")
+    # LAS stores coordinates as signed int32 values plus scale/offset. DJI data
+    # commonly uses large projected northings/eastings with a millimetre scale;
+    # forwarding a zero offset can therefore overflow int32 during COPC output.
+    # Recenter each axis while preserving the finest source precision that fits.
+    max_encoded_coordinate = float((2**31) - 1024)
+    for index, axis in enumerate(axis_names):
+        minimum = min(float(header["nativeBounds"][index]) for header in headers)
+        maximum = max(float(header["nativeBounds"][index + 3]) for header in headers)
+        source_scales = [
+            abs(float(header["scale"][index]))
+            for header in headers
+            if abs(float(header["scale"][index])) > 0
+        ]
+        source_scale = min(source_scales) if source_scales else 0.001
+        required_scale = ((maximum - minimum) / 2) / max_encoded_coordinate
+        axis_options[f"scale_{axis}"] = max(source_scale, required_scale, 1e-9)
+        axis_options[f"offset_{axis}"] = minimum + ((maximum - minimum) / 2)
     pipeline.append(
         {
             "type": "writers.copc",
             "filename": str(output_path),
             "inputs": writer_inputs,
-            "forward": "all",
+            "forward": "vlr",
+            **axis_options,
         }
     )
     pipeline_path = output_path.with_suffix(".pipeline.json")

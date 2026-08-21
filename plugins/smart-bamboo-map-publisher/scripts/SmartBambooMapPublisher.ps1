@@ -56,6 +56,9 @@ function New-MapItem([bool]$Selected, [string]$Kind, [string]$TypeLabel, [System
         SourcePath = $Source.FullName
         SizeText = if ($SizeBytes -ge 1GB) { "{0:N2} GB" -f ($SizeBytes / 1GB) } elseif ($SizeBytes -ge 1MB) { "{0:N1} MB" -f ($SizeBytes / 1MB) } else { "{0:N0} KB" -f ($SizeBytes / 1KB) }
         Status = "待发布"
+        PlatformPath = ""
+        HasPublishedPath = $false
+        PublishPathAction = "未发布"
     }
 }
 
@@ -161,14 +164,18 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
       <TextBlock Text="素材文件夹" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="SourceRootBox" Grid.Column="1"/><Button x:Name="BrowseRootButton" Grid.Column="2" Content="选择文件夹" Margin="8,0"/><Button x:Name="ScanButton" Grid.Column="3" Content="自动检索并分类" HorizontalAlignment="Left"/><Button x:Name="ManualFileButton" Grid.Column="4" Content="手动添加文件"/><Button x:Name="ManualFolderButton" Grid.Column="5" Content="添加文件夹" Margin="0"/>
       <TextBlock Grid.Row="1" Text="发布地址" VerticalAlignment="Center" Margin="0,10,8,0"/><StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,10,0,0"><TextBox x:Name="HostBox" Width="145"/><TextBox x:Name="UserBox" Width="80" Margin="8,0,0,0"/><TextBox x:Name="PortBox" Width="65" Margin="8,0,0,0"/><TextBox x:Name="KeyBox" Width="290" Margin="8,0,0,0"/><TextBox x:Name="RemoteBox" Width="310" Margin="8,0,0,0"/></StackPanel>
     </Grid></Border>
-    <Border Grid.Row="2" Background="White" BorderBrush="#D3E0DA" BorderThickness="1" CornerRadius="8" Padding="8"><DataGrid x:Name="MaterialGrid" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" SelectionMode="Extended" GridLinesVisibility="Horizontal" HeadersVisibility="Column"><DataGrid.Columns>
-      <DataGridCheckBoxColumn Header="发布" Binding="{Binding IsSelected, Mode=TwoWay}" Width="55"/>
-      <DataGridTextColumn Header="项目名" Binding="{Binding ProjectName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="150"/>
-      <DataGridTextColumn Header="分类" Binding="{Binding TypeLabel}" IsReadOnly="True" Width="170"/>
-      <DataGridTextColumn Header="本地路径" Binding="{Binding SourcePath}" IsReadOnly="True" Width="*"/>
-      <DataGridTextColumn Header="大小" Binding="{Binding SizeText}" IsReadOnly="True" Width="90"/>
-      <DataGridTextColumn Header="状态" Binding="{Binding Status}" IsReadOnly="True" Width="100"/>
-    </DataGrid.Columns></DataGrid></Border>
+    <Border Grid.Row="2" Background="White" BorderBrush="#D3E0DA" BorderThickness="1" CornerRadius="8" Padding="8"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <DockPanel Grid.Row="0" Margin="0,0,0,7"><StackPanel Orientation="Horizontal"><Button x:Name="SelectAllButton" Content="全选" Padding="12,5"/><Button x:Name="ClearAllButton" Content="取消全选" Padding="12,5"/></StackPanel><TextBlock Text="默认全选，可按需批量切换；发布成功后可在最右侧查看并复制路径。" Foreground="#62776F" VerticalAlignment="Center" DockPanel.Dock="Right"/></DockPanel>
+      <DataGrid x:Name="MaterialGrid" Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" SelectionMode="Extended" GridLinesVisibility="Horizontal" HeadersVisibility="Column"><DataGrid.Columns>
+        <DataGridCheckBoxColumn Header="发布" Binding="{Binding IsSelected, Mode=TwoWay}" Width="55"/>
+        <DataGridTextColumn Header="项目名" Binding="{Binding ProjectName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="150"/>
+        <DataGridTextColumn Header="分类" Binding="{Binding TypeLabel}" IsReadOnly="True" Width="170"/>
+        <DataGridTextColumn Header="本地路径" Binding="{Binding SourcePath}" IsReadOnly="True" Width="*"/>
+        <DataGridTextColumn Header="大小" Binding="{Binding SizeText}" IsReadOnly="True" Width="90"/>
+        <DataGridTextColumn Header="状态" Binding="{Binding Status}" IsReadOnly="True" Width="90"/>
+        <DataGridTemplateColumn Header="发布路径" Width="115"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button x:Name="CopyRowPathButton" Content="{Binding PublishPathAction}" Tag="{Binding PlatformPath}" IsEnabled="{Binding HasPublishedPath}" Padding="8,2" Margin="3,1"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+      </DataGrid.Columns></DataGrid>
+    </Grid></Border>
     <Border Grid.Row="3" Background="#102F27" CornerRadius="8" Padding="12" Margin="0,12,0,12"><TextBox x:Name="LogBox" Background="Transparent" BorderThickness="0" Foreground="#D8EFE5" FontFamily="Consolas" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/></Border>
     <DockPanel Grid.Row="4"><TextBlock x:Name="StatusText" Text="请选择素材文件夹并检索。" Foreground="#62776F" VerticalAlignment="Center"/><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="CopyButton" Content="复制发布路径"/><Button x:Name="OpenPlatformButton" Content="打开影像管理"/><Button x:Name="PublishButton" Content="发布已勾选项" Background="#0F7658" Foreground="White" FontWeight="Bold" Margin="0"/></StackPanel></DockPanel>
   </Grid>
@@ -176,7 +183,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 '@
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
-$names = @("HelpButton","SourceRootBox","BrowseRootButton","ScanButton","ManualFileButton","ManualFolderButton","HostBox","UserBox","PortBox","KeyBox","RemoteBox","MaterialGrid","LogBox","StatusText","CopyButton","OpenPlatformButton","PublishButton")
+$names = @("HelpButton","SourceRootBox","BrowseRootButton","ScanButton","ManualFileButton","ManualFolderButton","HostBox","UserBox","PortBox","KeyBox","RemoteBox","SelectAllButton","ClearAllButton","MaterialGrid","LogBox","StatusText","CopyButton","OpenPlatformButton","PublishButton")
 $ui = @{}; foreach ($name in $names) { $ui[$name] = $window.FindName($name) }
 $config = Read-PublisherConfig
 $ui.SourceRootBox.Text = [string]$config.lastSourceRoot; $ui.HostBox.Text = [string]$config.serverHost; $ui.UserBox.Text = [string]$config.sshUser; $ui.PortBox.Text = [string]$config.sshPort; $ui.KeyBox.Text = [string]$config.sshKeyPath; $ui.RemoteBox.Text = [string]$config.remoteInbox
@@ -197,17 +204,40 @@ $ui.ManualFolderButton.Add_Click({ $path = Select-Folder $ui.SourceRootBox.Text;
 $ui.HelpButton.Add_Click({ $help = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\assets\发布说明.md") -Raw -Encoding UTF8; [System.Windows.MessageBox]::Show($window, $help, "发布说明", "OK", "Information") | Out-Null })
 $ui.OpenPlatformButton.Add_Click({ Start-Process "$($config.platformBaseUrl)/v2/drone/imagery-assets" })
 $ui.CopyButton.Add_Click({ if ($script:lastResults.Count) { Set-Clipboard -Value (($script:lastResults | ForEach-Object { $_.platformPath }) -join [Environment]::NewLine); $ui.StatusText.Text = "发布路径已复制。" } })
+$ui.SelectAllButton.Add_Click({ foreach ($item in $collection) { $item.IsSelected = $true }; $ui.MaterialGrid.Items.Refresh(); $ui.StatusText.Text = "已全选 $($collection.Count) 个成果。" })
+$ui.ClearAllButton.Add_Click({ foreach ($item in $collection) { $item.IsSelected = $false }; $ui.MaterialGrid.Items.Refresh(); $ui.StatusText.Text = "已取消全部勾选。" })
+$ui.MaterialGrid.AddHandler([System.Windows.Controls.Button]::ClickEvent, [System.Windows.RoutedEventHandler]{
+    param($sender, $eventArgs)
+    $button = if ($eventArgs.OriginalSource -is [System.Windows.Controls.Button]) { $eventArgs.OriginalSource } else { $eventArgs.Source }
+    if ($button -is [System.Windows.Controls.Button] -and $button.Name -eq "CopyRowPathButton") {
+        $path = [string]$button.Tag
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+            Set-Clipboard -Value $path
+            $ui.StatusText.Text = "已复制发布路径：$path"
+            [System.Windows.MessageBox]::Show($window, "发布路径：`r`n$path`r`n`r`n已复制到剪贴板。", "发布路径", "OK", "Information") | Out-Null
+            $eventArgs.Handled = $true
+        }
+    }
+})
 
 $timer = New-Object Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
     if ($script:logPath -and (Test-Path -LiteralPath $script:logPath)) { $ui.LogBox.Text = Get-Content -LiteralPath $script:logPath -Raw -Encoding UTF8; $ui.LogBox.ScrollToEnd() }
     if ($script:process -and $script:process.HasExited) {
-        $timer.Stop(); $ui.PublishButton.IsEnabled = $true; $ui.ScanButton.IsEnabled = $true
+        $timer.Stop(); $ui.PublishButton.IsEnabled = $true; $ui.ScanButton.IsEnabled = $true; $ui.SelectAllButton.IsEnabled = $true; $ui.ClearAllButton.IsEnabled = $true
         if (Test-Path -LiteralPath $script:resultPath) {
             $result = Get-Content -LiteralPath $script:resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $script:lastResults = @($result.items)
-            foreach ($item in $collection) { $match = $script:lastResults | Where-Object { $_.source -eq $item.SourcePath } | Select-Object -First 1; if ($match) { $item.Status = "已发布" } }
+            foreach ($item in $collection) {
+                $match = $script:lastResults | Where-Object { $_.source -eq $item.SourcePath } | Select-Object -First 1
+                if ($match) {
+                    $item.Status = "已发布"
+                    $item.PlatformPath = [string]$match.platformPath
+                    $item.HasPublishedPath = -not [string]::IsNullOrWhiteSpace($item.PlatformPath)
+                    $item.PublishPathAction = if ($item.HasPublishedPath) { "查看并复制" } else { "未返回路径" }
+                }
+            }
             $ui.MaterialGrid.Items.Refresh()
             if ($result.success) { $ui.StatusText.Text = "发布完成，共 $($script:lastResults.Count) 项；可复制下方输出路径。"; $ui.LogBox.AppendText("`r`n`r`n发布路径：`r`n" + (($script:lastResults | ForEach-Object { $_.platformPath }) -join "`r`n")) } else { $ui.StatusText.Text = "发布中止：$($result.error)" }
         } else { $ui.StatusText.Text = "发布进程异常结束，请查看日志。" }
@@ -229,7 +259,7 @@ $ui.PublishButton.Add_Click({
         "发布任务已创建，共 $($selected.Count) 项。" | Set-Content -LiteralPath $script:logPath -Encoding UTF8
         $batch = Join-Path $PSScriptRoot "publish-batch.ps1"
         $script:process = Start-Process powershell.exe -ArgumentList @("-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File",$batch,"-ManifestPath",$manifestPath,"-ResultPath",$script:resultPath,"-LogPath",$script:logPath) -WindowStyle Hidden -PassThru
-        $ui.PublishButton.IsEnabled = $false; $ui.ScanButton.IsEnabled = $false; $ui.StatusText.Text = "正在发布，请勿关闭助手……"; $timer.Start()
+        $ui.PublishButton.IsEnabled = $false; $ui.ScanButton.IsEnabled = $false; $ui.SelectAllButton.IsEnabled = $false; $ui.ClearAllButton.IsEnabled = $false; $ui.StatusText.Text = "正在发布，请勿关闭助手……"; $timer.Start()
     } catch { Show-Error $_.Exception.Message }
 })
 

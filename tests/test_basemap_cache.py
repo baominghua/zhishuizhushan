@@ -82,6 +82,11 @@ def test_tianditu_tiles_can_reuse_a_central_cache_without_distributing_the_key(
         "TIANDITU_UPSTREAM_PROXY_BASE_URL",
         "https://tiles.example.test",
     )
+    monkeypatch.setattr(
+        app_module,
+        "runtime_basemap_settings",
+        lambda: {"serverKey": "", "proxyBaseUrl": "https://tiles.example.test", "referer": ""},
+    )
     fetched = []
 
     def fake_proxy_fetch(layer, z, x, y):
@@ -119,6 +124,11 @@ def test_tianditu_tiles_still_render_when_the_local_cache_is_read_only(
     )
     monkeypatch.setattr(
         app_module,
+        "runtime_basemap_settings",
+        lambda: {"serverKey": "", "proxyBaseUrl": "https://tiles.example.test", "referer": ""},
+    )
+    monkeypatch.setattr(
+        app_module,
         "fetch_tianditu_proxy_tile",
         lambda *_args: b"\x89PNG\r\n\x1a\nrelayed",
     )
@@ -140,6 +150,11 @@ def test_tianditu_prewarm_task_populates_missing_tiles_and_reports_cache_hits(
     cache_dir = tmp_path / "tianditu-prewarm"
     monkeypatch.setattr(app_module, "TIANDITU_CACHE_DIR", cache_dir)
     monkeypatch.setattr(app_module, "TIANDITU_TK", "test-token")
+    monkeypatch.setattr(
+        app_module,
+        "runtime_basemap_settings",
+        lambda: {"serverKey": "test-token", "proxyBaseUrl": "", "referer": ""},
+    )
 
     class ImmediateExecutor:
         def submit(self, *_args, **_kwargs):
@@ -190,6 +205,11 @@ def test_tianditu_prewarm_rejects_excessive_tile_requests(app_client, monkeypatc
 
     monkeypatch.setattr(app_module, "TIANDITU_TK", "test-token")
     monkeypatch.setattr(app_module, "TIANDITU_PREWARM_MAX_TILES", 1)
+    monkeypatch.setattr(
+        app_module,
+        "runtime_basemap_settings",
+        lambda: {"serverKey": "test-token", "proxyBaseUrl": "", "referer": ""},
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         app_module.create_tianditu_prewarm_task(
