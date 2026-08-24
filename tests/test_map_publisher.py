@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import shutil
@@ -43,6 +44,9 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert "$nativeExitCode = $LASTEXITCODE" in material_script
         assert "New-RemoteActivationScript" in material_script
         assert '"test -f \'$requiredPath/tileset.json\';"' in material_script
+        assert "Get-ArchiveCacheRoot" in material_script
+        assert '".smart-bamboo-publish-cache"' in material_script
+        assert "Assert-ArchiveCacheSpace" in material_script
         assert "Get-PublishErrorMessage" in batch_script
         assert "error = $errorMessage" in batch_script
         assert 'x:Name="SelectAllButton"' in assistant_script
@@ -51,10 +55,122 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert 'x:Name="CopyRowPathButton"' in assistant_script
         assert 'PlatformPath = ""' in assistant_script
         assert "Set-Clipboard -Value $path" in assistant_script
+        assert "Read-PublisherHistory" in assistant_script
+        assert 'Join-Path $StateRoot "history.json"' in assistant_script
+        assert 'Header="发布时间"' in assistant_script
+        assert "PublishedAtText" in assistant_script
 
         xaml_match = re.search(r"\[xml\]\$xaml = @'\r?\n(.*?)\r?\n'@", assistant_script, re.DOTALL)
         assert xaml_match is not None
         ET.fromstring(xaml_match.group(1))
+
+
+@pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")
+def test_publisher_migrates_runtime_results_and_persists_history(tmp_path: Path):
+    runtime = tmp_path / "Runtime"
+    runtime.mkdir()
+    first_result = runtime / "first.result.json"
+    second_result = runtime / "second.result.json"
+    first_result.write_text(
+        json.dumps(
+            {
+                "success": True,
+                "items": [
+                    {
+                        "source": r"D:\maps\block-a\tiles",
+                        "kind": "tiles-b3dm",
+                        "projectName": "block-a",
+                        "platformPath": "/app/inbox/block-a/tiles-old",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    second_result.write_text(
+        json.dumps(
+            {
+                "success": True,
+                "items": [
+                    {
+                        "source": r"D:\maps\block-a\tiles",
+                        "kind": "tiles-b3dm",
+                        "projectName": "block-a",
+                        "platformPath": "/app/inbox/block-a/tiles",
+                    },
+                    {
+                        "source": r"D:\maps\block-b\orthophoto.tif",
+                        "kind": "orthophoto",
+                        "projectName": "block-b",
+                        "platformPath": "/app/inbox/block-b/geotiff/orthophoto.tif",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.utime(first_result, (1_700_000_000, 1_700_000_000))
+    os.utime(second_result, (1_700_000_100, 1_700_000_100))
+
+    env = os.environ.copy()
+    env["MAP_PUBLISHER_ASSISTANT_SCRIPT"] = str(
+        ROOT / "plugins" / "smart-bamboo-map-publisher" / "scripts" / "SmartBambooMapPublisher.ps1"
+    )
+    env["MAP_PUBLISHER_TEST_STATE"] = str(tmp_path)
+    command = (
+        '[Console]::OutputEncoding = [Text.Encoding]::UTF8; '
+        '& $env:MAP_PUBLISHER_ASSISTANT_SCRIPT -HistoryOnly '
+        '-HistoryStateRoot $env:MAP_PUBLISHER_TEST_STATE'
+    )
+    result = subprocess.run(
+        [
+            WINDOWS_POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8-sig"))
+    assert len(history) == 2
+    by_source = {item["SourcePath"]: item for item in history}
+    assert by_source[r"D:\maps\block-a\tiles"]["PlatformPath"] == "/app/inbox/block-a/tiles"
+    assert by_source[r"D:\maps\block-b\orthophoto.tif"]["TypeLabel"] == "GeoTIFF 正射影像"
+    assert all(item["PublishedAt"] for item in history)
+
+    ui_result = subprocess.run(
+        [
+            WINDOWS_POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-STA",
+            "-File",
+            env["MAP_PUBLISHER_ASSISTANT_SCRIPT"],
+            "-ValidateUi",
+            "-HistoryStateRoot",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert ui_result.returncode == 0, ui_result.stdout + ui_result.stderr
+    assert "SMART_BAMBOO_MAP_PUBLISHER_UI_READY history=2 rows=2" in ui_result.stdout
 
 
 @pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")
@@ -91,6 +207,116 @@ Invoke-Expression $functionAst.Extent.Text
 $output = @(Invoke-Native $env:MAP_PUBLISHER_NATIVE_PROBE @() "probe failed" 2>&1 | ForEach-Object { $_.ToString() })
 if ($output -notcontains "NATIVE_PROBE_OK") { throw "Native command output was not preserved." }
 if ($output -contains "System.Management.Automation.RemoteException") { throw "Empty native stderr wrapper leaked into the log." }
+'''
+    result = subprocess.run(
+        [WINDOWS_POWERSHELL, "-NoLogo", "-NoProfile", "-Command", harness],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")
+def test_failed_archive_creation_removes_partial_same_drive_cache(tmp_path: Path):
+    project = tmp_path / "block-a"
+    dataset = project / "terra_b3dms"
+    dataset.mkdir(parents=True)
+    (dataset / "tileset.json").write_text("{}", encoding="utf-8")
+    (dataset / "tile.b3dm").write_bytes(b"tile")
+    key_path = tmp_path / "test-key"
+    key_path.write_text("test", encoding="ascii")
+    archive_cache = project / ".smart-bamboo-publish-cache"
+    archive_cache.mkdir()
+    (archive_cache / "abandoned.tar").write_bytes(b"abandoned")
+    (archive_cache / "abandoned.tar.lock").write_text("2147483647", encoding="ascii")
+
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    marker = tmp_path / "fake-tar-invoked.txt"
+    (tools_dir / "tar.cmd").write_text(
+        "@echo off\r\n"
+        "echo invoked>\"%MAP_PUBLISHER_FAKE_TAR_MARKER%\"\r\n"
+        "> \"%~2\" echo partial-cache\r\n"
+        "echo simulated tar write error 1^>^&2\r\n"
+        "exit /b 1\r\n",
+        encoding="ascii",
+    )
+    env = os.environ.copy()
+    env["PATH"] = str(tools_dir) + os.pathsep + env["PATH"]
+    env["MAP_PUBLISHER_FAKE_TAR_MARKER"] = str(marker)
+    script = ROOT / "plugins" / "smart-bamboo-map-publisher" / "scripts" / "publish-material.ps1"
+    result = subprocess.run(
+        [
+            WINDOWS_POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-SourcePath",
+            str(dataset),
+            "-Kind",
+            "tiles-b3dm",
+            "-ProjectName",
+            "block-a",
+            "-ServerHost",
+            "127.0.0.1",
+            "-SshKeyPath",
+            str(key_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert marker.exists(), result.stdout + result.stderr
+    assert archive_cache.is_dir()
+    assert list(archive_cache.glob("*.tar")) == []
+    assert list(archive_cache.glob("*.tar.lock")) == []
+
+
+@pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")
+def test_archive_cache_space_preflight_rejects_oversized_content(tmp_path: Path):
+    env = os.environ.copy()
+    env["MAP_PUBLISHER_MATERIAL_SCRIPT"] = str(
+        ROOT / "plugins" / "smart-bamboo-map-publisher" / "scripts" / "publish-material.ps1"
+    )
+    env["MAP_PUBLISHER_TEST_CACHE"] = str(tmp_path)
+    harness = r'''
+$ErrorActionPreference = "Stop"
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:MAP_PUBLISHER_MATERIAL_SCRIPT,
+    [ref]$tokens,
+    [ref]$parseErrors
+)
+if ($parseErrors.Count) { throw ($parseErrors | ForEach-Object Message | Out-String) }
+foreach ($name in @("Format-StorageSize", "Assert-ArchiveCacheSpace")) {
+    $functionAst = $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    if (-not $functionAst) { throw "$name was not found." }
+    Invoke-Expression $functionAst.Extent.Text
+}
+$driveRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($env:MAP_PUBLISHER_TEST_CACHE))
+$available = [IO.DriveInfo]::new($driveRoot).AvailableFreeSpace
+$rejected = $false
+try {
+    Assert-ArchiveCacheSpace $env:MAP_PUBLISHER_TEST_CACHE ($available + 1GB)
+} catch {
+    $rejected = $true
+}
+if (-not $rejected) { throw "Space preflight unexpectedly succeeded." }
 '''
     result = subprocess.run(
         [WINDOWS_POWERSHELL, "-NoLogo", "-NoProfile", "-Command", harness],

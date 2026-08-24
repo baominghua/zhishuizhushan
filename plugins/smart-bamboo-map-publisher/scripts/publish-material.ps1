@@ -68,6 +68,51 @@ function Assert-RemoteRoot([string]$Value, [string]$Label) {
     if ($Value -notmatch '^/[A-Za-z0-9._/-]+$' -or $Value.Contains('..')) { throw "$Label 不是安全的 Linux 绝对路径。" }
 }
 
+function Format-StorageSize([long]$Bytes) {
+    if ($Bytes -ge 1GB) { return "{0:N2} GB" -f ($Bytes / 1GB) }
+    if ($Bytes -ge 1MB) { return "{0:N1} MB" -f ($Bytes / 1MB) }
+    return "{0:N0} KB" -f ($Bytes / 1KB)
+}
+
+function Get-DirectoryContentSize([System.IO.DirectoryInfo]$Directory) {
+    $sum = (Get-ChildItem -LiteralPath $Directory.FullName -Recurse -File -ErrorAction Stop | Measure-Object -Property Length -Sum).Sum
+    if ($null -eq $sum) { return [long]0 }
+    return [long]$sum
+}
+
+function Get-ArchiveCacheRoot([System.IO.DirectoryInfo]$SourceDirectory) {
+    if (-not $SourceDirectory.Parent) { throw "成果目录不能直接选择磁盘根目录。" }
+    $cacheRoot = Join-Path $SourceDirectory.Parent.FullName ".smart-bamboo-publish-cache"
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    return [IO.Path]::GetFullPath($cacheRoot)
+}
+
+function Assert-ArchiveCacheSpace([string]$CacheRoot, [long]$ContentBytes) {
+    $driveRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($CacheRoot))
+    if ([string]::IsNullOrWhiteSpace($driveRoot)) { throw "无法识别缓存目录所在磁盘：$CacheRoot" }
+    try { $drive = [IO.DriveInfo]::new($driveRoot) } catch { throw "无法读取缓存磁盘空间：$driveRoot" }
+    $reserveBytes = [long][Math]::Max([double](1GB), [Math]::Ceiling($ContentBytes * 0.05))
+    if ($ContentBytes -gt ([long]::MaxValue - $reserveBytes)) { throw "成果过大，无法计算缓存空间需求。" }
+    $requiredBytes = $ContentBytes + $reserveBytes
+    if ($drive.AvailableFreeSpace -lt $requiredBytes) {
+        throw "缓存磁盘 $driveRoot 空间不足：成果约 $(Format-StorageSize $ContentBytes)，至少需要 $(Format-StorageSize $requiredBytes)，当前可用 $(Format-StorageSize $drive.AvailableFreeSpace)。请释放空间或把素材移到空间充足的磁盘。"
+    }
+    Write-Host "本地缓存磁盘：$driveRoot（可用 $(Format-StorageSize $drive.AvailableFreeSpace)，预计需要 $(Format-StorageSize $requiredBytes)）"
+}
+
+function Remove-AbandonedArchiveCache([string]$CacheRoot) {
+    foreach ($lockFile in @(Get-ChildItem -LiteralPath $CacheRoot -File -Filter "*.tar.lock" -ErrorAction SilentlyContinue)) {
+        $ownerPid = 0
+        $pidText = try { (Get-Content -LiteralPath $lockFile.FullName -Raw -ErrorAction Stop).Trim() } catch { "" }
+        $hasOwner = [int]::TryParse($pidText, [ref]$ownerPid) -and $ownerPid -gt 0 -and [bool](Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+        if ($hasOwner) { continue }
+        $archivePath = $lockFile.FullName.Substring(0, $lockFile.FullName.Length - ".lock".Length)
+        if (Test-Path -LiteralPath $archivePath -PathType Leaf) { Remove-Item -LiteralPath $archivePath -Force }
+        Remove-Item -LiteralPath $lockFile.FullName -Force
+        Write-Host "已清理上次异常中断留下的缓存：$archivePath"
+    }
+}
+
 Assert-SafeName $ProjectName "项目名"
 Assert-RemoteRoot $RemoteInbox "服务器素材根目录"
 Assert-RemoteRoot $PlatformInbox "平台路径根目录"
@@ -79,8 +124,8 @@ $ssh = Require-Command "ssh"
 $target = "$SshUser@$ServerHost"
 $sshCommon = @("-i", $keyPath, "-p", "$SshPort", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new")
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$cacheRoot = Join-Path $env:LOCALAPPDATA "SmartBamboo\MapPublisher\Cache"
-New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+$stateCacheRoot = Join-Path $env:LOCALAPPDATA "SmartBamboo\MapPublisher\Cache"
+New-Item -ItemType Directory -Path $stateCacheRoot -Force | Out-Null
 
 if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     if ($source.PSIsContainer -or $source.Extension -notin @(".tif", ".tiff")) { throw "二维成果必须是 TIF/TIFF 文件。" }
@@ -96,7 +141,7 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     if (-not $DryRun) {
         $prepare = "set -eu; mkdir -p -- '$remoteDirectory' '$RemoteInbox/.releases/$ProjectName/geotiff'; if [ ! -e '$remotePartial' ]; then : > '$remotePartial'; fi"
         Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
-        $batch = Join-Path $cacheRoot "sftp-$([Guid]::NewGuid().ToString('N')).txt"
+        $batch = Join-Path $stateCacheRoot "sftp-$([Guid]::NewGuid().ToString('N')).txt"
         $escapedLocal = $source.FullName.Replace('"', '\"')
         $escapedRemote = $remotePartial.Replace('"', '\"')
         [IO.File]::WriteAllText($batch, "reput `"$escapedLocal`" `"$escapedRemote`"`n", [Text.UTF8Encoding]::new($false))
@@ -129,13 +174,20 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     $remoteDestination = "$RemoteInbox/$ProjectName/$datasetName"
     $platformPath = "$PlatformInbox/$ProjectName/$datasetName"
     $archiveName = "$ProjectName-$datasetName-$timestamp.tar"
-    $archivePath = Join-Path $cacheRoot $archiveName
+    $archiveCacheRoot = Get-ArchiveCacheRoot $source
+    Remove-AbandonedArchiveCache $archiveCacheRoot
+    $archivePath = Join-Path $archiveCacheRoot $archiveName
+    $archiveLockPath = "$archivePath.lock"
     $remoteArchive = "$RemoteInbox/.incoming/$archiveName"
     Write-Host "准备发布 $Kind：$($source.FullName)"
     Write-Host "目标路径：$platformPath"
+    Write-Host "本地缓存：$archivePath"
     if (-not $DryRun) {
-        Invoke-Native $tar @("-cf", $archivePath, "-C", $source.Parent.FullName, $datasetName) "打包成果失败"
+        $contentBytes = Get-DirectoryContentSize $source
+        Assert-ArchiveCacheSpace $archiveCacheRoot $contentBytes
         try {
+            "$PID" | Set-Content -LiteralPath $archiveLockPath -Encoding ASCII
+            Invoke-Native $tar @("-cf", $archivePath, "-C", $source.Parent.FullName, $datasetName) "打包成果失败"
             $prepare = "set -eu; mkdir -p '$RemoteInbox/.incoming' '$RemoteInbox/.releases/$ProjectName' '$RemoteInbox/$ProjectName'"
             Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
             Invoke-Native $scp @("-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new", $archivePath, "${target}:$remoteArchive") "上传成果包失败"
@@ -147,6 +199,7 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
             Invoke-Native $ssh ($sshCommon + @($target, $execute)) "服务器解包或原子切换失败"
         } finally {
             if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }
+            if (Test-Path -LiteralPath $archiveLockPath) { Remove-Item -LiteralPath $archiveLockPath -Force }
         }
     }
 }
