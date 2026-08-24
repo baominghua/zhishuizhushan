@@ -152,6 +152,11 @@ def test_las_collection_metadata_reads_wkt_and_unions_tiles(tmp_path):
     assert metadata["fileCount"] == 2
     assert metadata["pointCount"] == 2468
     assert metadata["crs"] == "EPSG:4509"
+    assert metadata["dimensions"] == [
+        "Blue", "Classification", "GpsTime", "Green", "Intensity", "NumberOfReturns",
+        "PointSourceId", "Red", "ReturnNumber", "ScanAngle", "UserData", "X", "Y", "Z",
+    ]
+    assert metadata["attributeModes"] == ["rgb", "elevation", "return", "intensity", "gps-time"]
     assert metadata["nativeBounds"] == [503000.0, 3002800.0, 600.0, 504000.0, 3003800.0, 950.0]
     assert metadata["bounds"][0] < metadata["bounds"][2]
 
@@ -181,6 +186,12 @@ def test_py3dtiles_conversion_leaves_destination_creation_to_converter(tmp_path,
         "--srs_out",
         "4978",
         "--pyproj-always-xy",
+        "--extra-fields",
+        "intensity",
+        "--extra-fields",
+        "return_number",
+        "--extra-fields",
+        "number_of_returns",
         "--out",
         str(output),
         str(source),
@@ -442,6 +453,29 @@ def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkey
     assert links.status_code == 200
     assert {item["relationType"] for item in links.json()["items"]} == {"coverage", "source-evidence"}
     assert {item["sceneId"] for item in links.json()["items"]} == {"scene-auto-cover"}
+
+
+def test_imagery_inventory_aggregates_full_catalog(app_client, monkeypatch):
+    import server.app as app_module
+
+    scenes = [
+        {"id": "inventory-1", "assetType": "orthophoto", "status": "active", "originalSize": 1_000, "coverageAnalysis": {"effectiveAreaHa": 2}},
+        {"id": "inventory-2", "assetType": "orthophoto", "status": "active", "size": 500, "coverageAnalysis": {"effectiveAreaHa": 1}},
+        {"id": "inventory-3", "assetType": "pointcloud", "status": "active", "originalSize": 2_000},
+        {"id": "inventory-4", "assetType": "dsm", "status": "archived", "originalSize": 9_999},
+    ]
+    monkeypatch.setattr(app_module, "load_catalog", lambda **_kwargs: scenes)
+    monkeypatch.setattr(app_module, "filter_scenes", lambda records, _context, **_kwargs: records)
+
+    response = app_client.get("/api/scenes/inventory", headers={"X-RS-Roles": "admin"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["typeCount"] == 2
+    assert payload["totalAreaMu"] == 45
+    assert payload["totalSizeBytes"] == 3_500
+    assert payload["items"][0] == {"assetType": "orthophoto", "count": 2, "areaMu": 45.0, "sizeBytes": 1_500}
 
 
 def test_confirm_coverage_allows_independent_facility_point(app_client):

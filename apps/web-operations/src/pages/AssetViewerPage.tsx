@@ -19,7 +19,8 @@ const EMPTY_FEATURES: ForestBlockFeatureCollection = {
 };
 
 const DEFAULT_VIEWPORT: MapViewport = { bbox: [117.65, 27.47, 117.78, 27.62], zoom: 16 };
-const DEFAULT_SETTINGS: Spatial3dDisplaySettings = { opacity: 1, pointSize: 3, eastOffset: 0, northOffset: 0, heightOffset: 0 };
+const DEFAULT_SETTINGS: Spatial3dDisplaySettings = { opacity: 1, pointSize: 3, colorMode: "rgb", eastOffset: 0, northOffset: 0, heightOffset: 0 };
+type PointInformationMode = "rgb" | "elevation" | "return" | "intensity" | "trajectory";
 
 function viewerMode(asset?: ImageryAsset) {
   const requested = new URLSearchParams(window.location.search).get("mode");
@@ -78,6 +79,7 @@ export function AssetViewerPage() {
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [loadProgress, setLoadProgress] = useState({ pending: 0, processing: 0, ready: false });
   const [settings, setSettings] = useState<Spatial3dDisplaySettings>(DEFAULT_SETTINGS);
+  const [pointInformationMode, setPointInformationMode] = useState<PointInformationMode>("rgb");
   const scene = useMemo(() => sceneForAsset(asset), [asset]);
   const focusRequest = useMemo<MapAreaFocusRequest>(() => ({
     sequence: asset?.bounds?.length === 4 ? 1 : 0,
@@ -93,13 +95,36 @@ export function AssetViewerPage() {
 
   useEffect(() => {
     if (!asset) return;
+    const assetSettings = {
+      ...DEFAULT_SETTINGS,
+      elevationMinimum: asset.nativeBounds?.[2],
+      elevationMaximum: asset.nativeBounds?.[5],
+    };
     try {
       const saved = window.localStorage.getItem(calibrationKey(asset.id));
-      setSettings(saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS);
+      setSettings(saved ? { ...assetSettings, ...JSON.parse(saved) } : assetSettings);
     } catch {
-      setSettings(DEFAULT_SETTINGS);
+      setSettings(assetSettings);
     }
   }, [asset]);
+
+  const pointAttributeModes = useMemo(() => new Set(asset?.pointCloudAttributeModes ?? []), [asset?.pointCloudAttributeModes]);
+  const pointDimensionSummary = useMemo(() => {
+    const labels: string[] = [];
+    if (pointAttributeModes.has("rgb")) labels.push("RGB");
+    if (pointAttributeModes.has("elevation")) labels.push("高程");
+    if (pointAttributeModes.has("return")) labels.push("回波");
+    if (pointAttributeModes.has("intensity")) labels.push("反射强度");
+    if (pointAttributeModes.has("gps-time")) labels.push("GPS 时间");
+    return labels;
+  }, [pointAttributeModes]);
+
+  const selectPointInformationMode = (mode: PointInformationMode) => {
+    setPointInformationMode(mode);
+    if (mode === "rgb" || mode === "elevation" || mode === "return" || mode === "intensity") {
+      setSettings((current) => ({ ...current, colorMode: mode }));
+    }
+  };
 
   const requestZoom = (direction: MapZoomRequest["direction"]) => setZoomRequest((current) => ({ sequence: current.sequence + 1, direction }));
   const onSpatialLoadProgress = useCallback((progress: { pending: number; processing: number; ready: boolean }) => setLoadProgress(progress), []);
@@ -112,7 +137,11 @@ export function AssetViewerPage() {
     window.localStorage.setItem(calibrationKey(asset.id), JSON.stringify(settings));
   };
   const resetCalibration = () => {
-    setSettings(DEFAULT_SETTINGS);
+    setSettings({
+      ...DEFAULT_SETTINGS,
+      elevationMinimum: asset?.nativeBounds?.[2],
+      elevationMaximum: asset?.nativeBounds?.[5],
+    });
     if (asset) window.localStorage.removeItem(calibrationKey(asset.id));
   };
 
@@ -199,7 +228,15 @@ export function AssetViewerPage() {
               </dl></section>
 
               {mode === "3d" && <>
-                <section><header><ScanSearch /><div><small>点云显示</small><strong>大疆信息视图</strong></div></header><div className="point-attribute-switch"><button className="active" type="button">RGB</button><button type="button" disabled title="后续按高程范围生成色带">高程</button><button type="button" disabled title="源点云需要包含 ReturnNumber">回波</button><button type="button" disabled title="源点云需要包含 Intensity">反射强度</button><button type="button" disabled title="需要单独导入飞行轨迹">轨迹</button></div><p className="asset-viewer-hint">高程几何可用；回波、反射强度和轨迹会在源文件检测到对应字段后自动开放。</p><label className="asset-range"><span>点大小 <strong>{settings.pointSize.toFixed(1)}</strong></span><input type="range" min="1" max="10" step="0.5" value={settings.pointSize} onChange={(event) => setSettings((current) => ({ ...current, pointSize: Number(event.target.value) }))} /></label></section>
+                <section><header><ScanSearch /><div><small>点云显示</small><strong>大疆信息视图</strong></div></header><div className="point-attribute-switch">
+                  <button className={pointInformationMode === "rgb" ? "active" : ""} type="button" onClick={() => selectPointInformationMode("rgb")}>RGB</button>
+                  <button className={pointInformationMode === "elevation" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("elevation")} onClick={() => selectPointInformationMode("elevation")}>高程</button>
+                  <button className={pointInformationMode === "return" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("return")} title={pointAttributeModes.has("return") ? "按回波序号分级着色" : "当前网页瓦片未保留 ReturnNumber"} onClick={() => selectPointInformationMode("return")}>回波</button>
+                  <button className={pointInformationMode === "intensity" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("intensity")} title={pointAttributeModes.has("intensity") ? "按反射强度分级着色" : "当前网页瓦片未保留 Intensity"} onClick={() => selectPointInformationMode("intensity")}>反射强度</button>
+                  <button className={pointInformationMode === "trajectory" ? "active" : ""} type="button" disabled={!asset.trajectoryAvailable} onClick={() => selectPointInformationMode("trajectory")}>轨迹</button>
+                </div>
+                <div className="point-source-summary"><strong>源数据识别</strong><span>{pointDimensionSummary.length ? pointDimensionSummary.join(" · ") : "当前成果仅含网页瓦片，尚未登记原始 LAS"}</span><small>{asset.trajectoryAvailable ? `DJI 轨迹侧车：${asset.trajectoryFileCount ?? 0} 个文件（${asset.trajectoryFormats?.join(" / ") || "POS"}）` : "未发现 terra_trajectory 轨迹侧车目录"}</small></div>
+                <p className="asset-viewer-hint">{pointInformationMode === "trajectory" ? "轨迹资料已登记；POS/SBET 可用于后续抽稀航迹叠加。" : "RGB、高程、回波和反射强度按成果实际保留字段开放；旧 PNTS 如无属性需从原 LAS 重新生成。"}</p><label className="asset-range"><span>点大小 <strong>{settings.pointSize.toFixed(1)}</strong></span><input type="range" min="1" max="10" step="0.5" value={settings.pointSize} onChange={(event) => setSettings((current) => ({ ...current, pointSize: Number(event.target.value) }))} /></label></section>
                 <section><header><Box /><div><small>模型校准</small><strong>本地坐标偏移</strong></div></header><div className="calibration-grid"><label><span>向东（米）</span><input type="number" step="0.1" value={settings.eastOffset ?? 0} onChange={(event) => updateOffset("eastOffset", event.target.value)} /></label><label><span>向北（米）</span><input type="number" step="0.1" value={settings.northOffset ?? 0} onChange={(event) => updateOffset("northOffset", event.target.value)} /></label><label><span>高程（米）</span><input type="number" step="0.1" value={settings.heightOffset ?? 0} onChange={(event) => updateOffset("heightOffset", event.target.value)} /></label></div><div className="calibration-actions"><button className="button primary" type="button" onClick={saveCalibration}><Save />保存本机校准</button><button className="button secondary" type="button" onClick={resetCalibration}><RotateCcw />恢复原值</button></div><p className="asset-viewer-hint">当前先保存到本机浏览器；正式控制点配准通过后再写入平台资产版本。</p></section>
               </>}
             </aside>

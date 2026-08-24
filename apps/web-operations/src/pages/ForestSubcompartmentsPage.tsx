@@ -12,7 +12,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useDeferredValue, useState } from "react";
+import { type FormEvent, type ReactNode, useDeferredValue, useMemo, useState } from "react";
 
 import { api, downloadFile } from "../api/client";
 import type {
@@ -22,6 +22,7 @@ import type {
 } from "../api/types";
 import { ForestBlockSelector } from "../components/ForestBlockSelector";
 import { LedgerPagination } from "../components/LedgerPagination";
+import { LedgerSummaryStrip } from "../components/LedgerSummaryStrip";
 import { QueryState } from "../components/QueryState";
 import { SidePanel } from "../components/SidePanel";
 import { SpatialVersionHistory } from "../components/SpatialVersionHistory";
@@ -106,6 +107,15 @@ export function ForestSubcompartmentsPage() {
     setOffset(0);
   };
   const hasFilters = Boolean(q || riskLevel || managementStatus || parentFilter);
+  const summary = useMemo(() => {
+    const items = query.data?.items ?? [];
+    return [
+      { label: "小班总数", value: query.data?.total ?? 0, detail: "当前权限范围" },
+      { label: "本页面积", value: `${items.reduce((sum, item) => sum + Number(item.areaMu || 0), 0).toFixed(1)} 亩`, detail: "经营单元合计" },
+      { label: "经营中", value: items.filter((item) => item.managementStatus === "active").length, detail: "本页有效小班", tone: "active" as const },
+      { label: "高风险", value: items.filter((item) => ["high", "高"].includes(String(item.riskLevel))).length, detail: "本页重点关注", tone: "warning" as const },
+    ];
+  }, [query.data]);
 
   return (
     <div className="standard-page ledger-page">
@@ -117,6 +127,8 @@ export function ForestSubcompartmentsPage() {
           <button className="button primary" type="button" disabled={!canCreate} onClick={() => setPanel({ mode: "create", record: null })} title={canCreate ? "新增小班" : "当前角色无新增权限"}><Plus aria-hidden="true" />新增小班</button>
         </div>
       </section>
+
+      <LedgerSummaryStrip metrics={summary} />
 
       <section className="ledger-shell">
         <div className="ledger-toolbar">

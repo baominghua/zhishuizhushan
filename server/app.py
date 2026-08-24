@@ -15,6 +15,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -2029,17 +2030,39 @@ def scene_maximum_zoom(scene: dict[str, Any]) -> int:
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
+    public_record = dict(scene)
+    if str(scene.get("assetType") or "") == "pointcloud" and not scene.get("trajectoryAvailable"):
+        source_paths = [
+            Path(str(scene.get(key)))
+            for key in ("originalPath", "copcPath", "tilesetPath")
+            if str(scene.get(key) or "").strip()
+        ]
+        trajectory = cached_dji_trajectory_metadata(tuple(str(path) for path in source_paths)) if source_paths else {"available": False}
+        if trajectory.get("available"):
+            public_record.update({
+                "trajectoryAvailable": True,
+                "trajectoryFileCount": trajectory["fileCount"],
+                "trajectorySize": trajectory["totalSize"],
+                "trajectoryFormats": trajectory["formats"],
+                "trajectoryPath": trajectory["path"],
+                "trajectoryFiles": trajectory["files"],
+            })
     tile_url = f"/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.webp{token_query}"
     is_3d_asset = str(scene.get("assetType") or "") == "pointcloud" or bool(
         str(scene.get("tilesetPath") or "").strip()
     )
     return {
-        **scene,
+        **public_record,
         "maximumZoom": scene_maximum_zoom(scene),
         "tileFormat": "webp",
         "tileUrl": "" if is_3d_asset else tile_url,
         "tileJsonUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/tilejson.json{token_query}",
         "thumbnailUrl": "" if is_3d_asset else f"/api/scenes/{scene_id}/thumbnail.png{token_query}",
+        "originalDownloadUrl": (
+            f"/api/scenes/{scene_id}/download/original{token_query}"
+            if str(scene.get("originalPath") or "").strip()
+            else ""
+        ),
         "copcUrl": (
             f"/api/scenes/{scene_id}/point-cloud/copc{token_query}"
             if str(scene.get("copcPath") or "").strip()
@@ -4117,6 +4140,66 @@ def resolve_point_cloud_import_sources(path_value: str, *, recursive: bool) -> l
     return result
 
 
+DJI_TRAJECTORY_SUFFIXES = {".csv", ".out", ".txt"}
+
+
+def discover_dji_trajectory_metadata(source_paths: list[Path]) -> dict[str, Any]:
+    """Discover DJI Terra POS/SBET/SMRMSG sidecars beside an imported LAS set."""
+    candidates: set[Path] = set()
+    for source_path in source_paths:
+        directory = source_path.parent
+        for parent in (directory, directory.parent, directory.parent.parent):
+            candidates.add((parent / "terra_trajectory").resolve())
+    allowed_roots = [directory.resolve() for directory in IMPORT_DIRS]
+    files: list[Path] = []
+    trajectory_root: Path | None = None
+    for candidate in sorted(candidates):
+        if not candidate.is_dir() or not any(is_relative_to(candidate, root) for root in allowed_roots):
+            continue
+        matched = sorted(
+            item.resolve()
+            for item in candidate.rglob("*")
+            if item.is_file()
+            and item.suffix.lower() in DJI_TRAJECTORY_SUFFIXES
+            and (
+                item.name.lower().startswith("pos_")
+                or "_sbet" in item.name.lower()
+                or "_smrmsg" in item.name.lower()
+            )
+        )
+        if matched:
+            trajectory_root = candidate
+            files = matched
+            break
+    if not trajectory_root:
+        return {
+            "available": False,
+            "fileCount": 0,
+            "totalSize": 0,
+            "formats": [],
+            "path": "",
+            "files": [],
+        }
+    formats = sorted({
+        "POS" if item.name.lower().startswith("pos_") else
+        "SBET" if "_sbet" in item.name.lower() else "SMRMSG"
+        for item in files
+    })
+    return {
+        "available": True,
+        "fileCount": len(files),
+        "totalSize": sum(item.stat().st_size for item in files),
+        "formats": formats,
+        "path": catalog_path(trajectory_root),
+        "files": [catalog_path(item) for item in files],
+    }
+
+
+@lru_cache(maxsize=256)
+def cached_dji_trajectory_metadata(source_paths: tuple[str, ...]) -> dict[str, Any]:
+    return discover_dji_trajectory_metadata([Path(path) for path in source_paths])
+
+
 def resolve_3d_tileset_import_root(path_value: str) -> Path:
     if not path_value.strip():
         raise HTTPException(status_code=400, detail="3D Tiles import path is required")
@@ -4312,6 +4395,7 @@ def build_point_cloud_scene_record(
     copc_path = dataset_dir / "dataset.copc.laz"
     tiles_path = dataset_dir / "3dtiles" / "tileset.json"
     size = sum(path.stat().st_size for path in source_paths if path.exists())
+    trajectory = point_cloud.get("trajectory") or discover_dji_trajectory_metadata(source_paths)
     return {
         "id": scene_id,
         "source": "server",
@@ -4343,6 +4427,14 @@ def build_point_cloud_scene_record(
         "pointCloudFileCount": point_cloud["fileCount"],
         "pointCloudVersions": point_cloud["versions"],
         "pointCloudFormats": point_cloud["pointFormats"],
+        "pointCloudDimensions": point_cloud.get("dimensions", []),
+        "pointCloudAttributeModes": point_cloud.get("attributeModes", []),
+        "trajectoryAvailable": trajectory["available"],
+        "trajectoryFileCount": trajectory["fileCount"],
+        "trajectorySize": trajectory["totalSize"],
+        "trajectoryFormats": trajectory["formats"],
+        "trajectoryPath": trajectory["path"],
+        "trajectoryFiles": trajectory["files"],
         "nativeBounds": point_cloud["nativeBounds"],
         "pointCloudFiles": point_cloud["files"],
         "pointCloudSourcePaths": [catalog_path(path) for path in source_paths],
@@ -4373,6 +4465,7 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
     outputs = point_cloud_outputs(task.get("outputs") or [])
     try:
         point_cloud = point_cloud_collection_metadata(source_paths)
+        point_cloud["trajectory"] = discover_dji_trajectory_metadata(source_paths)
         dataset_dir.mkdir(parents=True, exist_ok=True)
         if delete_original and not bool(task.get("sourcesOwned")):
             owned_dir = dataset_dir / "sources"
@@ -5694,6 +5787,35 @@ def list_scenes(
     }
 
 
+@app.get("/api/scenes/inventory")
+def imagery_scene_inventory(request: Request) -> dict[str, Any]:
+    require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
+    scenes = filter_scenes(load_catalog(), request_context(request))
+    scenes = [scene for scene in scenes if str(scene.get("status") or "active") not in {"archived", "deleted"}]
+    groups: dict[str, dict[str, Any]] = {}
+    total_area_mu = 0.0
+    total_size_bytes = 0
+    for scene in scenes:
+        asset_type = str(scene.get("assetType") or "other")
+        coverage = scene.get("coverageAnalysis") if isinstance(scene.get("coverageAnalysis"), dict) else {}
+        area_mu = float(coverage.get("effectiveAreaHa") or 0) * 15
+        size_bytes = int(scene.get("originalSize") or scene.get("size") or 0)
+        group = groups.setdefault(asset_type, {"assetType": asset_type, "count": 0, "areaMu": 0.0, "sizeBytes": 0})
+        group["count"] += 1
+        group["areaMu"] += area_mu
+        group["sizeBytes"] += size_bytes
+        total_area_mu += area_mu
+        total_size_bytes += size_bytes
+    return {
+        "total": len(scenes),
+        "typeCount": len(groups),
+        "totalAreaMu": total_area_mu,
+        "totalSizeBytes": total_size_bytes,
+        "items": sorted(groups.values(), key=lambda item: (-int(item["count"]), str(item["assetType"]))),
+        "asOf": now_iso(),
+    }
+
+
 @app.get("/api/scenes/events")
 def list_scene_events(
     request: Request,
@@ -6506,6 +6628,26 @@ def point_cloud_copc(scene_id: str, request: Request) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="COPC file not found")
     return FileResponse(path, media_type="application/vnd.laszip", filename=f"{slugify(scene['name'])}.copc.laz")
+
+
+@app.get("/api/scenes/{scene_id}/download/original")
+def scene_original_download(scene_id: str, request: Request) -> FileResponse:
+    scene = find_allowed_scene(scene_id, request)
+    path_value = str(scene.get("originalPath") or "").strip()
+    if not path_value:
+        raise HTTPException(status_code=404, detail="Original imagery resource is not available")
+    path = resolve_catalog_path(path_value)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Original imagery file not found")
+    suffix = path.suffix.lower()
+    media_type = {
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        ".laz": "application/vnd.laszip",
+        ".las": "application/vnd.las",
+    }.get(suffix, "application/octet-stream")
+    filename = str(scene.get("fileName") or path.name).strip() or path.name
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @app.get("/api/scenes/{scene_id}/point-cloud/tiles/{asset_path:path}")

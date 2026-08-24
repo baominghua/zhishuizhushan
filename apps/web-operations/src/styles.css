@@ -1999,11 +1999,12 @@ svg {
 .map-annotation-legend section { min-width: 0; padding-top: 9px; }
 .map-annotation-legend section > strong { display: block; margin-bottom: 6px; color: #91cbb6; font-size: 10px; font-weight: 650; }
 .map-annotation-legend section > div { display: grid; gap: 5px; }
-.map-annotation-legend section span { display: grid; grid-template-columns: 13px minmax(0,1fr) auto; align-items: center; gap: 6px; min-width: 0; }
+.map-annotation-legend section span { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 6px; min-width: 0; }
 .map-annotation-legend section em { overflow: hidden; color: #f1fff9; font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .map-annotation-legend section small { color: #8fb8aa; font-size: 10px; }
 .map-annotation-legend p { grid-column: 1 / -1; margin: 0; padding-top: 8px; border-top: 1px solid rgba(141,211,186,.18); color: #a9cfc1; font-size: 10px; }
-.map-legend-symbol { width: 10px; height: 10px; border: 2px solid rgba(2,38,30,.9); border-radius: 50%; box-shadow: 0 0 0 1px rgba(255,255,255,.48); }
+.map-legend-symbol { display: grid; width: 18px; height: 18px; place-items: center; color: #06271f; border: 1px solid rgba(226,255,243,.7); border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.24); }
+.map-legend-symbol svg { width: 11px; height: 11px; stroke-width: 2.4; }
 .map-legend-symbol.camera { background: #ffb84a; }.map-legend-symbol.helmet { background: #61e4b1; }.map-legend-symbol.dock { background: #63c8ff; }.map-legend-symbol.mission { background: #d79bff; }.map-legend-symbol.orthophoto { background: #25b8e8; }.map-legend-symbol.pointcloud { background: #9b7bff; }.map-legend-symbol.mesh { background: #ff9f43; }.map-legend-symbol.demonstration { background: #ffe16d; }
 
 .map-feature-status {
@@ -5063,6 +5064,12 @@ svg {
 .point-attribute-switch button { padding: 8px 5px; border: 1px solid #d5e5df; border-radius: 8px; background: #f8fbfa; color: #355b50; }
 .point-attribute-switch button.active { border-color: #148467; background: #e5f7f0; color: #07654d; font-weight: 700; }
 .point-attribute-switch button:disabled { color: #a6b5b0; cursor: not-allowed; }
+.point-attribute-switch button.detected:disabled { color: #4b7468; border-style: dashed; background: #eef7f3; }
+.point-source-summary { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid #d7e8e1; border-radius: 8px; background: #f6fbf9; }
+.point-source-summary strong { color: #275e4f; font-size: 11px; }.point-source-summary span { color: #173f33; font-size: 11px; font-weight: 700; }.point-source-summary small { color: #6f877f; font-size: 10px; line-height: 1.45; }
+.cockpit-imagery-inventory { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 12px; }
+.cockpit-imagery-inventory article { display: grid; min-height: 92px; align-items: center; gap: 8px; padding: 15px 17px; border: 1px solid rgba(85,209,165,.24); border-radius: 7px; background: rgba(7,45,35,.72); grid-template-columns: minmax(0,1fr) auto; }
+.cockpit-imagery-inventory span { display: grid; gap: 4px; }.cockpit-imagery-inventory strong { color: #edfff8; font-size: 14px; }.cockpit-imagery-inventory small { color: #82aa9b; font-size: 10px; }.cockpit-imagery-inventory b { color: #70e0b8; font-size: 14px; }.cockpit-imagery-inventory em { grid-column: 1 / -1; color: #a3c5b8; font-size: 11px; font-style: normal; }
 .asset-viewer-hint { margin: 0; color: #708b82; font-size: 11px; line-height: 1.55; }
 .asset-range { display: grid; gap: 7px; }
 .asset-range span { display: flex; justify-content: space-between; }

@@ -227,11 +227,24 @@ def read_las_header(path: Path) -> dict[str, Any]:
             crs = rasterio.crs.CRS.from_wkt(wkt)
         except Exception:
             crs = None
+    dimensions = [
+        "X", "Y", "Z", "Intensity", "ReturnNumber", "NumberOfReturns",
+        "Classification", "ScanAngle", "UserData", "PointSourceId",
+    ]
+    if point_format in {1, 3, 4, 5, 6, 7, 8, 9, 10}:
+        dimensions.append("GpsTime")
+    if point_format in {2, 3, 5, 7, 8, 10}:
+        dimensions.extend(["Red", "Green", "Blue"])
+    if point_format in {8, 10}:
+        dimensions.append("Infrared")
+    if point_format in {4, 5, 9, 10}:
+        dimensions.extend(["WavePacketDescriptorIndex", "WaveformDataOffset"])
     return {
         "fileName": path.name,
         "size": path.stat().st_size,
         "version": version,
         "pointFormat": point_format,
+        "dimensions": dimensions,
         "pointCount": int(extended_point_count or legacy_point_count),
         "scale": [float(scale_x), float(scale_y), float(scale_z)],
         "offset": [float(offset_x), float(offset_y), float(offset_z)],
@@ -269,12 +282,25 @@ def point_cloud_collection_metadata(paths: Iterable[Path]) -> dict[str, Any]:
             )
         )
     footprint = unary_union([item for item in footprints if item is not None])
+    dimensions = sorted({dimension for item in items for dimension in item.get("dimensions", [])})
     return {
         "fileCount": len(items),
         "totalSize": sum(int(item["size"]) for item in items),
         "pointCount": sum(int(item["pointCount"]) for item in items),
         "versions": sorted({str(item["version"]) for item in items}),
         "pointFormats": sorted({int(item["pointFormat"]) for item in items}),
+        "dimensions": dimensions,
+        "attributeModes": [
+            mode
+            for mode, required in (
+                ("rgb", {"Red", "Green", "Blue"}),
+                ("elevation", {"Z"}),
+                ("return", {"ReturnNumber", "NumberOfReturns"}),
+                ("intensity", {"Intensity"}),
+                ("gps-time", {"GpsTime"}),
+            )
+            if required.issubset(dimensions)
+        ],
         "crs": _crs_label(first_crs, str(items[0].get("crsWkt") or "")),
         "nativeBounds": [native_min_x, native_min_y, native_min_z, native_max_x, native_max_y, native_max_z],
         "bounds": [round(float(item), 8) for item in footprint.bounds],
@@ -651,6 +677,12 @@ def convert_point_cloud_to_3dtiles(
             "--srs_out",
             "4978",
             "--pyproj-always-xy",
+            "--extra-fields",
+            "intensity",
+            "--extra-fields",
+            "return_number",
+            "--extra-fields",
+            "number_of_returns",
             "--out",
             str(output_dir),
             *[str(path) for path in source_paths],

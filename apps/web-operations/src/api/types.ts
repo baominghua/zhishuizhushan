@@ -255,6 +255,7 @@ export interface ImageryAsset {
   tileUrl: string;
   tileJsonUrl: string;
   thumbnailUrl: string;
+  originalDownloadUrl?: string;
   tileFormat?: "webp" | "png" | string;
   metresPerPixel?: number;
   maximumZoom?: number;
@@ -264,6 +265,13 @@ export interface ImageryAsset {
   pointCloudFileCount?: number;
   pointCloudVersions?: string[];
   pointCloudFormats?: number[];
+  pointCloudDimensions?: string[];
+  pointCloudAttributeModes?: Array<"rgb" | "elevation" | "return" | "intensity" | "gps-time">;
+  trajectoryAvailable?: boolean;
+  trajectoryFileCount?: number;
+  trajectorySize?: number;
+  trajectoryFormats?: string[];
+  trajectoryPath?: string;
   tilesetCount?: number;
   tileCount?: number;
   tileFormats?: Record<string, number>;
@@ -294,6 +302,15 @@ export interface ImageryUploadPayload {
   capturedAt?: string;
   resolution?: string;
   linkedBlockCodes: string[];
+}
+
+export interface ImageryInventoryResponse {
+  total: number;
+  typeCount: number;
+  totalAreaMu: number;
+  totalSizeBytes: number;
+  asOf: string;
+  items: Array<{ assetType: string; count: number; areaMu: number; sizeBytes: number }>;
 }
 
 export interface ImageryCoverageConfirmationPayload {

@@ -7,6 +7,7 @@ import type { AttachmentRecord, ForestSubcompartmentOption, ResourceSnapshotPayl
 import { AttachmentSelector } from "../components/AttachmentSelector";
 import { ForestSubcompartmentSelector } from "../components/ForestSubcompartmentSelector";
 import { LedgerPagination } from "../components/LedgerPagination";
+import { LedgerSummaryStrip } from "../components/LedgerSummaryStrip";
 import { QueryState } from "../components/QueryState";
 import { SidePanel } from "../components/SidePanel";
 import { hasPermission, useCapabilities } from "../hooks/useCapabilities";
@@ -48,6 +49,12 @@ export function ResourceSurveysPage() {
 
   return <div className="standard-page ledger-page">
     <section className="page-heading ledger-heading"><div><span className="eyebrow">资源数据 / 时点调查</span><h1>资源调查</h1><p>按调查批次沉淀小班资源快照，保留每次调查历史，并可直接查看指标变化。</p></div><div className="heading-actions"><button className="button secondary" type="button" onClick={() => query.refetch()}><RefreshCw aria-hidden="true" />刷新</button><button className="button primary" type="button" disabled={!canCreate} onClick={() => setPanel({ mode: "create", record: null })}><Plus aria-hidden="true" />新建调查</button></div></section>
+    <LedgerSummaryStrip metrics={[
+      { label: "调查批次", value: query.data?.total ?? 0, detail: "当前权限范围" },
+      { label: "已完成", value: (query.data?.items ?? []).filter((item) => item.status === "completed").length, detail: "本页批次", tone: "active" },
+      { label: "调查中", value: (query.data?.items ?? []).filter((item) => item.status === "in_progress").length, detail: "本页批次" },
+      { label: "小班快照", value: (query.data?.items ?? []).reduce((sum, item) => sum + item.snapshotCount, 0), detail: "本页记录", tone: "warning" },
+    ]} />
     <section className="ledger-shell">
       <div className="ledger-toolbar"><label className="search-field"><Search aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索调查编号、名称、单位或调查人" /></label><label className="compact-filter"><span>调查状态</span><select value={status} onChange={(event) => { setStatus(event.target.value); setOffset(0); }}><option value="">全部状态</option><option value="draft">草稿</option><option value="in_progress">调查中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select></label></div>
       <QueryState loading={query.isLoading} error={query.error}><div className="table-scroll"><table className="ledger-table"><thead><tr><th>调查批次</th><th>调查类型与日期</th><th>执行单位</th><th>调查记录</th><th>状态</th><th>更新时间</th><th className="action-column">操作</th></tr></thead><tbody>

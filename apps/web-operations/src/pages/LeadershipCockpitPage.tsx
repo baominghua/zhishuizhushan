@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Activity, Building2, CircleDollarSign, Leaf, MonitorUp, Plane, RefreshCw, ShieldAlert, Trees, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
+import { Activity, Building2, CircleDollarSign, Images, Leaf, MonitorUp, Plane, RefreshCw, ShieldAlert, Trees, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
-import type { CockpitMetric, CockpitRankingItem, CockpitTopic } from "../api/types";
+import type { CockpitMetric, CockpitRankingItem, CockpitTopic, ImageryInventoryResponse } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
 const overviewMetrics: Array<[string, string, LucideIcon]> = [
@@ -19,9 +19,10 @@ const carbonMetrics: Array<[string, string, LucideIcon]> = [
 ];
 
 export function LeadershipCockpitPage() {
-  const [tab, setTab] = useState<"overview" | "emergency" | "harvest" | "drone" | "cost" | "carbon">("overview");
+  const [tab, setTab] = useState<"overview" | "emergency" | "harvest" | "drone" | "cost" | "imagery" | "carbon">("overview");
   const query = useQuery({ queryKey: ["leadership-cockpit"], queryFn: api.leadershipCockpit, refetchInterval: 60_000 });
   const topicsQuery = useQuery({ queryKey: ["leadership-cockpit-topics"], queryFn: api.cockpitTopics, refetchInterval: 60_000 });
+  const imageryQuery = useQuery({ queryKey: ["leadership-cockpit-imagery"], queryFn: api.imageryInventory, enabled: tab === "imagery", staleTime: 60_000 });
   const data = query.data;
   const metrics = tab === "overview" ? overviewMetrics : carbonMetrics;
   const selectedTopic = topicsQuery.data?.topics.find((topic) => topic.key === tab);
@@ -31,8 +32,8 @@ export function LeadershipCockpitPage() {
       <div><span className="cockpit-kicker"><i />南平市智慧竹山 · 实时决策中枢</span><h1>领导驾驶舱</h1><p>资源、经营、安全与碳汇数据统一态势感知</p></div>
       <div className="cockpit-hero-actions"><Link className="cockpit-display-link" to="/display"><MonitorUp aria-hidden="true" />大屏模式</Link><span className="cockpit-live"><i />数据在线</span><time>{data ? new Date(data.asOf).toLocaleString("zh-CN", { hour12: false }) : "同步中"}</time><button type="button" title="刷新数据" aria-label="刷新数据" onClick={() => { query.refetch(); topicsQuery.refetch(); }}><RefreshCw aria-hidden="true" /></button></div>
     </header>
-    <nav className="cockpit-tabs cockpit-topic-tabs" aria-label="驾驶舱专题"><button className={tab === "overview" ? "active" : ""} type="button" onClick={() => setTab("overview")}>综合态势</button><button className={tab === "emergency" ? "active" : ""} type="button" onClick={() => setTab("emergency")}>灾害应急</button><button className={tab === "harvest" ? "active" : ""} type="button" onClick={() => setTab("harvest")}>采伐监管</button><button className={tab === "drone" ? "active" : ""} type="button" onClick={() => setTab("drone")}>无人机运营</button><button className={tab === "cost" ? "active" : ""} type="button" onClick={() => setTab("cost")}>成本效益</button><button className={tab === "carbon" ? "active" : ""} type="button" onClick={() => setTab("carbon")}>碳汇专题</button></nav>
-    {tab !== "overview" && tab !== "carbon" ? <QueryState loading={topicsQuery.isLoading} error={topicsQuery.error}>{selectedTopic && <TopicScene topic={selectedTopic} policy={topicsQuery.data?.metricPolicy || ""} />}</QueryState> : <QueryState loading={query.isLoading} error={query.error}>{data && <div key={tab} className="cockpit-scene">
+    <nav className="cockpit-tabs cockpit-topic-tabs" aria-label="驾驶舱专题"><button className={tab === "overview" ? "active" : ""} type="button" onClick={() => setTab("overview")}>综合态势</button><button className={tab === "emergency" ? "active" : ""} type="button" onClick={() => setTab("emergency")}>灾害应急</button><button className={tab === "harvest" ? "active" : ""} type="button" onClick={() => setTab("harvest")}>采伐监管</button><button className={tab === "drone" ? "active" : ""} type="button" onClick={() => setTab("drone")}>无人机运营</button><button className={tab === "cost" ? "active" : ""} type="button" onClick={() => setTab("cost")}>成本效益</button><button className={tab === "imagery" ? "active" : ""} type="button" onClick={() => setTab("imagery")}>影像资源</button><button className={tab === "carbon" ? "active" : ""} type="button" onClick={() => setTab("carbon")}>碳汇专题</button></nav>
+    {tab === "imagery" ? <QueryState loading={imageryQuery.isLoading} error={imageryQuery.error}>{imageryQuery.data && <ImageryInventoryScene inventory={imageryQuery.data} />}</QueryState> : tab !== "overview" && tab !== "carbon" ? <QueryState loading={topicsQuery.isLoading} error={topicsQuery.error}>{selectedTopic && <TopicScene topic={selectedTopic} policy={topicsQuery.data?.metricPolicy || ""} />}</QueryState> : <QueryState loading={query.isLoading} error={query.error}>{data && <div key={tab} className="cockpit-scene">
       <section className="cockpit-kpis">{metrics.map(([key, label, icon], index) => <Metric key={key} label={label} metric={(tab === "overview" ? data.overview[key] : data.carbon[key]) as CockpitMetric} icon={icon} index={index} />)}</section>
       <section className="cockpit-main-grid">
         <div className="cockpit-focus"><div className="focus-rings"><span /><span /><span /><Trees aria-hidden="true" /></div><small>{tab === "overview" ? "林班空间底座" : "碳汇核算底座"}</small><AnimatedNumber value={Number(focusMetric?.value || 0)} /><em>{tab === "overview" ? "个正式林班" : "个碳汇项目"}</em><p>{tab === "overview" ? "空间边界、资源属性与经营主体持续汇聚" : "核算边界、方法学、核证结果与收益统一管理"}</p></div>
@@ -42,6 +43,13 @@ export function LeadershipCockpitPage() {
     </div>}</QueryState>}
   </div>;
 }
+
+function ImageryInventoryScene({ inventory }: { inventory: ImageryInventoryResponse }) {
+  const labels: Record<string, string> = { orthophoto: "正射影像", dsm: "DSM 地表", dtm: "DTM 地形", pointcloud: "彩色点云", oblique3d: "实景三维", "flight-photos": "航飞原片" };
+  return <div className="cockpit-scene cockpit-topic-scene"><section className="cockpit-topic-heading"><span><Images /><small>空间资产盘点</small><h2>影像资源</h2></span><Link to="/drone/imagery-assets">进入影像台账</Link></section><section className="cockpit-kpis"><article className="cockpit-metric"><div><Images /><span>成果总数</span></div><strong>{inventory.total.toLocaleString("zh-CN")}</strong><small>正式影像与点云资产</small></article><article className="cockpit-metric"><div><Activity /><span>资料类型</span></div><strong>{inventory.typeCount}</strong><small>已入库成果分类</small></article><article className="cockpit-metric"><div><Trees /><span>覆盖面积</span></div><strong>{Math.round(inventory.totalAreaMu).toLocaleString("zh-CN")}</strong><small>亩 · 已完成范围分析</small></article><article className="cockpit-metric"><div><WalletCards /><span>数据容量</span></div><strong>{formatStorage(inventory.totalSizeBytes)}</strong><small>当前资产原始容量</small></article></section><section className="cockpit-imagery-inventory">{inventory.items.map((item) => <article key={item.assetType}><span><strong>{labels[item.assetType] || item.assetType}</strong><small>{item.count} 个成果</small></span><b>{Math.round(item.areaMu).toLocaleString("zh-CN")} 亩</b><em>{formatStorage(item.sizeBytes)}</em></article>)}</section><footer className="cockpit-footer"><span>面积按成果有效覆盖范围汇总，未完成范围识别的成果不计亩数</span><span>数据源：影像与点云成果台账 · {new Date(inventory.asOf).toLocaleString("zh-CN", { hour12: false })}</span></footer></div>;
+}
+
+function formatStorage(bytes: number) { if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(2)} TB`; if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`; return `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 
 function TopicScene({ topic, policy }: { topic: CockpitTopic; policy: string }) { const icon = topic.key === "emergency" ? ShieldAlert : topic.key === "harvest" ? Trees : topic.key === "drone" ? Plane : WalletCards; const Icon = icon; return <div key={topic.key} className="cockpit-scene cockpit-topic-scene"><section className="cockpit-topic-heading"><span><Icon /><small>专题驾驶舱</small><h2>{topic.label}</h2></span><time>更新时间 {new Date(topic.asOf).toLocaleString("zh-CN", { hour12: false })}</time></section><section className="cockpit-kpis">{topic.metrics.map((metric, index) => <article className="cockpit-metric" key={metric.key} style={{ animationDelay: `${index * 70}ms` }}><div><Activity /><span>{metric.label}</span></div>{metric.available ? <><AnimatedNumber value={Number(metric.value || 0)} /><small>{metric.unit} · {metric.source}</small></> : <><strong className="unavailable">未接入</strong><small>{metric.source}</small></>}<p>{metric.definition}</p><a href={metric.drilldown}>查看明细</a></article>)}</section>{topic.featureGates && <section className="cockpit-feature-gate"><ShieldAlert /><span><strong>视频会商：{topic.featureGates.videoConference ? "已启用" : "待协议接通"}</strong><small>{String(topic.featureGates.reason || "")}</small></span></section>}<footer className="cockpit-footer"><span>{policy}</span><span>行政层级下钻与明细入口已启用</span></footer></div>; }
 

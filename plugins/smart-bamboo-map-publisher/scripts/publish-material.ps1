@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$SourcePath,
-    [Parameter(Mandatory)][ValidateSet("orthophoto", "dsm", "dtm", "tiles-b3dm", "tiles-pnts", "pointcloud-las")][string]$Kind,
+    [Parameter(Mandatory)][ValidateSet("orthophoto", "dsm", "dtm", "tiles-b3dm", "tiles-pnts", "pointcloud-las", "dji-trajectory")][string]$Kind,
     [Parameter(Mandatory)][string]$ProjectName,
     [Parameter(Mandatory)][string]$ServerHost,
     [string]$SshUser = "root",
@@ -52,6 +52,8 @@ function New-RemoteActivationScript(
     $requiredPath = "$Stage/$DatasetName"
     $required = if ($Kind -like "tiles-*") {
         "test -f '$requiredPath/tileset.json';"
+    } elseif ($Kind -eq "dji-trajectory") {
+        "find '$requiredPath' -type f \( -iname 'POS_*.csv' -o -iname '*_sbet.out' -o -iname '*_sbet.txt' -o -iname '*_smrmsg.out' -o -iname '*_smrmsg.txt' \) | grep -q .;"
     } else {
         "find '$requiredPath' -type f \( -iname '*.las' -o -iname '*.laz' \) | grep -q .;"
     }
@@ -168,6 +170,11 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
         if (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Filter "*$expectedExtension" -ErrorAction SilentlyContinue | Select-Object -First 1)) {
             throw "目录中没有找到 $expectedExtension 瓦片。"
         }
+    } elseif ($Kind -eq "dji-trajectory") {
+        if (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $lowerName = $_.Name.ToLowerInvariant()
+            $_.Extension -in @(".csv", ".out", ".txt") -and ($lowerName.StartsWith("pos_") -or $lowerName.Contains("_sbet") -or $lowerName.Contains("_smrmsg"))
+        } | Select-Object -First 1)) { throw "轨迹目录中没有找到 DJI POS/SBET/SMRMSG 文件。" }
     } elseif (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Include *.las,*.laz -ErrorAction SilentlyContinue | Select-Object -First 1)) {
         throw "点云目录中没有 LAS/LAZ 文件。"
     }

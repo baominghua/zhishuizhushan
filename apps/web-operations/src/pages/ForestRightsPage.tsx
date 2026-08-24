@@ -12,12 +12,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useDeferredValue, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api/client";
 import type { ForestBlockOption, ForestRightPayload, ForestRightRecord } from "../api/types";
 import { ForestBlockSelector } from "../components/ForestBlockSelector";
 import { LedgerPagination } from "../components/LedgerPagination";
+import { LedgerSummaryStrip } from "../components/LedgerSummaryStrip";
 import { QueryState } from "../components/QueryState";
 import { SidePanel } from "../components/SidePanel";
 import { hasPermission, useCapabilities } from "../hooks/useCapabilities";
@@ -72,6 +73,15 @@ export function ForestRightsPage() {
       await queryClient.invalidateQueries({ queryKey: ["workspace-summary"] });
     },
   });
+  const summary = useMemo(() => {
+    const items = query.data?.items ?? [];
+    return [
+      { label: "档案总数", value: query.data?.total ?? 0, detail: "当前权限范围" },
+      { label: "有效档案", value: items.filter((item) => ["complete", "active"].includes(item.archiveStatus ?? "")).length, detail: "本页完整或有效", tone: "active" as const },
+      { label: "已挂接林班", value: items.filter((item) => item.linkedBlockCodes.length > 0).length, detail: "本页图档关联" },
+      { label: "待补正/争议", value: items.filter((item) => ["partial", "disputed"].includes(item.archiveStatus ?? "")).length, detail: "本页待处理", tone: "warning" as const },
+    ];
+  }, [query.data]);
 
   return (
     <div className="standard-page ledger-page">
@@ -83,6 +93,7 @@ export function ForestRightsPage() {
         </div>
       </section>
 
+      <LedgerSummaryStrip metrics={summary} />
       <section className="domain-boundary-note"><FolderKey aria-hidden="true" /><div><strong>档案与林班独立管理</strong><p>林班边界或资源调查变化不会自动改写林权档案；档案通过关联林班建立图档关系。</p></div></section>
 
       <section className="ledger-shell">

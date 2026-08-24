@@ -59,10 +59,39 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert 'Join-Path $StateRoot "history.json"' in assistant_script
         assert 'Header="发布时间"' in assistant_script
         assert "PublishedAtText" in assistant_script
+        assert '"dji-trajectory"' in material_script
+        assert '"DJI 航迹与姿态侧车"' in assistant_script
+        assert '"_smrmsg"' in assistant_script
 
         xaml_match = re.search(r"\[xml\]\$xaml = @'\r?\n(.*?)\r?\n'@", assistant_script, re.DOTALL)
         assert xaml_match is not None
         ET.fromstring(xaml_match.group(1))
+
+
+@pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")
+def test_publisher_scan_detects_dji_trajectory_sidecars(tmp_path: Path):
+    project = tmp_path / "邵武S2地块"
+    trajectory = project / "terra_trajectory" / "merge"
+    trajectory.mkdir(parents=True)
+    (project / "terra_trajectory" / "POS_DJI_demo.csv").write_text("# time, x, y, z\n1,117,27,800\n", encoding="utf-8")
+    (trajectory / "DJI_demo_sbet.txt").write_text("% Time Latitude Longitude\n", encoding="utf-8")
+
+    script = ROOT / "plugins" / "smart-bamboo-map-publisher" / "scripts" / "SmartBambooMapPublisher.ps1"
+    result = subprocess.run(
+        [WINDOWS_POWERSHELL, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-ScanPath", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    materials = json.loads(result.stdout)
+    if isinstance(materials, dict):
+        materials = [materials]
+    trajectory_item = next(item for item in materials if item["Kind"] == "dji-trajectory")
+    assert trajectory_item["ProjectName"] == "邵武S2地块"
+    assert trajectory_item["IsSelected"] is True
 
 
 @pytest.mark.skipif(WINDOWS_POWERSHELL is None, reason="Windows PowerShell 5.1 is required")

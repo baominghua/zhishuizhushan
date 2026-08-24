@@ -55,6 +55,7 @@ function Get-MaterialTypeLabel([string]$Kind) {
         "tiles-b3dm" { return "DJI B3DM 实景模型" }
         "tiles-pnts" { return "DJI PNTS 点云瓦片" }
         "pointcloud-las" { return "LAS/LAZ 原始点云" }
+        "dji-trajectory" { return "DJI 航迹与姿态侧车" }
         default { return $Kind }
     }
 }
@@ -229,6 +230,17 @@ function Get-MapMaterials([string]$Root) {
         [long]$size = ($group.Group | Measure-Object -Property Length -Sum).Sum
         $items.Add((New-MapItem $true "pointcloud-las" "LAS/LAZ 原始点云" $directory $size))
     }
+    $trajectoryDirectories = @(Get-ChildItem -LiteralPath $rootItem.FullName -Recurse -Directory -Filter "terra_trajectory" -ErrorAction SilentlyContinue | Where-Object { Test-PublishablePath $_.FullName })
+    foreach ($directory in $trajectoryDirectories) {
+        $sidecars = @(Get-ChildItem -LiteralPath $directory.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $lowerName = $_.Name.ToLowerInvariant()
+            $_.Extension -in @(".csv", ".out", ".txt") -and ($lowerName.StartsWith("pos_") -or $lowerName.Contains("_sbet") -or $lowerName.Contains("_smrmsg"))
+        })
+        if ($sidecars.Count -gt 0) {
+            [long]$size = ($sidecars | Measure-Object -Property Length -Sum).Sum
+            $items.Add((New-MapItem $true "dji-trajectory" "DJI 航迹与姿态侧车" $directory $size))
+        }
+    }
     return @($items | Sort-Object ProjectName, TypeLabel, SourcePath)
 }
 
@@ -253,7 +265,13 @@ function Get-SingleMaterial([string]$Path) {
     if (Get-ChildItem -LiteralPath $item.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @(".las", ".laz") } | Select-Object -First 1) {
         return New-MapItem $true "pointcloud-las" "LAS/LAZ 原始点云" $item (Get-DirectorySize $item)
     }
-    throw "该文件夹没有根 tileset.json+B3DM/PNTS，也没有 LAS/LAZ。"
+    if (Get-ChildItem -LiteralPath $item.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $lowerName = $_.Name.ToLowerInvariant()
+        $_.Extension -in @(".csv", ".out", ".txt") -and ($lowerName.StartsWith("pos_") -or $lowerName.Contains("_sbet") -or $lowerName.Contains("_smrmsg"))
+    } | Select-Object -First 1) {
+        return New-MapItem $true "dji-trajectory" "DJI 航迹与姿态侧车" $item (Get-DirectorySize $item)
+    }
+    throw "该文件夹没有根 tileset.json+B3DM/PNTS、LAS/LAZ 或 DJI POS/SBET/SMRMSG 轨迹资料。"
 }
 
 if ($ValidateOnly) {
@@ -281,7 +299,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
     <Style TargetType="TextBox"><Setter Property="Padding" Value="8,6"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
   </Window.Resources>
   <Grid Margin="20"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="150"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <DockPanel Grid.Row="0" Margin="0,0,0,14"><StackPanel><TextBlock Text="智慧竹山地图发布助手" FontSize="25" FontWeight="Bold" Foreground="#123B2F"/><TextBlock Text="自动识别 GeoTIFF、LAS/LAZ 和 DJI 3D Tiles，发布后返回平台登记路径" Foreground="#62776F" Margin="0,5,0,0"/></StackPanel><Button x:Name="HelpButton" Content="?" Width="42" Height="42" FontSize="20" FontWeight="Bold" DockPanel.Dock="Right" Margin="0" ToolTip="发布说明"/></DockPanel>
+    <DockPanel Grid.Row="0" Margin="0,0,0,14"><StackPanel><TextBlock Text="智慧竹山地图发布助手" FontSize="25" FontWeight="Bold" Foreground="#123B2F"/><TextBlock Text="自动识别 GeoTIFF、LAS/LAZ、DJI 3D Tiles 与轨迹侧车，发布后返回平台登记路径" Foreground="#62776F" Margin="0,5,0,0"/></StackPanel><Button x:Name="HelpButton" Content="?" Width="42" Height="42" FontSize="20" FontWeight="Bold" DockPanel.Dock="Right" Margin="0" ToolTip="发布说明"/></DockPanel>
     <Border Grid.Row="1" Background="White" BorderBrush="#D3E0DA" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,12"><Grid><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="90"/></Grid.ColumnDefinitions>
       <TextBlock Text="素材文件夹" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="SourceRootBox" Grid.Column="1"/><Button x:Name="BrowseRootButton" Grid.Column="2" Content="选择文件夹" Margin="8,0"/><Button x:Name="ScanButton" Grid.Column="3" Content="自动检索并分类" HorizontalAlignment="Left"/><Button x:Name="ManualFileButton" Grid.Column="4" Content="手动添加文件"/><Button x:Name="ManualFolderButton" Grid.Column="5" Content="添加文件夹" Margin="0"/>
       <TextBlock Grid.Row="1" Text="发布地址" VerticalAlignment="Center" Margin="0,10,8,0"/><StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="5" Orientation="Horizontal" Margin="0,10,0,0"><TextBox x:Name="HostBox" Width="145"/><TextBox x:Name="UserBox" Width="80" Margin="8,0,0,0"/><TextBox x:Name="PortBox" Width="65" Margin="8,0,0,0"/><TextBox x:Name="KeyBox" Width="290" Margin="8,0,0,0"/><TextBox x:Name="RemoteBox" Width="310" Margin="8,0,0,0"/></StackPanel>

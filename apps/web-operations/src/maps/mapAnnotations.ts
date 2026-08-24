@@ -52,6 +52,17 @@ export const MAP_ANNOTATION_COLORS: Record<MapAnnotationKind, string> = {
   demonstration: "#ffe16d",
 };
 
+export const MAP_ANNOTATION_GLYPHS: Record<MapAnnotationKind, string> = {
+  camera: "▣",
+  helmet: "⌒",
+  dock: "◆",
+  mission: "✈",
+  orthophoto: "▤",
+  pointcloud: "⁙",
+  mesh: "⬡",
+  demonstration: "★",
+};
+
 export const MAP_ANNOTATION_GROUPS: Array<{ label: string; kinds: MapAnnotationKind[] }> = [
   { label: "设备与作业", kinds: ["camera", "helmet", "dock", "mission"] },
   { label: "影像与成果", kinds: ["orthophoto", "pointcloud", "mesh", "demonstration"] },

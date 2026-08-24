@@ -37,7 +37,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { forestBlockColor } from "../maps/forestBlocks";
-import { MAP_ANNOTATION_COLORS } from "../maps/mapAnnotations";
+import { MAP_ANNOTATION_COLORS, MAP_ANNOTATION_GLYPHS } from "../maps/mapAnnotations";
 import type {
   MapAreaFocusRequest,
   MapLayerState,
@@ -71,6 +71,9 @@ interface CesiumGlobeProps {
 export interface Spatial3dDisplaySettings {
   opacity: number;
   pointSize: number;
+  colorMode?: "rgb" | "elevation" | "return" | "intensity";
+  elevationMinimum?: number;
+  elevationMaximum?: number;
   eastOffset?: number;
   northOffset?: number;
   heightOffset?: number;
@@ -99,7 +102,49 @@ function applySpatialTilesetStyle(
   if (assetType === "pointcloud") {
     // Do not assign a constant color here. DJI PNTS tiles carry per-point RGB,
     // and a white style discards the canopy colour that operators need to see.
-    tileset.style = new Cesium3DTileStyle({ pointSize: String(settings.pointSize) });
+    if (settings.colorMode === "elevation") {
+      const minimum = Number.isFinite(settings.elevationMinimum) ? Number(settings.elevationMinimum) : 0;
+      const maximum = Number.isFinite(settings.elevationMaximum) ? Number(settings.elevationMaximum) : minimum + 250;
+      const step = Math.max((maximum - minimum) / 5, 1);
+      tileset.style = new Cesium3DTileStyle({
+        pointSize: String(settings.pointSize),
+        color: {
+          conditions: [
+            [`\${POSITION}.z >= ${minimum + step * 4}`, "color('#d24a43')"],
+            [`\${POSITION}.z >= ${minimum + step * 3}`, "color('#f29d49')"],
+            [`\${POSITION}.z >= ${minimum + step * 2}`, "color('#e6d45c')"],
+            [`\${POSITION}.z >= ${minimum + step}`, "color('#63bf8b')"],
+            ["true", "color('#3c8dc5')"],
+          ],
+        },
+      });
+    } else if (settings.colorMode === "intensity") {
+      tileset.style = new Cesium3DTileStyle({
+        pointSize: String(settings.pointSize),
+        color: {
+          conditions: [
+            ["${intensity} >= 49152", "color('#f7fcf5')"],
+            ["${intensity} >= 32768", "color('#74c476')"],
+            ["${intensity} >= 16384", "color('#238b45')"],
+            ["true", "color('#00441b')"],
+          ],
+        },
+      });
+    } else if (settings.colorMode === "return") {
+      tileset.style = new Cesium3DTileStyle({
+        pointSize: String(settings.pointSize),
+        color: {
+          conditions: [
+            ["${return_number} >= 4", "color('#984ea3')"],
+            ["${return_number} == 3", "color('#ff7f00')"],
+            ["${return_number} == 2", "color('#4daf4a')"],
+            ["true", "color('#377eb8')"],
+          ],
+        },
+      });
+    } else {
+      tileset.style = new Cesium3DTileStyle({ pointSize: String(settings.pointSize) });
+    }
     return;
   }
   tileset.style = new Cesium3DTileStyle({
@@ -716,8 +761,8 @@ export function CesiumGlobe({
         name: asset.label,
         position: Cartesian3.fromDegrees(asset.longitude, asset.latitude, 8),
         label: new LabelGraphics({
-          text: "●",
-          font: "700 22px system-ui, sans-serif",
+          text: MAP_ANNOTATION_GLYPHS[asset.kind],
+          font: "800 20px 'Segoe UI Symbol', system-ui, sans-serif",
           fillColor: Color.fromCssColorString(MAP_ANNOTATION_COLORS[asset.kind]),
           outlineColor: Color.fromCssColorString("#03241e"),
           outlineWidth: 3,

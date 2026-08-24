@@ -104,7 +104,7 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "constrainResolution: true" in open_layers
     assert "maxDelta: 1" in open_layers
     assert "MAP_ANNOTATION_COLORS" in open_layers
-    assert 'text: "●"' in cesium
+    assert "MAP_ANNOTATION_GLYPHS" in cesium
     assert "inertiaZoom = 0.65" in cesium
     assert "maximumMovementRatio = 0.08" in cesium
     assert "preload: 0" in open_layers

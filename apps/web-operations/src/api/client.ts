@@ -668,6 +668,7 @@ export const api = {
     request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}/actions/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(payload) }),
   imageryAssets: (query: { q?: string; status?: string; published?: boolean; includeDeleted?: boolean; bbox?: string; limit?: number; offset?: number } = {}) =>
     request<ImageryAssetResponse>(`/api/scenes?${queryString(query)}`),
+  imageryInventory: () => request<import("./types").ImageryInventoryResponse>("/api/scenes/inventory"),
   uploadImageryAsset: (file: File, payload: ImageryUploadPayload) => {
     const body = new FormData();
     body.append("file", file);
