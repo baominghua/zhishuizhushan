@@ -418,7 +418,12 @@ class RegisterSceneRequest(BaseModel):
 
 
 class CoverageConfirmationRequest(BaseModel):
-    blockCodes: list[str] = Field(min_length=1)
+    blockCodes: list[str] = Field(default_factory=list)
+    relationType: str = "forest-block"
+    pointName: str = ""
+    pointCategory: str = ""
+    longitude: float | None = None
+    latitude: float | None = None
 
 
 class PointCloudFileManifest(BaseModel):
@@ -6031,6 +6036,29 @@ def confirm_scene_coverage(
             raise HTTPException(status_code=422, detail=f"Forest block does not exist: {code}")
         blocks.append(find_block(str(block["id"]), platform_auth_context(context)))
     confirmed_codes = [str(block["blockCode"]) for block in blocks]
+    relation_type = payload.relationType.strip() or "forest-block"
+    if relation_type not in {"forest-block", "independent-point"}:
+        raise HTTPException(status_code=422, detail="Unsupported spatial relation type")
+    if relation_type == "forest-block" and not confirmed_codes:
+        raise HTTPException(status_code=422, detail="请至少选择一个林班，或改为独立空间点位。")
+    spatial_relation: dict[str, Any] = {"type": "forest-block"}
+    if relation_type == "independent-point":
+        bounds = list(scene.get("bounds") or [])
+        longitude = payload.longitude
+        latitude = payload.latitude
+        if longitude is None and len(bounds) == 4:
+            longitude = (float(bounds[0]) + float(bounds[2])) / 2
+        if latitude is None and len(bounds) == 4:
+            latitude = (float(bounds[1]) + float(bounds[3])) / 2
+        if longitude is None or latitude is None or not (-180 <= longitude <= 180) or not (-90 <= latitude <= 90):
+            raise HTTPException(status_code=422, detail="独立点位需要有效经纬度。")
+        spatial_relation = {
+            "type": "independent-point",
+            "pointName": payload.pointName.strip() or str(scene.get("name") or "独立空间成果"),
+            "pointCategory": payload.pointCategory.strip() or "其他设施",
+            "longitude": longitude,
+            "latitude": latitude,
+        }
     analysis = dict(scene.get("coverageAnalysis") or {})
     analysis.update(
         {
@@ -6043,6 +6071,7 @@ def confirm_scene_coverage(
     updated = {
         **scene,
         "linkedBlockCodes": confirmed_codes,
+        "spatialRelation": spatial_relation,
         "processingStage": "ready",
         "coverageAnalysis": analysis,
         "updatedAt": now_iso(),

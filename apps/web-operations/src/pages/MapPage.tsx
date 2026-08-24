@@ -95,6 +95,12 @@ function isPointCloudAsset(asset: ImageryAsset) {
     || Boolean(asset.tileFormats?.pnts);
 }
 
+function assetViewerHref(sceneId: string, mode: "2d" | "3d", blockId?: string) {
+  const search = new URLSearchParams({ sceneId, mode });
+  if (blockId) search.set("blockId", blockId);
+  return `/v2/asset-viewer?${search.toString()}`;
+}
+
 export function MapPage() {
   const targetSceneId = useMemo(() => new URLSearchParams(window.location.search).get("sceneId") || "", []);
   const [resultsOpen, setResultsOpen] = useState(false);
@@ -268,19 +274,23 @@ export function MapPage() {
   }, [annotationAssets.data?.scenes, selectedMapAnnotation]);
   const selectedViewerLinks = useMemo(() => {
     const seen = new Set<string>();
+    const assetsById = new Map((annotationAssets.data?.scenes ?? []).map((asset) => [asset.id, asset]));
     return selectedAnnotations.flatMap((annotation) => {
       if (annotation.sourceType !== "imagery") return [];
       return (annotation.sourceIds ?? (annotation.sourceId ? [annotation.sourceId] : [])).flatMap((id, index) => {
         if (seen.has(id)) return [];
         seen.add(id);
+        const asset = assetsById.get(id);
         return [{
           id,
           label: index === 0 ? MAP_ANNOTATION_LABELS[annotation.kind] : `${MAP_ANNOTATION_LABELS[annotation.kind]} ${index + 1}`,
-          mode: annotation.kind === "orthophoto" ? "2d" : "3d",
+          assetName: asset?.name || "未命名影像成果",
+          assetDetail: asset ? `${spatialAssetFormat(asset)} · ${asset.fileName || "成果文件"}` : "成果详情待补充",
+          mode: annotation.kind === "orthophoto" ? "2d" as const : "3d" as const,
         }];
       });
     });
-  }, [selectedAnnotations]);
+  }, [annotationAssets.data?.scenes, selectedAnnotations]);
 
   useEffect(() => {
     window.localStorage.setItem(MAP_MODE_STORAGE_KEY, mode);
@@ -928,13 +938,15 @@ export function MapPage() {
                   <div>
                     {selectedViewerLinks.map((item) => (
                       <a
-                        className="button secondary"
-                        href={`/v2/asset-viewer?sceneId=${encodeURIComponent(item.id)}&mode=${item.mode}`}
+                        className="button secondary map-object-viewer-link"
+                        href={assetViewerHref(item.id, item.mode, selected.id)}
                         target="_blank"
                         rel="noreferrer"
+                        title={`${item.label}：${item.assetName}（${item.assetDetail}）`}
                         key={item.id}
                       >
-                        <ExternalLink aria-hidden="true" />{item.label}
+                        <ExternalLink aria-hidden="true" />
+                        <span><strong>{item.label}</strong><small>{item.assetName}</small></span>
                       </a>
                     ))}
                   </div>

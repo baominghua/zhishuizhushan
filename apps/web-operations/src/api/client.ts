@@ -688,10 +688,10 @@ export const api = {
     }),
   imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
   spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
-  confirmImageryCoverage: (id: string, blockCodes: string[]) =>
+  confirmImageryCoverage: (id: string, confirmation: string[] | import("./types").ImageryCoverageConfirmationPayload) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}/coverage/confirm`, {
       method: "POST",
-      body: JSON.stringify({ blockCodes }),
+      body: JSON.stringify(Array.isArray(confirmation) ? { blockCodes: confirmation } : confirmation),
     }),
   createPointCloudUploadSession: (payload: { name: string; missionId: string; capturedAt: string; files: File[]; outputs: Array<"copc" | "3dtiles"> }) =>
     request<PointCloudUploadSession>("/api/point-clouds/upload-sessions", {

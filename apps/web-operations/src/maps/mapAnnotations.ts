@@ -169,13 +169,18 @@ export function buildMapAnnotations({
     if (!kind) return;
     const codes = linkedBlockCodes(asset);
     if (codes.length === 0) {
-      const anchor = boundsAnchor(asset.bounds);
+      const relation = asset.spatialRelation;
+      const anchor = relation?.type === "independent-point"
+        && Number.isFinite(relation.longitude) && Number.isFinite(relation.latitude)
+        ? [Number(relation.longitude), Number(relation.latitude)] as [number, number]
+        : boundsAnchor(asset.bounds);
       if (!anchor) return;
+      const independent = relation?.type === "independent-point";
       annotations.push({
         id: `imagery:${kind}:unlinked:${asset.id}`,
         kind,
-        label: `${asset.name} · 待关联`,
-        subtitle: "成果已入库，尚未关联林班",
+        label: independent ? relation.pointName || asset.name : `${asset.name} · 待关联`,
+        subtitle: independent ? `独立空间点位 · ${relation.pointCategory || "其他设施"}` : "成果已入库，尚未关联林班",
         longitude: anchor[0],
         latitude: anchor[1],
         sourceType: "imagery",

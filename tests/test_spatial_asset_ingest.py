@@ -442,3 +442,44 @@ def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkey
     assert links.status_code == 200
     assert {item["relationType"] for item in links.json()["items"]} == {"coverage", "source-evidence"}
     assert {item["sceneId"] for item in links.json()["items"]} == {"scene-auto-cover"}
+
+
+def test_confirm_coverage_allows_independent_facility_point(app_client):
+    import server.app as app_module
+
+    scene = {
+        "id": "scene-independent-facility",
+        "name": "大横厂房可见光",
+        "assetType": "orthophoto",
+        "processingStage": "coverage-review",
+        "linkedBlockCodes": [],
+        "bounds": [117.10, 27.20, 117.12, 27.22],
+        "coverageAnalysis": {"requiresConfirmation": True, "matches": [], "suggestedBlockCodes": []},
+        "allowedRoles": [],
+        "allowedUsers": [],
+    }
+    app_module.save_scene(scene)
+
+    confirmed = app_client.post(
+        "/api/scenes/scene-independent-facility/coverage/confirm",
+        headers={"X-RS-Roles": "admin", "X-RS-User": "reviewer"},
+        json={
+            "blockCodes": [],
+            "relationType": "independent-point",
+            "pointName": "大横竹材加工厂",
+            "pointCategory": "竹材加工厂",
+        },
+    )
+
+    assert confirmed.status_code == 200
+    payload = confirmed.json()
+    assert payload["processingStage"] == "ready"
+    assert payload["linkedBlockCodes"] == []
+    assert payload["coverageAnalysis"]["requiresConfirmation"] is False
+    assert payload["spatialRelation"] == {
+        "type": "independent-point",
+        "pointName": "大横竹材加工厂",
+        "pointCategory": "竹材加工厂",
+        "longitude": pytest.approx(117.11),
+        "latitude": pytest.approx(27.21),
+    }

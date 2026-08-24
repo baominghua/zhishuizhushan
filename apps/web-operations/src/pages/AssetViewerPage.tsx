@@ -57,7 +57,15 @@ function calibrationKey(assetId: string) {
 }
 
 export function AssetViewerPage() {
-  const sceneId = useMemo(() => new URLSearchParams(window.location.search).get("sceneId") || "", []);
+  const viewerContext = useMemo(() => {
+    const search = new URLSearchParams(window.location.search);
+    return {
+      sceneId: search.get("sceneId") || "",
+      blockId: search.get("blockId") || "",
+    };
+  }, []);
+  const { sceneId, blockId } = viewerContext;
+  const returnHref = blockId ? `/v2/map?blockId=${encodeURIComponent(blockId)}` : "/v2/map";
   const assetQuery = useQuery({ queryKey: ["imagery-asset-viewer", sceneId], queryFn: () => api.imageryAsset(sceneId), enabled: Boolean(sceneId), staleTime: 60_000 });
   const mapConfig = useQuery({ queryKey: ["map-config"], queryFn: api.mapConfig, staleTime: 60_000 });
   const asset = assetQuery.data;
@@ -112,7 +120,7 @@ export function AssetViewerPage() {
     <main className="asset-viewer-page">
       <header className="asset-viewer-header">
         <div>
-          <a href="/v2/map" className="icon-button" aria-label="返回 GIS 一张图"><ArrowLeft aria-hidden="true" /></a>
+          <a href={returnHref} className="icon-button" aria-label={blockId ? "返回林班详情" : "返回 GIS 一张图"} title={blockId ? "返回林班详情" : "返回 GIS 一张图"}><ArrowLeft aria-hidden="true" /></a>
           <span><small>{mode === "3d" ? "独立三维场景" : "独立二维影像"}</small><strong>{asset?.name || "成果查看器"}</strong></span>
         </div>
         <div className="asset-viewer-actions">

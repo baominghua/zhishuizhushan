@@ -231,6 +231,13 @@ export interface ImageryAsset {
   assetType: ImageryAssetType;
   missionId: string;
   linkedBlockCodes: string[];
+  spatialRelation?: {
+    type: "forest-block" | "independent-point";
+    pointName?: string;
+    pointCategory?: string;
+    longitude?: number;
+    latitude?: number;
+  };
   processingStage: string;
   capturedAt: string;
   resolution: string;
@@ -287,6 +294,15 @@ export interface ImageryUploadPayload {
   capturedAt?: string;
   resolution?: string;
   linkedBlockCodes: string[];
+}
+
+export interface ImageryCoverageConfirmationPayload {
+  blockCodes: string[];
+  relationType?: "forest-block" | "independent-point";
+  pointName?: string;
+  pointCategory?: string;
+  longitude?: number;
+  latitude?: number;
 }
 
 export interface SpatialAssetTask {
