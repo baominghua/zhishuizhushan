@@ -100,8 +100,14 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "const sphere = targetTileset.boundingSphere" in cesium
     assert "detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT" in cesium
     assert "asset.maximumZoom ?? 22" in open_layers
-    assert "cacheSize: 512" in open_layers
-    assert "preload: 1" in open_layers
+    assert "cacheSize: 768" in open_layers
+    assert "constrainResolution: true" in open_layers
+    assert "maxDelta: 1" in open_layers
+    assert "MAP_ANNOTATION_COLORS" in open_layers
+    assert 'text: "●"' in cesium
+    assert "inertiaZoom = 0.65" in cesium
+    assert "maximumMovementRatio = 0.08" in cesium
+    assert "preload: 0" in open_layers
     assert "maxZoom: 18, padding: [88, 88, 88, 88]" in open_layers
     assert 'requestedMode === "2d" || requestedMode === "3d"' in page
     assert 'asset.assetType === "orthophoto"' in page

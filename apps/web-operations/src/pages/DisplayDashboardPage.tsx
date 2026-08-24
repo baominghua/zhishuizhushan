@@ -24,7 +24,6 @@ import {
   PanelRightOpen,
   Plane,
   Play,
-  Radio,
   RefreshCw,
   Route,
   Search,
@@ -390,7 +389,6 @@ export function DisplayDashboardPage() {
             detailMode={detailMode}
           />
           <div className="display-map-title"><span>竹林资源一张图</span><small>{mode === "3d" ? "三维地球" : "二维地图"} · 当前层级 {viewport.zoom} · 点击林班查看空间台账</small></div>
-          <div className="display-demo-note"><Radio /><span>统一空间标注</span><small>{situationAssets.length} 个设备、影像或示范点</small></div>
           {selectedBlockId && <article className="display-block-popover">
             <button type="button" onClick={() => setSelectedBlockId(null)} aria-label="关闭林班详情"><X /></button>
             {selectedBlock.isLoading ? <p>正在读取林班详情</p> : selectedBlock.data ? <>

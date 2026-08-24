@@ -14,6 +14,7 @@ import type {
 import { OpenLayersMap } from "./OpenLayersMap";
 import type { Spatial3dDisplaySettings } from "./CesiumGlobe";
 import type { MapAnnotation } from "../maps/mapAnnotations";
+import { MapAnnotationLegend } from "./MapAnnotationLegend";
 
 const CesiumGlobe = lazy(async () => ({
   default: (await import("./CesiumGlobe")).CesiumGlobe,
@@ -152,6 +153,7 @@ export function MapCanvas({
           )}
         </div>
       )}
+      <MapAnnotationLegend annotations={situationAssets} />
     </div>
   );
 }

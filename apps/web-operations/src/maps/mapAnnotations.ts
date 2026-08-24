@@ -41,6 +41,22 @@ export const MAP_ANNOTATION_LABELS: Record<MapAnnotationKind, string> = {
   demonstration: "高产示范点",
 };
 
+export const MAP_ANNOTATION_COLORS: Record<MapAnnotationKind, string> = {
+  camera: "#ffb84a",
+  helmet: "#61e4b1",
+  dock: "#63c8ff",
+  mission: "#d79bff",
+  orthophoto: "#25b8e8",
+  pointcloud: "#9b7bff",
+  mesh: "#ff9f43",
+  demonstration: "#ffe16d",
+};
+
+export const MAP_ANNOTATION_GROUPS: Array<{ label: string; kinds: MapAnnotationKind[] }> = [
+  { label: "设备与作业", kinds: ["camera", "helmet", "dock", "mission"] },
+  { label: "影像与成果", kinds: ["orthophoto", "pointcloud", "mesh", "demonstration"] },
+];
+
 export const DEFAULT_MAP_ANNOTATION_VISIBILITY: Record<MapAnnotationKind, boolean> = {
   camera: true,
   helmet: true,

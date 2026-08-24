@@ -11,7 +11,7 @@ function formatResolution(value: number) {
 }
 
 function clarityState(metrics: MapViewMetrics, asset?: ImageryAsset) {
-  const source = Number(asset?.metresPerPixel || 0);
+  const source = sourceResolution(asset);
   if (!source) return { tone: "unknown", text: "原图分辨率待识别", ratio: 0 };
   const ratio = source / Math.max(metrics.metresPerPixel, 0.000001);
   if (ratio >= 1.15) return { tone: "overzoom", text: `数字放大 ${ratio.toFixed(1)}×，不会增加真实细节`, ratio };
@@ -19,16 +19,25 @@ function clarityState(metrics: MapViewMetrics, asset?: ImageryAsset) {
   return { tone: "available", text: "仍有更高清层级可加载", ratio };
 }
 
+function sourceResolution(asset?: ImageryAsset) {
+  const measured = Number(asset?.metresPerPixel || 0);
+  if (Number.isFinite(measured) && measured > 0) return measured;
+  const detected = String(asset?.resolution || "").match(/\d+(?:\.\d+)?/);
+  const parsed = detected ? Number(detected[0]) : 0;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 export function ImageClarityStatus({ metrics, asset }: { metrics: MapViewMetrics | null; asset?: ImageryAsset }) {
   if (!metrics) return null;
   const state = clarityState(metrics, asset);
+  const originalResolution = sourceResolution(asset);
   return (
     <div className={`image-clarity-status ${state.tone}`} aria-live="polite">
       <ScanSearch aria-hidden="true" />
       <div>
         <strong>Z {metrics.zoom.toFixed(1)}</strong>
         <span>当前 {formatResolution(metrics.metresPerPixel)}</span>
-        {asset?.metresPerPixel ? <span>原图 {formatResolution(asset.metresPerPixel)}</span> : null}
+        {originalResolution ? <span>原图 {formatResolution(originalResolution)}</span> : null}
         {asset?.maximumZoom != null ? <span>有效上限 Z {asset.maximumZoom}</span> : null}
       </div>
       <small>{state.text}</small>

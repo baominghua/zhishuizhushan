@@ -23,7 +23,6 @@ import {
   NearFarScalar,
   OpenStreetMapImageryProvider,
   PolylineGraphics,
-  PointGraphics,
   Rectangle,
   SceneTransforms,
   ScreenSpaceEventType,
@@ -38,6 +37,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { forestBlockColor } from "../maps/forestBlocks";
+import { MAP_ANNOTATION_COLORS } from "../maps/mapAnnotations";
 import type {
   MapAreaFocusRequest,
   MapLayerState,
@@ -76,16 +76,6 @@ export interface Spatial3dDisplaySettings {
   heightOffset?: number;
 }
 
-const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
-  camera: "#ffb84a",
-  helmet: "#61e4b1",
-  dock: "#63c8ff",
-  mission: "#d79bff",
-  orthophoto: "#25b8e8",
-  pointcloud: "#9b7bff",
-  mesh: "#ff9f43",
-  demonstration: "#ffe16d",
-};
 const SITUATION_OFFSETS: Record<MapSituationAsset["kind"], [number, number]> = {
   camera: [-15, 0],
   helmet: [15, 0],
@@ -367,7 +357,7 @@ export function CesiumGlobe({
   const labelLayerRef = useRef<ImageryLayer | null>(null);
   const labelLayerReadyRef = useRef(false);
   const labelsVisibleRef = useRef(layers.labels);
-  const droneImageryLayersRef = useRef<ImageryLayer[]>([]);
+  const droneImageryLayersRef = useRef<Map<string, ImageryLayer>>(new Map());
   const spatial3dTilesetsRef = useRef<Map<string, Cesium3DTileset>>(new Map());
   const desiredSpatial3dAssetIdsRef = useRef<Set<string>>(new Set());
   const pendingSpatial3dLoadsRef = useRef<Map<string, symbol>>(new Map());
@@ -441,6 +431,8 @@ export function CesiumGlobe({
     // parcel inspection while preventing meaningless over-zoom beyond it.
     viewer.scene.screenSpaceCameraController.minimumZoomDistance = MINIMUM_SHARP_CAMERA_HEIGHT;
     viewer.scene.screenSpaceCameraController.maximumZoomDistance = 28_000_000;
+    viewer.scene.screenSpaceCameraController.inertiaZoom = 0.65;
+    viewer.scene.screenSpaceCameraController.maximumMovementRatio = 0.08;
 
     if (config.available) {
       const credit = new Credit("天地图");
@@ -535,7 +527,7 @@ export function CesiumGlobe({
       labelLayerRef.current = null;
       labelLayerReadyRef.current = false;
       blockDataSourceRef.current = null;
-      droneImageryLayersRef.current = [];
+      droneImageryLayersRef.current = new Map();
       spatial3dTilesetsRef.current = new Map();
       desiredSpatial3dAssetIdsRef.current = new Set();
       pendingSpatial3dLoadsRef.current.clear();
@@ -571,10 +563,19 @@ export function CesiumGlobe({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    droneImageryLayersRef.current.forEach((layer) => {
+    const desiredIds = new Set(imageryAssets.map((asset) => asset.id));
+    droneImageryLayersRef.current.forEach((layer, assetId) => {
+      if (desiredIds.has(assetId)) return;
       if (viewer.imageryLayers.contains(layer)) viewer.imageryLayers.remove(layer, true);
+      droneImageryLayersRef.current.delete(assetId);
     });
-    const nextLayers = imageryAssets.map((asset) => {
+    imageryAssets.forEach((asset) => {
+      const existing = droneImageryLayersRef.current.get(asset.id);
+      if (existing) {
+        existing.alpha = Number.isFinite(asset.opacity) ? asset.opacity : 0.9;
+        existing.show = layers.droneImagery;
+        return;
+      }
       const [west, south, east, north] = asset.bounds ?? [];
       const rectangle = [west, south, east, north].every(Number.isFinite)
         && west < east && south < north
@@ -589,15 +590,11 @@ export function CesiumGlobe({
       }));
       layer.alpha = Number.isFinite(asset.opacity) ? asset.opacity : 0.9;
       layer.show = layers.droneImagery;
-      return layer;
+      droneImageryLayersRef.current.set(asset.id, layer);
     });
-    droneImageryLayersRef.current = nextLayers;
     if (labelLayerRef.current) viewer.imageryLayers.raiseToTop(labelLayerRef.current);
     viewer.scene.requestRender();
-    return () => nextLayers.forEach((layer) => {
-      if (!viewer.isDestroyed() && viewer.imageryLayers.contains(layer)) viewer.imageryLayers.remove(layer, true);
-    });
-  }, [imageryAssets]);
+  }, [imageryAssets, layers.droneImagery]);
 
   useEffect(() => {
     droneImageryLayersRef.current.forEach((layer) => { layer.show = layers.droneImagery; });
@@ -716,26 +713,19 @@ export function CesiumGlobe({
       const [offsetX, offsetY] = SITUATION_OFFSETS[asset.kind];
       return viewer.entities.add({
         id: `map-annotation:${asset.id}`,
+        name: asset.label,
         position: Cartesian3.fromDegrees(asset.longitude, asset.latitude, 8),
-        point: new PointGraphics({
-          pixelSize: 13,
-          color: Color.fromCssColorString(SITUATION_COLORS[asset.kind]),
-          outlineColor: Color.fromCssColorString("#062b24"),
-          outlineWidth: 3,
-          heightReference: HeightReference.CLAMP_TO_GROUND,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        }),
         label: new LabelGraphics({
-          text: asset.mapLabel ?? asset.label,
-          font: "600 13px 'Microsoft YaHei', sans-serif",
-          fillColor: Color.WHITE,
+          text: "●",
+          font: "700 22px system-ui, sans-serif",
+          fillColor: Color.fromCssColorString(MAP_ANNOTATION_COLORS[asset.kind]),
           outlineColor: Color.fromCssColorString("#03241e"),
-          outlineWidth: 4,
+          outlineWidth: 3,
           style: LabelStyle.FILL_AND_OUTLINE,
-          pixelOffset: new Cartesian2(offsetX, offsetY - 24),
+          pixelOffset: new Cartesian2(offsetX, offsetY),
           heightReference: HeightReference.CLAMP_TO_GROUND,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          scaleByDistance: new NearFarScalar(2_000, 1, 160_000, 0.65),
+          scaleByDistance: new NearFarScalar(2_000, 1, 160_000, 0.7),
           translucencyByDistance: new NearFarScalar(80_000, 1, 400_000, 0),
         }),
       });
@@ -830,7 +820,7 @@ export function CesiumGlobe({
       const fromCenter = Cartesian3.subtract(viewer.camera.positionWC, sphere.center, new Cartesian3());
       const currentDistance = Cartesian3.magnitude(fromCenter);
       if (Number.isFinite(currentDistance) && currentDistance > 0) {
-        const factor = zoomRequest.direction === "in" ? 0.58 : 1.72;
+        const factor = zoomRequest.direction === "in" ? 0.8 : 1.25;
         const targetDistance = Math.min(
           Math.max(sphere.radius * 120, 2_000),
           Math.max(Math.max(sphere.radius * 0.08, 2), currentDistance * factor),
@@ -843,7 +833,7 @@ export function CesiumGlobe({
         viewer.camera.cancelFlight();
         viewer.camera.flyTo({
           destination,
-          duration: 0.35,
+          duration: 0.5,
           orientation: {
             direction: Cartesian3.normalize(Cartesian3.subtract(sphere.center, destination, new Cartesian3()), new Cartesian3()),
             up: viewer.camera.upWC,
@@ -857,7 +847,7 @@ export function CesiumGlobe({
     const values = [position.longitude, position.latitude, position.height];
     if (!values.every(Number.isFinite)) return;
 
-    const heightFactor = zoomRequest.direction === "in" ? 0.55 : 1.8;
+    const heightFactor = zoomRequest.direction === "in" ? 0.78 : 1.28;
     const targetHeight = Math.min(
       20_000_000,
       Math.max(detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT, position.height * heightFactor),
@@ -865,7 +855,7 @@ export function CesiumGlobe({
     viewer.camera.cancelFlight();
     viewer.camera.flyTo({
       destination: Cartesian3.fromRadians(position.longitude, position.latitude, targetHeight),
-      duration: 0.45,
+      duration: 0.55,
       orientation: {
         heading: viewer.camera.heading,
         pitch: targetHeight >= FAR_VIEW_PITCH_RESET_HEIGHT ? FAR_VIEW_PITCH : viewer.camera.pitch,

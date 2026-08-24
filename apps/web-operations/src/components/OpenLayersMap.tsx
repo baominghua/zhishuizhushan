@@ -6,6 +6,8 @@ import type { FeatureLike } from "ol/Feature";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import VectorTileLayer from "ol/layer/VectorTile";
+import MouseWheelZoom from "ol/interaction/MouseWheelZoom";
+import { defaults as defaultInteractions } from "ol/interaction/defaults";
 import Point from "ol/geom/Point";
 import { fromLonLat, toLonLat, transformExtent } from "ol/proj";
 import VectorSource from "ol/source/Vector";
@@ -19,6 +21,7 @@ import "ol/ol.css";
 import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { forestBlockColor } from "../maps/forestBlocks";
+import { MAP_ANNOTATION_COLORS } from "../maps/mapAnnotations";
 import type {
   MapAreaFocusRequest,
   MapLayerState,
@@ -49,16 +52,6 @@ interface OpenLayersMapProps {
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
 const BLOCK_LABEL_MIN_ZOOM = 12;
-const SITUATION_COLORS: Record<MapSituationAsset["kind"], string> = {
-  camera: "#ffb84a",
-  helmet: "#61e4b1",
-  dock: "#63c8ff",
-  mission: "#d79bff",
-  orthophoto: "#25b8e8",
-  pointcloud: "#9b7bff",
-  mesh: "#ff9f43",
-  demonstration: "#ffe16d",
-};
 const SITUATION_OFFSETS: Record<MapSituationAsset["kind"], [number, number]> = {
   camera: [-15, 0],
   helmet: [15, 0],
@@ -72,22 +65,14 @@ const SITUATION_OFFSETS: Record<MapSituationAsset["kind"], [number, number]> = {
 
 function createSituationStyle(feature: FeatureLike) {
   const kind = String(feature.get("kind")) as MapSituationAsset["kind"];
-  const color = SITUATION_COLORS[kind] || "#ffffff";
+  const color = MAP_ANNOTATION_COLORS[kind] || "#ffffff";
   const [offsetX, offsetY] = SITUATION_OFFSETS[kind] || [0, 0];
   return new Style({
     image: new CircleStyle({
-      radius: 8,
+      radius: 7,
       fill: new Fill({ color }),
-      stroke: new Stroke({ color: "#062b24", width: 3 }),
+      stroke: new Stroke({ color: "rgba(3, 35, 29, 0.96)", width: 2.5 }),
       displacement: [offsetX, offsetY],
-    }),
-    text: new Text({
-      text: String(feature.get("label") || ""),
-      font: "600 12px system-ui, sans-serif",
-      offsetX,
-      offsetY: offsetY - 19,
-      fill: new Fill({ color: "#ffffff" }),
-      stroke: new Stroke({ color: "rgba(3, 29, 24, 0.98)", width: 4 }),
     }),
     zIndex: 80,
   });
@@ -154,7 +139,7 @@ export function OpenLayersMap({
   const selectedLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const situationLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const situationSourceRef = useRef(new VectorSource());
-  const droneImageryLayersRef = useRef<TileLayer<XYZ>[]>([]);
+  const droneImageryLayersRef = useRef(new globalThis.Map<string, TileLayer<XYZ>>());
   const selectedSourceRef = useRef(new VectorSource());
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
   const selectBlockRef = useRef(onSelectBlock);
@@ -214,10 +199,21 @@ export function OpenLayersMap({
     const map = new Map({
       target: mapElement.current,
       layers: [imagery, labels, blockLayer, selectedLayer, situationLayer],
+      interactions: defaultInteractions({ mouseWheelZoom: false }).extend([
+        new MouseWheelZoom({
+          constrainResolution: true,
+          duration: 360,
+          maxDelta: 1,
+          timeout: 140,
+          useAnchor: true,
+        }),
+      ]),
       view: new View({
         center: fromLonLat([scene.home.longitude, scene.home.latitude]),
         zoom: scene.home.zoom2d,
         maxZoom: 28,
+        constrainResolution: true,
+        smoothResolutionConstraint: true,
       }),
     });
 
@@ -263,7 +259,6 @@ export function OpenLayersMap({
 
     map.on("moveend", reportViewport);
     map.on("moveend", reportViewMetrics);
-    map.getView().on("change:resolution", reportViewMetrics);
     map.on("pointermove", (event) => {
       if (!mapElement.current) return;
       mapElement.current.style.cursor = map.hasFeatureAtPixel(event.pixel, {
@@ -287,7 +282,7 @@ export function OpenLayersMap({
       blockLayerRef.current = null;
       selectedLayerRef.current = null;
       situationLayerRef.current = null;
-      droneImageryLayersRef.current = [];
+      droneImageryLayersRef.current.clear();
     };
   }, [config, scene.home.latitude, scene.home.longitude, scene.home.zoom2d]);
 
@@ -312,28 +307,41 @@ export function OpenLayersMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    droneImageryLayersRef.current.forEach((layer) => map.removeLayer(layer));
-    const nextLayers = imageryAssets.map((asset, index) => new TileLayer({
-      source: new XYZ({
-        url: asset.tileUrl,
-        maxZoom: asset.maximumZoom ?? 22,
-        transition: 120,
-        cacheSize: 512,
-        interpolate: !detailMode,
-      }),
-      opacity: Number.isFinite(asset.opacity) ? asset.opacity : 0.9,
-      visible: layers.droneImagery,
-      zIndex: 10 + index,
-      preload: 1,
-      extent: asset.bounds?.length === 4
-        ? transformExtent(asset.bounds, "EPSG:4326", "EPSG:3857")
-        : undefined,
-      properties: { title: asset.name, assetId: asset.id },
-    }));
-    nextLayers.forEach((layer) => map.addLayer(layer));
-    droneImageryLayersRef.current = nextLayers;
-    return () => nextLayers.forEach((layer) => map.removeLayer(layer));
-  }, [detailMode, imageryAssets]);
+    const desiredIds = new Set(imageryAssets.map((asset) => asset.id));
+    droneImageryLayersRef.current.forEach((layer, assetId) => {
+      if (desiredIds.has(assetId)) return;
+      map.removeLayer(layer);
+      droneImageryLayersRef.current.delete(assetId);
+    });
+    imageryAssets.forEach((asset, index) => {
+      const existing = droneImageryLayersRef.current.get(asset.id);
+      if (existing) {
+        existing.setOpacity(Number.isFinite(asset.opacity) ? asset.opacity : 0.9);
+        existing.setVisible(layers.droneImagery);
+        existing.setZIndex(10 + index);
+        return;
+      }
+      const layer = new TileLayer({
+        source: new XYZ({
+          url: asset.tileUrl,
+          maxZoom: asset.maximumZoom ?? 22,
+          transition: 180,
+          cacheSize: 768,
+          interpolate: !detailMode,
+        }),
+        opacity: Number.isFinite(asset.opacity) ? asset.opacity : 0.9,
+        visible: layers.droneImagery,
+        zIndex: 10 + index,
+        preload: 0,
+        extent: asset.bounds?.length === 4
+          ? transformExtent(asset.bounds, "EPSG:4326", "EPSG:3857")
+          : undefined,
+        properties: { title: asset.name, assetId: asset.id },
+      });
+      droneImageryLayersRef.current.set(asset.id, layer);
+      map.addLayer(layer);
+    });
+  }, [detailMode, imageryAssets, layers.droneImagery]);
 
   useEffect(() => {
     const view = mapRef.current?.getView();
