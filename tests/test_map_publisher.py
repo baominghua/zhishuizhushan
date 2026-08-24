@@ -44,6 +44,7 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert "$nativeExitCode = $LASTEXITCODE" in material_script
         assert "New-RemoteActivationScript" in material_script
         assert '"test -f \'$requiredPath/tileset.json\';"' in material_script
+        assert "-print -quit | grep -q ." in material_script
         assert "Get-ArchiveCacheRoot" in material_script
         assert '".smart-bamboo-publish-cache"' in material_script
         assert "Assert-ArchiveCacheSpace" in material_script

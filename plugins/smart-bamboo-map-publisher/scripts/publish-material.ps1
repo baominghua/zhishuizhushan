@@ -53,9 +53,9 @@ function New-RemoteActivationScript(
     $required = if ($Kind -like "tiles-*") {
         "test -f '$requiredPath/tileset.json';"
     } elseif ($Kind -eq "dji-trajectory") {
-        "find '$requiredPath' -type f \( -iname 'POS_*.csv' -o -iname '*_sbet.out' -o -iname '*_sbet.txt' -o -iname '*_smrmsg.out' -o -iname '*_smrmsg.txt' \) | grep -q .;"
+        "find '$requiredPath' -type f \( -iname 'POS_*.csv' -o -iname '*_sbet.out' -o -iname '*_sbet.txt' -o -iname '*_smrmsg.out' -o -iname '*_smrmsg.txt' \) -print -quit | grep -q .;"
     } else {
-        "find '$requiredPath' -type f \( -iname '*.las' -o -iname '*.laz' \) | grep -q .;"
+        "find '$requiredPath' -type f \( -iname '*.las' -o -iname '*.laz' \) -print -quit | grep -q .;"
     }
     return "set -euo pipefail; stage='$Stage'; archive='$RemoteArchive'; destination='$RemoteDestination'; backup='$Backup'; mkdir -p `"`$stage`"; tar -xf `"`$archive`" -C `"`$stage`"; $required if [ -e `"`$destination`" ]; then mv `"`$destination`" `"`$backup`"; fi; mv `"`$stage/$DatasetName`" `"`$destination`"; rmdir `"`$stage`"; chmod -R a+rX `"`$destination`"; rm -f `"`$archive`""
 }
