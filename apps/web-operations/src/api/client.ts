@@ -666,7 +666,7 @@ export const api = {
     request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   applyDroneMissionAction: (id: string, action: string, payload: DroneMissionActionPayload = {}) =>
     request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}/actions/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(payload) }),
-  imageryAssets: (query: { q?: string; status?: string; published?: boolean; includeDeleted?: boolean; bbox?: string; limit?: number; offset?: number } = {}) =>
+  imageryAssets: (query: { q?: string; status?: string; published?: boolean; includeDeleted?: boolean; bbox?: string; assetType?: string; resourceFormat?: string; limit?: number; offset?: number } = {}) =>
     request<ImageryAssetResponse>(`/api/scenes?${queryString(query)}`),
   imageryInventory: () => request<import("./types").ImageryInventoryResponse>("/api/scenes/inventory"),
   uploadImageryAsset: (file: File, payload: ImageryUploadPayload) => {
@@ -689,6 +689,8 @@ export const api = {
     }),
   imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
   spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
+  retrySpatialAssetTask: (id: string) =>
+    request<{ accepted: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" }),
   confirmImageryCoverage: (id: string, confirmation: string[] | import("./types").ImageryCoverageConfirmationPayload) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}/coverage/confirm`, {
       method: "POST",

@@ -19,7 +19,7 @@ function Get-DefaultConfig {
         remoteInbox = "/srv/smart-bamboo/data/remote-sensing/inbox"
         platformInbox = "/app/data/remote-sensing/inbox"
         platformBaseUrl = "https://36.140.138.117:18081"
-        lastSourceRoot = "D:\拷贝任务"
+        lastSourceRoot = "D:\数据迁移"
     }
 }
 
@@ -60,8 +60,16 @@ function Get-MaterialTypeLabel([string]$Kind) {
     }
 }
 
-function Get-HistoryKey([string]$SourcePath, [string]$Kind) {
-    return "$($Kind.ToLowerInvariant())|$($SourcePath.ToLowerInvariant())"
+function Get-HistoryKey([string]$SourcePath, [string]$Kind, [string]$SourceStamp = "") {
+    return "$($Kind.ToLowerInvariant())|$($SourcePath.ToLowerInvariant())|$SourceStamp"
+}
+
+function Get-SourceStamp([string]$SourcePath) {
+    try {
+        $source = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
+        [long]$size = if ($source.PSIsContainer) { Get-DirectorySize $source } else { $source.Length }
+        return "$size|$($source.LastWriteTimeUtc.Ticks)"
+    } catch { return "missing" }
 }
 
 function Get-PublishedAtText([string]$PublishedAt) {
@@ -93,7 +101,10 @@ function Read-PublisherHistory([string]$StateRoot) {
                 $kind = [string]$record.Kind
                 $platformPath = [string]$record.PlatformPath
                 if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($kind) -or [string]::IsNullOrWhiteSpace($platformPath)) { continue }
-                $historyByKey[(Get-HistoryKey $sourcePath $kind)] = [pscustomobject]@{
+                $stampProperty = $record.PSObject.Properties["SourceStamp"]
+                $storedStamp = if ($stampProperty) { [string]$stampProperty.Value } else { "" }
+                $sourceStamp = if ([string]::IsNullOrWhiteSpace($storedStamp)) { Get-SourceStamp $sourcePath } else { $storedStamp }
+                $historyByKey[(Get-HistoryKey $sourcePath $kind $sourceStamp)] = [pscustomobject]@{
                     SourcePath = $sourcePath
                     Kind = $kind
                     ProjectName = [string]$record.ProjectName
@@ -101,6 +112,7 @@ function Read-PublisherHistory([string]$StateRoot) {
                     SizeText = if ([string]::IsNullOrWhiteSpace([string]$record.SizeText)) { "—" } else { [string]$record.SizeText }
                     PlatformPath = $platformPath
                     PublishedAt = [string]$record.PublishedAt
+                    SourceStamp = $sourceStamp
                 }
             }
         } catch {
@@ -118,7 +130,8 @@ function Read-PublisherHistory([string]$StateRoot) {
                 $kind = [string]$item.kind
                 $platformPath = [string]$item.platformPath
                 if ([string]::IsNullOrWhiteSpace($sourcePath) -or [string]::IsNullOrWhiteSpace($kind) -or [string]::IsNullOrWhiteSpace($platformPath)) { continue }
-                $key = Get-HistoryKey $sourcePath $kind
+                $sourceStamp = Get-SourceStamp $sourcePath
+                $key = Get-HistoryKey $sourcePath $kind $sourceStamp
                 $existing = $historyByKey[$key]
                 $historyByKey[$key] = [pscustomobject]@{
                     SourcePath = $sourcePath
@@ -128,6 +141,7 @@ function Read-PublisherHistory([string]$StateRoot) {
                     SizeText = if ($existing -and -not [string]::IsNullOrWhiteSpace([string]$existing.SizeText)) { [string]$existing.SizeText } else { "—" }
                     PlatformPath = $platformPath
                     PublishedAt = $resultFile.LastWriteTime.ToString("o")
+                    SourceStamp = $sourceStamp
                 }
             }
         } catch { continue }
@@ -151,6 +165,7 @@ function New-HistoryMapItem($Record) {
         PublishPathAction = "查看并复制"
         PublishedAt = [string]$Record.PublishedAt
         PublishedAtText = Get-PublishedAtText ([string]$Record.PublishedAt)
+        SourceStamp = [string]$Record.SourceStamp
     }
 }
 
@@ -177,6 +192,7 @@ function New-MapItem([bool]$Selected, [string]$Kind, [string]$TypeLabel, [System
         PublishPathAction = "未发布"
         PublishedAt = ""
         PublishedAtText = "—"
+        SourceStamp = "$SizeBytes|$($Source.LastWriteTimeUtc.Ticks)"
     }
 }
 
@@ -331,13 +347,13 @@ $ui.SourceRootBox.Text = [string]$config.lastSourceRoot; $ui.HostBox.Text = [str
 $script:historyStateRoot = Get-PublisherStateRoot $HistoryStateRoot
 $historyRecords = @(Read-PublisherHistory $script:historyStateRoot)
 $script:historyByKey = @{}
-foreach ($record in $historyRecords) { $script:historyByKey[(Get-HistoryKey ([string]$record.SourcePath) ([string]$record.Kind))] = $record }
+foreach ($record in $historyRecords) { $script:historyByKey[(Get-HistoryKey ([string]$record.SourcePath) ([string]$record.Kind) ([string]$record.SourceStamp))] = $record }
 $collection = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $ui.MaterialGrid.ItemsSource = $collection
 $script:lastResults = @($historyRecords | ForEach-Object { [pscustomobject]@{ source=$_.SourcePath; kind=$_.Kind; projectName=$_.ProjectName; platformPath=$_.PlatformPath } }); $script:process = $null; $script:resultPath = ""; $script:logPath = ""
 
 function Add-Material($item) {
-    $history = $script:historyByKey[(Get-HistoryKey ([string]$item.SourcePath) ([string]$item.Kind))]
+    $history = $script:historyByKey[(Get-HistoryKey ([string]$item.SourcePath) ([string]$item.Kind) ([string]$item.SourceStamp))]
     if ($history) {
         $item.IsSelected = $false
         $item.Status = "已发布"
@@ -406,9 +422,12 @@ $timer.Add_Tick({
                             SizeText = [string]$item.SizeText
                             PlatformPath = [string]$item.PlatformPath
                             PublishedAt = $publishedAt
+                            SourceStamp = [string]$item.SourceStamp
                         }
-                        $script:historyByKey[(Get-HistoryKey $historyRecord.SourcePath $historyRecord.Kind)] = $historyRecord
+                        $script:historyByKey[(Get-HistoryKey $historyRecord.SourcePath $historyRecord.Kind $historyRecord.SourceStamp)] = $historyRecord
                     }
+                } elseif ($item.Status -eq "发布中") {
+                    $item.Status = "待续传"
                 }
             }
             if ($script:lastResults.Count) { Save-PublisherHistory @($script:historyByKey.Values) $script:historyStateRoot }
@@ -429,14 +448,15 @@ $ui.PublishButton.Add_Click({
         $currentConfig | ConvertTo-Json | Set-Content -LiteralPath (Get-ConfigPath) -Encoding UTF8
         $runtime = Join-Path $env:LOCALAPPDATA "SmartBamboo\MapPublisher\Runtime"; New-Item -ItemType Directory -Path $runtime -Force | Out-Null
         $id = [Guid]::NewGuid().ToString("N"); $manifestPath = Join-Path $runtime "$id.manifest.json"; $script:resultPath = Join-Path $runtime "$id.result.json"; $script:logPath = Join-Path $runtime "$id.log"
-        @{ config=$currentConfig; items=@($selected | ForEach-Object { @{ sourcePath=$_.SourcePath; kind=$_.Kind; projectName=$_.ProjectName } }) } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-        "发布任务已创建，共 $($selected.Count) 项。" | Set-Content -LiteralPath $script:logPath -Encoding UTF8
+        $versionId = Get-Date -Format "yyyyMMdd-HHmmss"
+        @{ config=$currentConfig; versionId=$versionId; items=@($selected | ForEach-Object { @{ sourcePath=$_.SourcePath; kind=$_.Kind; projectName=$_.ProjectName } }) } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+        "发布任务已创建，共 $($selected.Count) 项；多时期批次：$versionId。" | Set-Content -LiteralPath $script:logPath -Encoding UTF8
         $batch = Join-Path $PSScriptRoot "publish-batch.ps1"
         $script:process = Start-Process powershell.exe -ArgumentList @("-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File",$batch,"-ManifestPath",$manifestPath,"-ResultPath",$script:resultPath,"-LogPath",$script:logPath) -WindowStyle Hidden -PassThru
-        $ui.PublishButton.IsEnabled = $false; $ui.ScanButton.IsEnabled = $false; $ui.SelectAllButton.IsEnabled = $false; $ui.ClearAllButton.IsEnabled = $false; $ui.StatusText.Text = "正在发布，请勿关闭助手……"; $timer.Start()
+        $ui.PublishButton.IsEnabled = $false; $ui.ScanButton.IsEnabled = $false; $ui.SelectAllButton.IsEnabled = $false; $ui.ClearAllButton.IsEnabled = $false; $ui.StatusText.Text = "正在发布批次 $versionId；每个成果状态会在日志中更新……"; foreach ($item in $selected) { $item.Status = "发布中" }; $ui.MaterialGrid.Items.Refresh(); $timer.Start()
     } catch { Show-Error $_.Exception.Message }
 })
 
-$window.Add_Closing({ if ($script:process -and -not $script:process.HasExited) { $answer = [System.Windows.MessageBox]::Show($window, "发布仍在进行，关闭助手会终止本次任务。确认关闭？", "确认", "YesNo", "Warning"); if ($answer -ne "Yes") { $_.Cancel = $true } else { $script:process.Kill() } } })
+$window.Add_Closing({ if ($script:process -and -not $script:process.HasExited) { [System.Windows.MessageBox]::Show($window, "发布任务将在后台继续运行。稍后重新打开助手，会自动恢复已完成记录和发布路径。", "后台继续发布", "OK", "Information") | Out-Null } })
 if ($ValidateUi) { "SMART_BAMBOO_MAP_PUBLISHER_UI_READY history=$($historyRecords.Count) rows=$($collection.Count)"; return }
 $window.ShowDialog() | Out-Null

@@ -83,6 +83,16 @@ const MODULE_ICONS = {
   "system-governance": ShieldEllipsis,
 };
 
+const MODULE_ORDER = [
+  "workspace", "operations-todos", "operations-notifications", "leadership-cockpit", "map",
+  "forest-blocks", "forest-subcompartments", "forest-rights", "resourceSurveys", "resource-intelligence", "imports", "attachments",
+  "patrol", "harvest", "labor", "workforce-development", "cost-management", "safety-events", "mobile-operations",
+  "equipment", "drone-missions", "imagery-assets", "integration-hub",
+  "ai-findings", "ai-models", "ai-inference", "carbon-estimates",
+  "system-overview", "organizations", "users", "roles", "permissions", "basemap-settings", "operations-audit", "system-governance",
+];
+const MODULE_ORDER_INDEX = new globalThis.Map(MODULE_ORDER.map((key, index) => [key, index]));
+
 function pageTitle(pathname: string) {
   if (pathname.includes("/system/governance")) return "系统治理";
   if (pathname.includes("/resources/intelligence")) return "资源专题分析";
@@ -142,7 +152,8 @@ function AdministrativeShell({ pathname }: { pathname: string }) {
     retry: (count, error) => !(error instanceof ApiError && error.status === 401) && count < 2,
   });
   const modules = useMemo(
-    () => (capabilities.data?.modules ?? []).filter((module) => module.visible),
+    () => (capabilities.data?.modules ?? []).filter((module) => module.visible).sort((left, right) =>
+      (MODULE_ORDER_INDEX.get(left.key) ?? 999) - (MODULE_ORDER_INDEX.get(right.key) ?? 999)),
     [capabilities.data],
   );
   const notificationsVisible = modules.some((module) => module.key === "operations-notifications");

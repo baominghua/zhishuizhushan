@@ -13,6 +13,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -109,6 +110,7 @@ from server.modules.spatial_assets import (
     convert_point_cloud_to_3dtiles,
     convert_point_cloud_to_copc,
     coverage_analysis,
+    effective_union_area_hectares,
     effective_raster_footprint,
     inspect_3d_tileset,
     normalized_tileset_document,
@@ -165,6 +167,7 @@ TASKS_PATH = DATA_DIR / "tasks.json"
 CACHE_DIR = DATA_DIR / "tile-cache"
 THUMBNAIL_DIR = DATA_DIR / "thumbnail-cache"
 TIANDITU_CACHE_DIR = DATA_DIR / "basemap-cache" / "tianditu"
+DOWNLOAD_PACKAGE_DIR = DATA_DIR / "download-packages"
 STATIC_DIR = Path(os.environ.get("REMOTE_SENSING_STATIC_DIR", str(ROOT_DIR))).expanduser().resolve()
 V2_FRONTEND_DIR = Path(
     os.environ.get(
@@ -290,6 +293,7 @@ CATALOG_LOCK = threading.RLock()
 TASK_LOCK = threading.RLock()
 CACHE_PRUNE_LOCK = threading.RLock()
 POINT_CLOUD_SESSION_LOCK = threading.RLock()
+DOWNLOAD_PACKAGE_LOCK = threading.RLock()
 POINT_CLOUD_FILE_LOCKS: dict[str, threading.RLock] = {}
 CACHE_LAST_PRUNE: dict[str, float] = {}
 TASK_EXECUTOR = ThreadPoolExecutor(max_workers=TASK_WORKERS)
@@ -383,6 +387,7 @@ def ensure_dirs() -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
     TIANDITU_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    DOWNLOAD_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
     for import_dir in IMPORT_DIRS:
         import_dir.mkdir(parents=True, exist_ok=True)
     if not CATALOG_PATH.exists():
@@ -672,17 +677,25 @@ def filter_scenes(
     bbox: list[float] | None = None,
     published: str = "",
     delivery_status: str = "",
+    asset_type: str = "",
+    resource_format: str = "",
 ) -> list[dict[str, Any]]:
     keyword = q.strip().lower()
     status_filter = status.strip()
     delivery_status_filter = delivery_status.strip()
     published_filter = parse_boolean_filter(published)
+    asset_type_filter = asset_type.strip().lower()
+    resource_format_filter = resource_format.strip().upper()
     result = []
     for scene in scenes:
         scene_status = str(scene.get("status") or "active")
         if status_filter and scene_status != status_filter:
             continue
         if delivery_status_filter and str(scene.get("deliveryStatus") or "pending") != delivery_status_filter:
+            continue
+        if asset_type_filter and str(scene.get("assetType") or "").lower() != asset_type_filter:
+            continue
+        if resource_format_filter and resource_format_filter not in scene_resource_formats(scene):
             continue
         if published_filter is not None and published_workflow_scene(scene) != published_filter:
             continue
@@ -2027,6 +2040,35 @@ def scene_maximum_zoom(scene: dict[str, Any]) -> int:
     return min(24, max(0, native_zoom))
 
 
+def scene_resource_formats(scene: dict[str, Any]) -> list[str]:
+    formats: set[str] = set()
+    asset_type = str(scene.get("assetType") or "").lower()
+    original_path = str(scene.get("originalPath") or "").lower()
+    source_paths = [str(value).lower() for value in scene.get("pointCloudSourcePaths") or []]
+    tile_formats = {str(key).lower() for key in dict(scene.get("tileFormats") or {}).keys()}
+    content_type = str(scene.get("tilesetContentType") or "").lower()
+    if asset_type in {"orthophoto", "dsm", "dtm"}:
+        formats.update({"GEOTIFF", "COG"})
+    if original_path.endswith((".las", ".laz")) or any(path.endswith((".las", ".laz")) for path in source_paths):
+        formats.add("LAS/LAZ")
+    if str(scene.get("copcPath") or "").strip():
+        formats.add("COPC")
+    if "pnts" in tile_formats or content_type == "pnts" or (asset_type == "pointcloud" and scene.get("tilesetPath")):
+        formats.add("PNTS")
+    if "b3dm" in tile_formats or content_type == "b3dm" or asset_type == "oblique3d":
+        formats.add("B3DM")
+    if asset_type == "flight-photos":
+        formats.add("航飞原片")
+    return sorted(formats)
+
+
+def scene_temporal_series_key(scene: dict[str, Any]) -> str:
+    relation = scene.get("spatialRelation") if isinstance(scene.get("spatialRelation"), dict) else {}
+    relation_key = "|".join(split_tokens(scene.get("linkedBlockCodes"))) or str(relation.get("pointName") or "")
+    name = re.sub(r"\s+", "", str(scene.get("name") or "").lower())
+    return hashlib.sha256(f"{scene.get('assetType')}|{relation_key}|{name}".encode("utf-8")).hexdigest()[:16]
+
+
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
@@ -2070,6 +2112,10 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     )
     return {
         **public_record,
+        "resourceFormats": scene_resource_formats(public_record),
+        "recordedAt": str(scene.get("capturedAt") or scene.get("createdAt") or ""),
+        "recordedAtSource": "captured" if str(scene.get("capturedAt") or "").strip() else "uploaded",
+        "temporalSeriesKey": scene_temporal_series_key(scene),
         "maximumZoom": scene_maximum_zoom(scene),
         "tileFormat": "webp",
         "tileUrl": "" if is_3d_asset else tile_url,
@@ -2080,6 +2126,7 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
             if str(scene.get("originalPath") or "").strip()
             else ""
         ),
+        "archiveDownloadUrl": f"/api/scenes/{scene_id}/download/archive{token_query}",
         "copcUrl": (
             f"/api/scenes/{scene_id}/point-cloud/copc{token_query}"
             if str(scene.get("copcPath") or "").strip()
@@ -4538,10 +4585,31 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             copc_path = dataset_dir / "dataset.copc.laz"
             if copc_path.exists():
                 copc_path.unlink()
+            last_copc_heartbeat = {"minute": -1}
+
+            def report_copc_progress(written: int, total: int, elapsed: float) -> None:
+                elapsed_minute = int(elapsed // 60)
+                if elapsed_minute == last_copc_heartbeat["minute"]:
+                    return
+                last_copc_heartbeat["minute"] = elapsed_minute
+                update_task(
+                    task_id,
+                    progress=min(59, 25 + elapsed_minute),
+                    message=(
+                        f"正在生成 COPC · {len(source_paths)} 个 LAS/LAZ · "
+                        f"已运行 {elapsed_minute + 1} 分钟 · "
+                        f"已写入 {written / 1024 / 1024 / 1024:.2f} GB"
+                    ),
+                    heartbeatAt=now_iso(),
+                    sourceBytes=total,
+                    outputBytes=written,
+                )
+
             convert_point_cloud_to_copc(
                 source_paths,
                 copc_path,
                 pdal_executable=POINT_CLOUD_PDAL_EXECUTABLE,
+                progress_callback=report_copc_progress,
             )
         if "3dtiles" in outputs:
             update_task(task_id, progress=65, message="Converting point cloud to 3D Tiles")
@@ -4713,16 +4781,29 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
 def recover_interrupted_tasks() -> None:
     tasks = load_tasks()
     changed = False
+    resumable_task_ids: list[str] = []
     for task in tasks:
         if task.get("status") in {"queued", "running"}:
-            task["status"] = "failed"
-            task["progress"] = 100
-            task["message"] = "Interrupted by service restart; please submit again"
+            is_point_cloud = str(task.get("assetType") or "") == "pointcloud"
+            source_paths = [Path(str(value)).resolve() for value in task.get("sourcePaths") or []]
+            if is_point_cloud and source_paths and all(path.exists() for path in source_paths):
+                task["status"] = "queued"
+                task["progress"] = 0
+                task["message"] = "服务重启后自动恢复点云处理，无需重新上传"
+                task["recoveredAfterRestartAt"] = now_iso()
+                resumable_task_ids.append(str(task.get("id") or ""))
+            else:
+                task["status"] = "failed"
+                task["progress"] = 100
+                task["message"] = "Interrupted by service restart; please submit again"
+                task["failedAt"] = now_iso()
             task["updatedAt"] = now_iso()
-            task["failedAt"] = now_iso()
             changed = True
     if changed:
         save_tasks(tasks)
+    for task_id in resumable_task_ids:
+        if task_id:
+            TASK_EXECUTOR.submit(run_point_cloud_conversion_task, task_id)
 
 
 def mount_optional_titiler() -> bool:
@@ -5800,6 +5881,8 @@ def list_scenes(
     bbox: str = Query(default=""),
     published: str = Query(default=""),
     deliveryStatus: str = Query(default=""),
+    assetType: str = Query(default=""),
+    resourceFormat: str = Query(default=""),
     includeDeleted: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -5829,6 +5912,8 @@ def list_scenes(
         bbox=query_bbox,
         published=published,
         delivery_status=deliveryStatus,
+        asset_type=assetType,
+        resource_format=resourceFormat,
     )
     if not status:
         scenes = [scene for scene in scenes if str(scene.get("status") or "active") != "archived"]
@@ -5848,23 +5933,34 @@ def imagery_scene_inventory(request: Request) -> dict[str, Any]:
     scenes = filter_scenes(load_catalog(), request_context(request))
     scenes = [scene for scene in scenes if str(scene.get("status") or "active") not in {"archived", "deleted"}]
     groups: dict[str, dict[str, Any]] = {}
-    total_area_mu = 0.0
     total_size_bytes = 0
+    all_footprints: list[dict[str, Any]] = []
+    legacy_area_hectares = 0.0
     for scene in scenes:
         asset_type = str(scene.get("assetType") or "other")
         coverage = scene.get("coverageAnalysis") if isinstance(scene.get("coverageAnalysis"), dict) else {}
-        area_mu = float(coverage.get("effectiveAreaHa") or 0) * 15
+        footprint = coverage.get("footprint") if isinstance(coverage.get("footprint"), dict) else None
         size_bytes = int(scene.get("originalSize") or scene.get("size") or 0)
-        group = groups.setdefault(asset_type, {"assetType": asset_type, "count": 0, "areaMu": 0.0, "sizeBytes": 0})
+        group = groups.setdefault(asset_type, {"assetType": asset_type, "count": 0, "areaMu": 0.0, "sizeBytes": 0, "footprints": [], "legacyAreaHa": 0.0})
         group["count"] += 1
-        group["areaMu"] += area_mu
         group["sizeBytes"] += size_bytes
-        total_area_mu += area_mu
+        if footprint:
+            group["footprints"].append(footprint)
+            all_footprints.append(footprint)
+        else:
+            fallback_area = float(coverage.get("effectiveAreaHa") or 0)
+            group["legacyAreaHa"] += fallback_area
+            legacy_area_hectares += fallback_area
         total_size_bytes += size_bytes
+    for group in groups.values():
+        group["areaMu"] = (effective_union_area_hectares(group.pop("footprints")) + float(group.pop("legacyAreaHa"))) * 15
+    total_area_mu = (effective_union_area_hectares(all_footprints) + legacy_area_hectares) * 15
     return {
         "total": len(scenes),
         "typeCount": len(groups),
         "totalAreaMu": total_area_mu,
+        "areaUnit": "亩",
+        "areaMethod": "有效覆盖几何并集（重叠区域只计算一次）",
         "totalSizeBytes": total_size_bytes,
         "items": sorted(groups.values(), key=lambda item: (-int(item["count"]), str(item["assetType"]))),
         "asOf": now_iso(),
@@ -6703,6 +6799,94 @@ def scene_original_download(scene_id: str, request: Request) -> FileResponse:
     }.get(suffix, "application/octet-stream")
     filename = str(scene.get("fileName") or path.name).strip() or path.name
     return FileResponse(path, media_type=media_type, filename=filename)
+
+
+def scene_archive_entries(scene: dict[str, Any]) -> list[tuple[Path, str]]:
+    candidates: list[tuple[Path, str]] = []
+    for key, folder in (("originalPath", "original"), ("copcPath", "copc")):
+        value = str(scene.get(key) or "").strip()
+        if value:
+            path = resolve_catalog_path(value)
+            if path.is_file():
+                candidates.append((path, f"{folder}/{path.name}"))
+    for index, value in enumerate(scene.get("pointCloudSourcePaths") or []):
+        path = resolve_catalog_path(str(value))
+        if path.is_file():
+            candidates.append((path, f"las-source/{index:04d}-{path.name}"))
+    tileset_value = str(scene.get("tilesetPath") or "").strip()
+    if tileset_value:
+        tileset = resolve_catalog_path(tileset_value)
+        if tileset.is_file():
+            root = tileset.parent
+            for path in root.rglob("*"):
+                if path.is_file() and not any(part.startswith(".") for part in path.relative_to(root).parts):
+                    candidates.append((path, f"3d-tiles/{path.relative_to(root).as_posix()}"))
+    trajectory_value = str(scene.get("trajectoryPath") or "").strip()
+    if trajectory_value:
+        trajectory = resolve_catalog_path(trajectory_value)
+        if trajectory.is_file():
+            candidates.append((trajectory, f"trajectory/{trajectory.name}"))
+        elif trajectory.is_dir():
+            for path in trajectory.rglob("*"):
+                if path.is_file():
+                    candidates.append((path, f"trajectory/{path.relative_to(trajectory).as_posix()}"))
+    allowed_roots = [DATA_DIR, *IMPORT_DIRS]
+    unique: dict[Path, str] = {}
+    for path, archive_name in candidates:
+        resolved = path.resolve()
+        if any(is_relative_to(resolved, root) for root in allowed_roots):
+            unique.setdefault(resolved, archive_name)
+    return [(path, unique[path]) for path in sorted(unique, key=str)]
+
+
+def ensure_scene_download_archive(scene: dict[str, Any]) -> Path:
+    entries = scene_archive_entries(scene)
+    if not entries:
+        raise HTTPException(status_code=404, detail="Scene resource package is not available")
+    signature = hashlib.sha256(
+        json.dumps(
+            {
+                "id": scene.get("id"),
+                "updatedAt": scene.get("updatedAt"),
+                "entries": [(str(path), path.stat().st_size, int(path.stat().st_mtime)) for path, _ in entries],
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+    archive_path = DOWNLOAD_PACKAGE_DIR / f"{slugify(str(scene.get('name') or scene.get('id')))}-{signature}.zip"
+    if archive_path.is_file():
+        return archive_path
+    with DOWNLOAD_PACKAGE_LOCK:
+        if archive_path.is_file():
+            return archive_path
+        temporary = archive_path.with_suffix(".zip.partial")
+        if temporary.exists():
+            temporary.unlink()
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+            manifest = {
+                "sceneId": scene.get("id"),
+                "name": scene.get("name"),
+                "resourceFormats": scene_resource_formats(scene),
+                "capturedAt": scene.get("capturedAt") or None,
+                "uploadedAt": scene.get("createdAt"),
+                "files": [archive_name for _, archive_name in entries],
+            }
+            archive.writestr("资源说明.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            for path, archive_name in entries:
+                archive.write(path, archive_name)
+        temporary.replace(archive_path)
+    return archive_path
+
+
+@app.get("/api/scenes/{scene_id}/download/archive")
+def scene_archive_download(scene_id: str, request: Request) -> FileResponse:
+    scene = find_allowed_scene(scene_id, request)
+    archive_path = ensure_scene_download_archive(scene)
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=f"{slugify(str(scene.get('name') or scene_id))}-影像资源包.zip",
+    )
 
 
 @app.get("/api/scenes/{scene_id}/point-cloud/tiles/{asset_path:path}")

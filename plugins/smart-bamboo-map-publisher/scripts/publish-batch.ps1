@@ -9,6 +9,8 @@ $ErrorActionPreference = "Stop"
 $manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $publisher = Join-Path $PSScriptRoot "publish-material.ps1"
 $results = @()
+$versionProperty = $manifest.PSObject.Properties["versionId"]
+$versionId = if ($versionProperty -and -not [string]::IsNullOrWhiteSpace([string]$versionProperty.Value)) { [string]$versionProperty.Value } else { Get-Date -Format "yyyyMMdd-HHmmss" }
 
 function Get-PublishErrorMessage([System.Management.Automation.ErrorRecord]$Record) {
     $message = [string]$Record.Exception.Message
@@ -26,6 +28,7 @@ try {
             SourcePath = [string]$item.sourcePath
             Kind = [string]$item.kind
             ProjectName = [string]$item.projectName
+            VersionId = $versionId
             ServerHost = [string]$manifest.config.serverHost
             SshUser = [string]$manifest.config.sshUser
             SshPort = [int]$manifest.config.sshPort

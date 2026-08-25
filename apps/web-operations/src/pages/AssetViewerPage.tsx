@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Box, Crosshair, Database, Globe2, Layers3, Minus, Plus, RotateCcw, Save, ScanSearch } from "lucide-react";
+import { ArrowLeft, Box, Crosshair, Database, Globe2, Layers3, Minus, Plus, RotateCcw, Save, ScanSearch, Trees } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../api/client";
@@ -72,6 +72,7 @@ export function AssetViewerPage() {
   const asset = assetQuery.data;
   const mode = viewerMode(asset);
   const [showBasemap, setShowBasemap] = useState(false);
+  const [showForestBlocks, setShowForestBlocks] = useState(false);
   const [metrics, setMetrics] = useState<MapViewMetrics | null>(null);
   const [quality, setQuality] = useState<"smooth" | "standard" | "detail">("standard");
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
@@ -80,6 +81,12 @@ export function AssetViewerPage() {
   const [loadProgress, setLoadProgress] = useState({ pending: 0, processing: 0, ready: false });
   const [settings, setSettings] = useState<Spatial3dDisplaySettings>(DEFAULT_SETTINGS);
   const [pointInformationMode, setPointInformationMode] = useState<PointInformationMode>("rgb");
+  const forestBlocks = useQuery({
+    queryKey: ["asset-viewer-forest-blocks", viewport.bbox.join(","), Math.round(viewport.zoom)],
+    queryFn: () => api.forestBlockMap({ bbox: viewport.bbox.join(","), zoom: Math.round(viewport.zoom), maxFeatures: 800 }),
+    enabled: showForestBlocks,
+    staleTime: 60_000,
+  });
   const scene = useMemo(() => sceneForAsset(asset), [asset]);
   const focusRequest = useMemo<MapAreaFocusRequest>(() => ({
     sequence: asset?.bounds?.length === 4 ? 1 : 0,
@@ -88,10 +95,10 @@ export function AssetViewerPage() {
   const layers = useMemo<MapLayerState>(() => ({
     imagery: mode === "2d" && showBasemap,
     labels: false,
-    forestBlocks: false,
+    forestBlocks: showForestBlocks,
     droneImagery: mode === "2d",
     spatial3d: mode === "3d",
-  }), [mode, showBasemap]);
+  }), [mode, showBasemap, showForestBlocks]);
 
   useEffect(() => {
     if (!asset) return;
@@ -166,6 +173,9 @@ export function AssetViewerPage() {
               {(["smooth", "standard", "detail"] as const).map((item) => <button type="button" className={quality === item ? "active" : ""} onClick={() => setQuality(item)} key={item}>{item === "smooth" ? "流畅" : item === "standard" ? "标准" : "精细"}</button>)}
             </div>
           )}
+          <button className={`button secondary ${showForestBlocks ? "active" : ""}`} type="button" onClick={() => setShowForestBlocks((value) => !value)}>
+            <Trees aria-hidden="true" />{showForestBlocks ? "隐藏林班边界" : "叠加林班边界"}
+          </button>
           <button className="icon-button" type="button" onClick={() => requestZoom("out")} aria-label="缩小"><Minus /></button>
           <button className="icon-button" type="button" onClick={() => requestZoom("in")} aria-label="放大"><Plus /></button>
           <button className="button secondary" type="button" onClick={() => setHomeRequest((value) => value + 1)}><Crosshair />回到成果</button>
@@ -184,7 +194,7 @@ export function AssetViewerPage() {
                   homeRequest={homeRequest}
                   zoomRequest={zoomRequest}
                   areaFocusRequest={focusRequest}
-                  featureCollection={EMPTY_FEATURES}
+                  featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
                   selectedBlockId={null}
                   onSelectBlock={() => undefined}
                   onViewportChange={setViewport}
@@ -203,7 +213,7 @@ export function AssetViewerPage() {
                     homeRequest={homeRequest}
                     zoomRequest={zoomRequest}
                     areaFocusRequest={{ sequence: 0, bbox: viewport.bbox }}
-                    featureCollection={EMPTY_FEATURES}
+                    featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
                     selectedBlockId={null}
                     onSelectBlock={() => undefined}
                     onViewportChange={setViewport}

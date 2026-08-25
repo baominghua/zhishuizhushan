@@ -256,6 +256,11 @@ export interface ImageryAsset {
   tileJsonUrl: string;
   thumbnailUrl: string;
   originalDownloadUrl?: string;
+  archiveDownloadUrl?: string;
+  resourceFormats?: string[];
+  recordedAt?: string;
+  recordedAtSource?: "captured" | "uploaded";
+  temporalSeriesKey?: string;
   tileFormat?: "webp" | "png" | string;
   metresPerPixel?: number;
   maximumZoom?: number;
@@ -312,6 +317,8 @@ export interface ImageryInventoryResponse {
   typeCount: number;
   totalAreaMu: number;
   totalSizeBytes: number;
+  areaUnit: "亩" | string;
+  areaMethod: string;
   asOf: string;
   items: Array<{ assetType: string; count: number; areaMu: number; sizeBytes: number }>;
 }

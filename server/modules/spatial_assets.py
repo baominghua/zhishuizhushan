@@ -6,9 +6,11 @@ import re
 import shutil
 import struct
 import subprocess
+import tempfile
+import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from shapely.geometry import MultiPoint, box, mapping, shape
 from shapely.ops import unary_union
@@ -32,14 +34,39 @@ def _crs_label(crs: Any, wkt: str = "") -> str:
     return crs.to_string() if crs is not None else ""
 
 
-def _run_converter(command: list[str], label: str) -> None:
-    try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as exc:
-        detail = str(exc.stderr or exc.stdout or "").strip()
+def _run_converter(
+    command: list[str],
+    label: str,
+    *,
+    heartbeat: Callable[[float], None] | None = None,
+    heartbeat_interval: float = 10.0,
+) -> None:
+    if heartbeat is None:
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            return
+        except subprocess.CalledProcessError as exc:
+            detail = str(exc.stderr or exc.stdout or "").strip()
+            if len(detail) > 2000:
+                detail = detail[-2000:]
+            raise RuntimeError(f"{label} 转换失败{f'：{detail}' if detail else ''}") from exc
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file, tempfile.TemporaryFile(
+        mode="w+", encoding="utf-8"
+    ) as stderr_file:
+        process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file, text=True)
+        started_at = time.monotonic()
+        while process.poll() is None:
+            if heartbeat is not None:
+                heartbeat(time.monotonic() - started_at)
+            time.sleep(max(1.0, heartbeat_interval))
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout, stderr = stdout_file.read(), stderr_file.read()
+    if process.returncode:
+        detail = str(stderr or stdout or "").strip()
         if len(detail) > 2000:
             detail = detail[-2000:]
-        raise RuntimeError(f"{label} 转换失败{f'：{detail}' if detail else ''}") from exc
+        raise RuntimeError(f"{label} 转换失败{f'：{detail}' if detail else ''}")
 
 
 def _require_rasterio():
@@ -183,6 +210,16 @@ def coverage_analysis(
         "suggestedBlockCodes": [item["blockCode"] for item in matches if item["suggested"]],
         "requiresConfirmation": True,
     }
+
+
+def effective_union_area_hectares(footprints_wgs84: Iterable[dict[str, Any]]) -> float:
+    """Return the equal-area union so overlapping acquisitions are counted once."""
+    geometries = [_valid_geometry(value) for value in footprints_wgs84 if value]
+    merged = unary_union([value for value in geometries if value is not None])
+    if merged.is_empty:
+        return 0.0
+    equal_area = _valid_geometry(_transform_geometry(mapping(merged), "EPSG:4326", "EPSG:6933"))
+    return 0.0 if equal_area is None else round(float(equal_area.area) / 10_000, 4)
 
 
 def _decode_las_text(value: bytes) -> str:
@@ -658,6 +695,7 @@ def convert_point_cloud_to_copc(
     output_path: Path,
     *,
     pdal_executable: str = "pdal",
+    progress_callback: Callable[[int, int, float], None] | None = None,
 ) -> None:
     executable = shutil.which(pdal_executable)
     if not executable:
@@ -703,7 +741,18 @@ def convert_point_cloud_to_copc(
     )
     pipeline_path = output_path.with_suffix(".pipeline.json")
     pipeline_path.write_text(json.dumps({"pipeline": pipeline}, ensure_ascii=False, indent=2), encoding="utf-8")
-    _run_converter([executable, "pipeline", str(pipeline_path)], "PDAL COPC")
+    source_size = sum(path.stat().st_size for path in source_paths)
+
+    def heartbeat(elapsed_seconds: float) -> None:
+        output_size = output_path.stat().st_size if output_path.exists() else 0
+        if progress_callback is not None:
+            progress_callback(output_size, source_size, elapsed_seconds)
+
+    command = [executable, "pipeline", str(pipeline_path)]
+    if progress_callback is None:
+        _run_converter(command, "PDAL COPC")
+    else:
+        _run_converter(command, "PDAL COPC", heartbeat=heartbeat)
 
 
 def convert_point_cloud_to_3dtiles(

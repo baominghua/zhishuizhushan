@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$SourcePath,
     [Parameter(Mandatory)][ValidateSet("orthophoto", "dsm", "dtm", "tiles-b3dm", "tiles-pnts", "pointcloud-las", "dji-trajectory")][string]$Kind,
     [Parameter(Mandatory)][string]$ProjectName,
+    [string]$VersionId = (Get-Date -Format "yyyyMMdd-HHmmss"),
     [Parameter(Mandatory)][string]$ServerHost,
     [string]$SshUser = "root",
     [ValidateRange(1, 65535)][int]$SshPort = 22,
@@ -116,6 +117,7 @@ function Remove-AbandonedArchiveCache([string]$CacheRoot) {
 }
 
 Assert-SafeName $ProjectName "项目名"
+Assert-SafeName $VersionId "发布批次"
 Assert-RemoteRoot $RemoteInbox "服务器素材根目录"
 Assert-RemoteRoot $PlatformInbox "平台路径根目录"
 $source = Get-Item -LiteralPath $SourcePath -ErrorAction Stop
@@ -133,15 +135,15 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     if ($source.PSIsContainer -or $source.Extension -notin @(".tif", ".tiff")) { throw "二维成果必须是 TIF/TIFF 文件。" }
     $sftp = Require-Command "sftp"
     $remoteFileName = if ($Kind -eq "orthophoto") { "orthophoto.tif" } elseif ($Kind -eq "dsm") { "dsm.tif" } else { "dtm.tif" }
-    $remoteDirectory = "$RemoteInbox/$ProjectName/geotiff"
+    $remoteDirectory = "$RemoteInbox/$ProjectName/$VersionId/geotiff"
     $remoteDestination = "$remoteDirectory/$remoteFileName"
     $remotePartial = "$remoteDestination.uploading"
-    $platformPath = "$PlatformInbox/$ProjectName/geotiff/$remoteFileName"
+    $platformPath = "$PlatformInbox/$ProjectName/$VersionId/geotiff/$remoteFileName"
 
     Write-Host "准备发布 $Kind：$($source.FullName)"
     Write-Host "目标路径：$platformPath"
     if (-not $DryRun) {
-        $prepare = "set -eu; mkdir -p -- '$remoteDirectory' '$RemoteInbox/.releases/$ProjectName/geotiff'; if [ ! -e '$remotePartial' ]; then : > '$remotePartial'; fi"
+        $prepare = "set -eu; mkdir -p -- '$remoteDirectory' '$RemoteInbox/.releases/$ProjectName/$VersionId/geotiff'; if [ ! -e '$remotePartial' ]; then : > '$remotePartial'; fi"
         Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
         $batch = Join-Path $stateCacheRoot "sftp-$([Guid]::NewGuid().ToString('N')).txt"
         $escapedLocal = $source.FullName.Replace('"', '\"')
@@ -153,7 +155,7 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
             if (Test-Path -LiteralPath $batch) { Remove-Item -LiteralPath $batch -Force }
         }
         $hash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        $backup = "$RemoteInbox/.releases/$ProjectName/geotiff/$remoteFileName-$timestamp"
+        $backup = "$RemoteInbox/.releases/$ProjectName/$VersionId/geotiff/$remoteFileName-$timestamp"
         $finalize = "set -eu; test -f '$remotePartial'; remote_hash=`$(sha256sum '$remotePartial' | awk '{print `$1}'); test `"`$remote_hash`" = '$hash'; if [ -e '$remoteDestination' ]; then mv '$remoteDestination' '$backup'; fi; mv '$remotePartial' '$remoteDestination'; chmod a+r '$remoteDestination'"
         Invoke-Native $ssh ($sshCommon + @($target, $finalize)) "服务器校验或原子切换失败"
     }
@@ -178,9 +180,9 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     } elseif (-not (Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Include *.las,*.laz -ErrorAction SilentlyContinue | Select-Object -First 1)) {
         throw "点云目录中没有 LAS/LAZ 文件。"
     }
-    $remoteDestination = "$RemoteInbox/$ProjectName/$datasetName"
-    $platformPath = "$PlatformInbox/$ProjectName/$datasetName"
-    $archiveName = "$ProjectName-$datasetName-$timestamp.tar"
+    $remoteDestination = "$RemoteInbox/$ProjectName/$VersionId/$datasetName"
+    $platformPath = "$PlatformInbox/$ProjectName/$VersionId/$datasetName"
+    $archiveName = "$ProjectName-$VersionId-$datasetName-$timestamp.tar"
     $archiveCacheRoot = Get-ArchiveCacheRoot $source
     Remove-AbandonedArchiveCache $archiveCacheRoot
     $archivePath = Join-Path $archiveCacheRoot $archiveName
@@ -195,11 +197,11 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
         try {
             "$PID" | Set-Content -LiteralPath $archiveLockPath -Encoding ASCII
             Invoke-Native $tar @("-cf", $archivePath, "-C", $source.Parent.FullName, $datasetName) "打包成果失败"
-            $prepare = "set -eu; mkdir -p '$RemoteInbox/.incoming' '$RemoteInbox/.releases/$ProjectName' '$RemoteInbox/$ProjectName'"
+            $prepare = "set -eu; mkdir -p '$RemoteInbox/.incoming' '$RemoteInbox/.releases/$ProjectName/$VersionId' '$RemoteInbox/$ProjectName/$VersionId'"
             Invoke-Native $ssh ($sshCommon + @($target, $prepare)) "准备服务器目录失败"
             Invoke-Native $scp @("-i", $keyPath, "-P", "$SshPort", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6", "-o", "StrictHostKeyChecking=accept-new", $archivePath, "${target}:$remoteArchive") "上传成果包失败"
-            $stage = "$RemoteInbox/.incoming/$ProjectName-$datasetName-$timestamp"
-            $backup = "$RemoteInbox/.releases/$ProjectName/$datasetName-$timestamp"
+            $stage = "$RemoteInbox/.incoming/$ProjectName-$VersionId-$datasetName-$timestamp"
+            $backup = "$RemoteInbox/.releases/$ProjectName/$VersionId/$datasetName-$timestamp"
             $remoteScript = New-RemoteActivationScript $stage $remoteArchive $remoteDestination $backup $datasetName $Kind
             $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
             $execute = "script_path=`$(mktemp /tmp/smart-bamboo-map-XXXXXX.sh); printf '%s' '$encoded' | base64 -d > `"`$script_path`"; bash `"`$script_path`"; status=`$?; rm -f `"`$script_path`"; exit `$status"
@@ -211,5 +213,5 @@ if ($Kind -in @("orthophoto", "dsm", "dtm")) {
     }
 }
 
-$result = [ordered]@{ success = $true; kind = $Kind; source = $source.FullName; projectName = $ProjectName; platformPath = $platformPath; dryRun = [bool]$DryRun }
+$result = [ordered]@{ success = $true; kind = $Kind; source = $source.FullName; projectName = $ProjectName; versionId = $VersionId; platformPath = $platformPath; dryRun = [bool]$DryRun }
 Write-Output "SMART_BAMBOO_RESULT=$($result | ConvertTo-Json -Compress)"

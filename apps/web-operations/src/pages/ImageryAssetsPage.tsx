@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, useDeferredValue, useMemo, useRef, useState } from "react";
+import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, downloadFile } from "../api/client";
 import type {
@@ -38,6 +38,7 @@ import { hasPermission, useCapabilities } from "../hooks/useCapabilities";
 
 const PAGE_SIZE = 30;
 const POINT_CLOUD_RESUME_KEY = "smart-bamboo.point-cloud-upload-session.v1";
+const SPATIAL_TASK_RESUME_KEY = "smart-bamboo.spatial-task.v1";
 const TYPE_LABELS: Record<ImageryAssetType, string> = {
   orthophoto: "正射影像",
   dsm: "DSM 地表模型",
@@ -53,6 +54,8 @@ export function ImageryAssetsPage() {
   const capabilities = useCapabilities();
   const [q, setQ] = useState("");
   const [published, setPublished] = useState("");
+  const [assetTypeFilter, setAssetTypeFilter] = useState("");
+  const [resourceFormat, setResourceFormat] = useState("");
   const [offset, setOffset] = useState(0);
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -60,8 +63,8 @@ export function ImageryAssetsPage() {
   const [editing, setEditing] = useState<ImageryAsset | null>(null);
   const deferredQ = useDeferredValue(q);
   const ledger = useQuery({
-    queryKey: ["imagery-assets", deferredQ, published, includeDeleted, offset],
-    queryFn: () => api.imageryAssets({ q: deferredQ, published: published ? true : undefined, includeDeleted, limit: PAGE_SIZE, offset }),
+    queryKey: ["imagery-assets", deferredQ, published, assetTypeFilter, resourceFormat, includeDeleted, offset],
+    queryFn: () => api.imageryAssets({ q: deferredQ, published: published ? true : undefined, assetType: assetTypeFilter || undefined, resourceFormat: resourceFormat || undefined, includeDeleted, limit: PAGE_SIZE, offset }),
   });
   const permissions = capabilities.data?.permissions ?? [];
   const roles = capabilities.data?.principal.roles ?? [];
@@ -98,15 +101,15 @@ export function ImageryAssetsPage() {
       <Summary label="待确认覆盖" value={metrics.pendingReview} detail="需人工确认林班" tone={metrics.pendingReview ? "warning" : "active"} />
     </section>
     <section className="ledger-shell">
-      <div className="ledger-toolbar domain-ledger-toolbar"><label className="search-field"><FileImage aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索成果名称、文件名、任务或林班" /></label><label className="compact-filter"><span>发布状态</span><select value={published} onChange={(event) => { setPublished(event.target.value); setOffset(0); }}><option value="">全部成果</option><option value="published">已发布上图</option></select></label><label className="deleted-toggle"><input type="checkbox" checked={includeDeleted} onChange={(event) => { setIncludeDeleted(event.target.checked); setOffset(0); }} /><span>显示回收站</span></label></div>
-      <QueryState loading={ledger.isLoading} error={ledger.error}><div className="table-scroll"><table className="ledger-table imagery-ledger-table"><thead><tr><th>成果档案</th><th>类型与采集</th><th>关联林班</th><th>空间信息</th><th>处理状态</th><th className="action-column">操作</th></tr></thead><tbody>
+      <div className="ledger-toolbar domain-ledger-toolbar"><label className="search-field"><FileImage aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索成果名称、文件名、任务或林班" /></label><label className="compact-filter"><span>成果类型</span><select value={assetTypeFilter} onChange={(event) => { setAssetTypeFilter(event.target.value); setOffset(0); }}><option value="">全部类型</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="compact-filter"><span>资源格式</span><select value={resourceFormat} onChange={(event) => { setResourceFormat(event.target.value); setOffset(0); }}><option value="">全部格式</option>{["GEOTIFF", "COG", "LAS/LAZ", "COPC", "PNTS", "B3DM"].map((format) => <option key={format}>{format}</option>)}</select></label><label className="compact-filter"><span>发布状态</span><select value={published} onChange={(event) => { setPublished(event.target.value); setOffset(0); }}><option value="">全部成果</option><option value="published">已发布上图</option></select></label><label className="deleted-toggle"><input type="checkbox" checked={includeDeleted} onChange={(event) => { setIncludeDeleted(event.target.checked); setOffset(0); }} /><span>显示回收站</span></label></div>
+      <QueryState loading={ledger.isLoading} error={ledger.error}><div className="table-scroll"><table className="ledger-table imagery-ledger-table"><thead><tr><th>成果档案</th><th>类型与时间</th><th>关联林班</th><th>空间信息</th><th>处理状态</th><th className="action-column">操作</th></tr></thead><tbody>
         {items.map((record) => <tr className={record.deletedAt ? "is-deleted" : ""} key={record.id} onClick={() => setSelected(record)}>
           <td><strong>{record.name}</strong><small>{record.fileName || record.id}</small></td>
-          <td><strong>{TYPE_LABELS[assetType(record)]}</strong><small>{formatDate(record.capturedAt)}{record.missionId ? ` · ${record.missionId}` : ""}</small></td>
+          <td><strong>{resourceFormatLabel(record)}</strong><small>{record.recordedAtSource === "captured" ? "采集" : "上传"}：{formatDate(record.recordedAt || record.capturedAt || record.createdAt)}{record.missionId ? ` · ${record.missionId}` : ""}</small></td>
           <td><strong>{record.linkedBlockCodes?.join("、") || (record.spatialRelation?.type === "independent-point" ? record.spatialRelation.pointName || "独立空间点位" : "待确认")}</strong><small>{record.spatialRelation?.type === "independent-point" ? record.spatialRelation.pointCategory || "林外设施" : `${record.linkedBlockCodes?.length || 0} 个正式林班`}</small></td>
           <td><strong>{record.tilesetUrl ? record.pointCount ? `${formatNumber(record.pointCount)} 点` : `${formatNumber(record.tileCount || 0)} 瓦片` : record.resolution || "分辨率自动识别"}</strong><small>{record.crs || "坐标系待识别"}</small></td>
           <td>{record.deletedAt ? <Badge label="已删除" tone="deleted" /> : record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</td>
-          <td className="action-column"><div className="row-actions"><Action label="查看" icon={Eye} onClick={() => setSelected(record)} />{record.originalDownloadUrl || record.copcUrl ? <a className="icon-button" href={record.originalDownloadUrl || record.copcUrl} title="下载影像资源" aria-label={`下载 ${record.name}`} onClick={(event) => event.stopPropagation()}><Download aria-hidden="true" /></a> : null}{record.deletedAt ? <Action label="恢复" icon={RotateCcw} disabled={!canRestore} onClick={() => restore.mutate(record.id)} /> : <><Action label="编辑" icon={Pencil} disabled={!canUpdate} onClick={() => setEditing(record)} />{!isPublished(record) && !record.tilesetUrl ? <Action label="发布到一张图" icon={Send} disabled={!canPublish || record.processingStage === "coverage-review"} onClick={() => publish.mutate(record)} /> : null}<Action label="删除" icon={Trash2} danger disabled={!canDelete} onClick={() => { if (window.confirm(`确认将“${record.name}”移入回收站吗？`)) remove.mutate(record.id); }} /></>}</div></td>
+          <td className="action-column"><div className="row-actions"><Action label="查看" icon={Eye} onClick={() => setSelected(record)} />{record.archiveDownloadUrl ? <a className="icon-button" href={record.archiveDownloadUrl} title="下载完整影像资源压缩包" aria-label={`下载 ${record.name} 资源包`} onClick={(event) => event.stopPropagation()}><Download aria-hidden="true" /></a> : null}{record.deletedAt ? <Action label="恢复" icon={RotateCcw} disabled={!canRestore} onClick={() => restore.mutate(record.id)} /> : <><Action label="编辑" icon={Pencil} disabled={!canUpdate} onClick={() => setEditing(record)} />{!isPublished(record) && !record.tilesetUrl ? <Action label="发布到一张图" icon={Send} disabled={!canPublish || record.processingStage === "coverage-review"} onClick={() => publish.mutate(record)} /> : null}<Action label="删除" icon={Trash2} danger disabled={!canDelete} onClick={() => { if (window.confirm(`确认将“${record.name}”移入回收站吗？`)) remove.mutate(record.id); }} /></>}</div></td>
         </tr>)}
         {!ledger.isLoading && !items.length ? <tr><td colSpan={6}><div className="table-empty"><FileImage aria-hidden="true" /><strong>暂无空间成果</strong><p>可上传 GeoTIFF，或按一次航飞任务批量接收 LAS/LAZ。</p></div></td></tr> : null}
       </tbody></table></div></QueryState>
@@ -124,7 +127,7 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
   const [assetKind, setAssetKind] = useState<"raster" | "pointcloud" | "tileset">("raster");
   const [rasterType, setRasterType] = useState<"orthophoto" | "dsm" | "dtm">("orthophoto");
   const [sourceMode, setSourceMode] = useState<"upload" | "register">("upload");
-  const [taskId, setTaskId] = useState("");
+  const [taskId, setTaskId] = useState(() => readSpatialTaskResume());
   const [uploadSessionId, setUploadSessionId] = useState("");
   const [transfer, setTransfer] = useState({ uploaded: 0, total: 0, label: "" });
   const task = useQuery({
@@ -132,6 +135,7 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
     queryFn: () => api.spatialAssetTask(taskId),
     enabled: Boolean(taskId),
     refetchInterval: (query) => TERMINAL_TASK_STATUSES.has(String(query.state.data?.status || "")) ? false : 2_000,
+    retry: 8,
   });
   const completedSceneId = task.data?.status === "completed" ? task.data.sceneId : "";
   const completedAsset = useQuery({
@@ -139,6 +143,16 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
     queryFn: () => api.imageryAsset(completedSceneId),
     enabled: Boolean(completedSceneId),
     retry: 2,
+  });
+  useEffect(() => {
+    if (taskId) writeSpatialTaskResume(taskId);
+  }, [taskId]);
+  useEffect(() => {
+    if (completedAsset.data) clearSpatialTaskResume(taskId);
+  }, [completedAsset.data, taskId]);
+  const retryTask = useMutation({
+    mutationFn: (id: string) => api.retrySpatialAssetTask(id),
+    onSuccess: ({ task: retry }) => setTaskId(retry.id),
   });
 
   const submitMutation = useMutation({
@@ -211,7 +225,7 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); submitMutation.mutate(event.currentTarget); };
 
   if (completedAsset.data) return <CoverageConfirmation asset={completedAsset.data} onCancel={onCancel} onSaved={onSaved} />;
-  if (taskId) return <TaskProgress task={task.data} loading={task.isLoading || completedAsset.isLoading} error={task.error || completedAsset.error} onCancel={onCancel} />;
+  if (taskId) return <TaskProgress task={task.data} loading={task.isLoading || completedAsset.isLoading} error={task.error || completedAsset.error || retryTask.error} retrying={retryTask.isPending} onRetry={() => retryTask.mutate(taskId)} onCancel={onCancel} />;
 
   return <form className="entity-form spatial-upload-form" onSubmit={submit}>
     <fieldset className="form-section"><legend>成果类型</legend><div className="asset-kind-switch"><button type="button" className={assetKind === "raster" ? "active" : ""} onClick={() => { setAssetKind("raster"); setUploadSessionId(""); }}><FileImage aria-hidden="true" /><span><strong>GeoTIFF 影像</strong><small>正射、DSM、DTM 自动转 COG</small></span></button><button type="button" className={assetKind === "pointcloud" ? "active" : ""} onClick={() => setAssetKind("pointcloud")}><CloudUpload aria-hidden="true" /><span><strong>LAS/LAZ 点云</strong><small>批量续传，生成 COPC 与 3D Tiles</small></span></button><button type="button" className={assetKind === "tileset" ? "active" : ""} onClick={() => { setAssetKind("tileset"); setSourceMode("register"); setUploadSessionId(""); }}><Layers aria-hidden="true" /><span><strong>DJI 3D Tiles</strong><small>直接登记 PNTS / B3DM，不重复转换</small></span></button></div></fieldset>
@@ -231,9 +245,9 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
   </form>;
 }
 
-function TaskProgress({ task, loading, error, onCancel }: { task?: SpatialAssetTask; loading: boolean; error: Error | null; onCancel: () => void }) {
+function TaskProgress({ task, loading, error, retrying, onRetry, onCancel }: { task?: SpatialAssetTask; loading: boolean; error: Error | null; retrying: boolean; onRetry: () => void; onCancel: () => void }) {
   const progress = Math.max(0, Math.min(100, Number(task?.progress || 0)));
-  return <div className="spatial-task-progress"><div className="task-progress-icon">{task?.status === "failed" ? <AlertTriangle aria-hidden="true" /> : task?.status === "completed" ? <CheckCircle2 aria-hidden="true" /> : <Database aria-hidden="true" />}</div><span className="eyebrow">后台空间处理</span><h3>{task?.message || (loading ? "正在读取任务状态" : "任务已提交")}</h3><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="progress-meta"><strong>{progress}%</strong><small>{task?.status || "queued"}</small></div>{error ? <p className="form-error">{error.message}</p> : null}{task?.status === "failed" ? <p className="form-hint">源文件和已上传分片均已保留，可由具备任务重试权限的管理员重试。</p> : <p className="form-hint">可以关闭面板，后台任务不会中断；完成后将在成果台账显示“覆盖待确认”。</p>}<div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>关闭</button></div></div>;
+  return <div className="spatial-task-progress"><div className="task-progress-icon">{task?.status === "failed" ? <AlertTriangle aria-hidden="true" /> : task?.status === "completed" ? <CheckCircle2 aria-hidden="true" /> : <Database aria-hidden="true" />}</div><span className="eyebrow">后台空间处理</span><h3>{task?.message || (loading ? "正在读取任务状态" : "任务已提交")}</h3><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="progress-meta"><strong>{progress}%</strong><small>{task?.status || "queued"}</small></div>{error ? <p className="form-error">连接短暂中断：{error.message}。任务编号已保存在本机，重新打开本页会继续跟踪，不会重新上传。</p> : null}{task?.status === "failed" ? <p className="form-hint">源文件和已上传分片均已保留，可直接继续后台处理，无需重新上传 LAS/LAZ。</p> : <p className="form-hint">可以关闭面板，后台任务不会中断；服务重启后会自动恢复点云转换。</p>}<div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>关闭</button>{task?.status === "failed" ? <button className="button primary" type="button" disabled={retrying} onClick={onRetry}>{retrying ? "正在恢复" : "继续后台处理"}</button> : null}</div></div>;
 }
 
 function CoverageConfirmation({ asset, onCancel, onSaved }: { asset: ImageryAsset; onCancel: () => void; onSaved: (record: ImageryAsset) => void }) {
@@ -252,9 +266,9 @@ function CoverageConfirmation({ asset, onCancel, onSaved }: { asset: ImageryAsse
       <label className={relationType === "forest-block" ? "active" : ""}><input type="radio" name="relationType" checked={relationType === "forest-block"} onChange={() => setRelationType("forest-block")} /><span><strong>关联林班</strong><small>适合林地正射、点云和实景模型</small></span></label>
       <label className={relationType === "independent-point" ? "active" : ""}><input type="radio" name="relationType" checked={relationType === "independent-point"} onChange={() => setRelationType("independent-point")} /><span><strong>独立空间点位</strong><small>适合加工厂、机巢、堆场等林外设施</small></span></label>
     </div>
-    <div className="coverage-summary"><Summary label="有效覆盖面积" value={`${analysis?.effectiveAreaHa ?? "—"} ha`} detail="按有效轮廓估算" /><Summary label="相交林班" value={analysis?.matches.length ?? 0} detail="包含边缘相交" /><Summary label="已选林班" value={blocks.length} detail="确认后正式关联" /></div>
+    <div className="coverage-summary"><Summary label="有效覆盖面积" value={analysis?.effectiveAreaHa == null ? "—" : `${(analysis.effectiveAreaHa * 15).toFixed(2)} 亩`} detail="按有效轮廓估算，重叠盘点时只计一次" /><Summary label="相交林班" value={analysis?.matches.length ?? 0} detail="包含边缘相交" /><Summary label="已选林班" value={blocks.length} detail="确认后正式关联" /></div>
     {analysis?.error ? <p className="form-error">自动分析未完成：{analysis.error}</p> : null}
-    <div className="coverage-table-wrap"><table className="coverage-table"><thead><tr><th>选择</th><th>林班</th><th>交叠面积</th><th>占林班</th><th>占成果</th></tr></thead><tbody>{(analysis?.matches ?? []).map((match) => <tr key={match.blockCode} className={selectedCodes.has(match.blockCode) ? "selected" : ""} onClick={() => toggleMatch(match)}><td><input type="checkbox" checked={selectedCodes.has(match.blockCode)} onChange={() => toggleMatch(match)} onClick={(event) => event.stopPropagation()} /></td><td><strong>{match.blockName}</strong><small>{match.blockCode}{match.location ? ` · ${match.location}` : ""}</small></td><td>{match.intersectionAreaHa} ha</td><td>{match.blockCoveragePercent}%</td><td>{match.imageryCoveragePercent}%</td></tr>)}{!analysis?.matches.length ? <tr><td colSpan={5}><div className="table-empty compact"><AlertTriangle aria-hidden="true" /><strong>没有自动匹配到正式林班</strong><p>请检查林班是否有几何边界，或使用下方按钮人工选择。</p></div></td></tr> : null}</tbody></table></div>
+    <div className="coverage-table-wrap"><table className="coverage-table"><thead><tr><th>选择</th><th>林班</th><th>交叠面积</th><th>占林班</th><th>占成果</th></tr></thead><tbody>{(analysis?.matches ?? []).map((match) => <tr key={match.blockCode} className={selectedCodes.has(match.blockCode) ? "selected" : ""} onClick={() => toggleMatch(match)}><td><input type="checkbox" checked={selectedCodes.has(match.blockCode)} onChange={() => toggleMatch(match)} onClick={(event) => event.stopPropagation()} /></td><td><strong>{match.blockName}</strong><small>{match.blockCode}{match.location ? ` · ${match.location}` : ""}</small></td><td>{(match.intersectionAreaHa * 15).toFixed(2)} 亩</td><td>{match.blockCoveragePercent}%</td><td>{match.imageryCoveragePercent}%</td></tr>)}{!analysis?.matches.length ? <tr><td colSpan={5}><div className="table-empty compact"><AlertTriangle aria-hidden="true" /><strong>没有自动匹配到正式林班</strong><p>请检查林班是否有几何边界，或使用下方按钮人工选择。</p></div></td></tr> : null}</tbody></table></div>
     {relationType === "forest-block" ? <><div className="relation-toolbar"><div><strong>最终关联林班<em>*</em></strong><small>跨林班成果只建一份档案，可确认多个林班。</small></div><button className="button secondary" type="button" onClick={() => setSelectorOpen(true)}><MapPinned aria-hidden="true" />补充林班</button></div><BlockChips blocks={blocks} onRemove={(code) => setBlocks((items) => items.filter((item) => item.code !== code))} /></> : <div className="independent-point-form"><label><span>点位名称<em>*</em></span><input value={pointName} onChange={(event) => setPointName(event.target.value)} placeholder="例如 大横厂房" /></label><label><span>点位类型</span><select value={pointCategory} onChange={(event) => setPointCategory(event.target.value)}><option>竹材加工厂</option><option>无人机机巢</option><option>临时堆场</option><option>仓储物流点</option><option>其他设施</option></select></label><p>位置默认取影像有效范围中心；确认后作为独立点位进入 GIS 图层、搜索和成果详情。</p></div>}
     {confirm.error ? <p className="form-error">{confirm.error.message}</p> : null}
     <div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>稍后确认</button><button className="button primary" disabled={confirm.isPending || (relationType === "forest-block" ? !blocks.length : !pointName.trim())} onClick={() => confirm.mutate()}>{confirm.isPending ? "正在写入关系" : relationType === "forest-block" ? `确认关联 ${blocks.length} 个林班` : "确认为独立点位"}</button></div>
@@ -294,9 +308,9 @@ function ImageryDetail({ record, canPublish, publishing, onPublish }: { record: 
   const formatSummary = Object.entries(record.tileFormats ?? {}).map(([format, count]) => `${format.toUpperCase()} ${count}`).join(" · ");
   return <div className="detail-stack imagery-detail">
     {is3d ? <section className="point-cloud-preview"><Layers aria-hidden="true" /><div><strong>{pointCloud && record.pointCount ? `${formatNumber(record.pointCount)} 个点` : `${formatNumber(record.tileCount || 0)} 个三维瓦片`}</strong><small>{formatSummary || record.tilesetContentType?.toUpperCase() || "3D Tiles"} · {record.crs}</small></div></section> : <section className="imagery-preview"><img src={record.thumbnailUrl} alt={`${record.name} 预览`} /></section>}
-    <section className="detail-group"><div className="detail-title-row"><h3>成果信息</h3>{record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</div><dl><Detail label="成果类型" value={TYPE_LABELS[assetType(record)]} /><Detail label="文件名" value={record.fileName} /><Detail label="采集时间" value={formatDate(record.capturedAt)} /><Detail label="任务编号" value={record.missionId} /><Detail label="坐标系" value={record.crs} />{is3d ? <><Detail label="瓦片格式" value={formatSummary} /><Detail label="内容瓦片" value={`${record.tileCount || 0} 个`} /><Detail label="子 tileset" value={`${record.tilesetCount || 0} 个`} />{record.pointCount ? <Detail label="点数量" value={formatNumber(record.pointCount)} /> : null}<Detail label="Tiles 版本" value={record.tilesetAssetVersions?.join("、")} /></> : <><Detail label="分辨率" value={record.resolution} /><Detail label="像素尺寸" value={`${record.width} × ${record.height} · ${record.bands} 波段`} /></>}<Detail label="文件容量" value={formatBytes(record.size)} /></dl>{is3d ? <div className="point-cloud-downloads">{record.copcUrl ? <a className="button secondary" href={record.copcUrl}><Download aria-hidden="true" />下载 COPC</a> : null}{record.processingStage !== "coverage-review" ? <a className="button primary" href={`/v2/asset-viewer?sceneId=${encodeURIComponent(record.id)}&mode=3d`} target="_blank" rel="noreferrer"><Globe2 aria-hidden="true" />在独立三维窗口打开</a> : null}<a className="button secondary" href={record.tilesetUrl} target="_blank" rel="noreferrer"><Layers aria-hidden="true" />检查 tileset.json</a></div> : null}</section>
+    <section className="detail-group"><div className="detail-title-row"><h3>成果信息</h3>{record.processingStage === "coverage-review" ? <Badge label="覆盖待确认" tone="warning" /> : isPublished(record) ? <Badge label="已发布" tone="ready" /> : <Badge label="已入库" tone="active" />}</div><dl><Detail label="成果类型" value={TYPE_LABELS[assetType(record)]} /><Detail label="资源格式" value={(record.resourceFormats || []).join(" / ")} /><Detail label="文件名" value={record.fileName} /><Detail label={record.recordedAtSource === "captured" ? "采集时间" : "上传时间（采集时间未填）"} value={formatDate(record.recordedAt || record.createdAt)} /><Detail label="任务编号" value={record.missionId} /><Detail label="坐标系" value={record.crs} />{is3d ? <><Detail label="瓦片格式" value={formatSummary} /><Detail label="内容瓦片" value={`${record.tileCount || 0} 个`} /><Detail label="子 tileset" value={`${record.tilesetCount || 0} 个`} />{record.pointCount ? <Detail label="点数量" value={formatNumber(record.pointCount)} /> : null}<Detail label="Tiles 版本" value={record.tilesetAssetVersions?.join("、")} /></> : <><Detail label="分辨率" value={record.resolution} /><Detail label="像素尺寸" value={`${record.width} × ${record.height} · ${record.bands} 波段`} /></>}<Detail label="文件容量" value={formatBytes(record.size)} /></dl>{is3d ? <div className="point-cloud-downloads">{record.processingStage !== "coverage-review" ? <a className="button primary" href={`/v2/asset-viewer?sceneId=${encodeURIComponent(record.id)}&mode=3d`} target="_blank" rel="noreferrer"><Globe2 aria-hidden="true" />在独立三维窗口打开</a> : null}{record.archiveDownloadUrl ? <a className="button secondary" href={record.archiveDownloadUrl}><Download aria-hidden="true" />下载完整资源包</a> : null}<a className="button secondary" href={record.tilesetUrl} target="_blank" rel="noreferrer"><Layers aria-hidden="true" />检查 tileset.json</a></div> : null}</section>
     <section className="detail-group"><h3>空间关系</h3><div className="relation-chips read-only">{record.linkedBlockCodes?.map((code) => <span key={code}><strong>{code}</strong><small>正式林班</small></span>)}{record.spatialRelation?.type === "independent-point" ? <span><strong>{record.spatialRelation.pointName || record.name}</strong><small>{record.spatialRelation.pointCategory || "独立空间点位"}</small></span> : null}{!record.linkedBlockCodes?.length && record.spatialRelation?.type !== "independent-point" ? <p className="muted-copy">尚未确认空间关系，请点击编辑完成确认。</p> : null}</div></section>
-    {!is3d && isPublished(record) ? <div className="point-cloud-downloads"><a className="button primary" href={`/v2/asset-viewer?sceneId=${encodeURIComponent(record.id)}&mode=2d`} target="_blank" rel="noreferrer"><Globe2 aria-hidden="true" />在独立二维窗口打开</a>{record.originalDownloadUrl ? <a className="button secondary" href={record.originalDownloadUrl}><Download aria-hidden="true" />下载原始 GeoTIFF</a> : null}</div> : null}
+    {!is3d && isPublished(record) ? <div className="point-cloud-downloads"><a className="button primary" href={`/v2/asset-viewer?sceneId=${encodeURIComponent(record.id)}&mode=2d`} target="_blank" rel="noreferrer"><Globe2 aria-hidden="true" />在独立二维窗口打开</a>{record.archiveDownloadUrl ? <a className="button secondary" href={record.archiveDownloadUrl}><Download aria-hidden="true" />下载完整资源包</a> : null}</div> : null}
     {!is3d && !isPublished(record) ? <button className="button primary" type="button" disabled={!canPublish || publishing || record.processingStage === "coverage-review"} onClick={onPublish}><Layers aria-hidden="true" />{publishing ? "正在发布" : "发布到 GIS 一张图"}</button> : null}
   </div>;
 }
@@ -305,14 +319,18 @@ function TransferProgress({ uploaded, total, label }: { uploaded: number; total:
 function BlockChips({ blocks, onRemove }: { blocks: ForestBlockOption[]; onRemove: (code: string) => void }) { return <div className="relation-chips">{blocks.map((block) => <span key={block.code}><strong>{block.name}</strong><small>{block.code}</small><button type="button" onClick={() => onRemove(block.code)} aria-label={`移除 ${block.code}`}><X aria-hidden="true" /></button></span>)}{!blocks.length ? <p className="form-hint">尚未选择覆盖林班。</p> : null}</div>; }
 function matchToBlock(match: SpatialCoverageMatch): ForestBlockOption { return { id: match.blockId, code: match.blockCode, name: match.blockName, location: match.location, areaMu: match.blockAreaMu, hasGeometry: true, riskLevel: null }; }
 function assetType(record?: Partial<ImageryAsset>): ImageryAssetType { return (record?.assetType || "orthophoto") as ImageryAssetType; }
+function resourceFormatLabel(record: ImageryAsset) { const formats = record.resourceFormats ?? []; return formats.length ? `${TYPE_LABELS[assetType(record)]} · ${formats.join(" / ")}` : TYPE_LABELS[assetType(record)]; }
 function isPublished(record: ImageryAsset) { return Boolean(record.publishedLayerId || record.publishedLayerRecordCode || record.status === "published"); }
 function field(data: FormData, name: string) { return String(data.get(name) || "").trim(); }
 function pointCloudUploadFingerprint(files: File[]) { return files.map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|"); }
 function readPointCloudResume(): { sessionId: string; fingerprint: string } | null { try { const parsed = JSON.parse(window.localStorage.getItem(POINT_CLOUD_RESUME_KEY) || "null"); return parsed?.sessionId && parsed?.fingerprint ? parsed : null; } catch { return null; } }
 function writePointCloudResume(value: { sessionId: string; fingerprint: string }) { try { window.localStorage.setItem(POINT_CLOUD_RESUME_KEY, JSON.stringify(value)); } catch { /* Private browsing or storage policy may disable persistence. */ } }
 function clearPointCloudResume(sessionId: string) { const current = readPointCloudResume(); if (!current || current.sessionId !== sessionId) return; try { window.localStorage.removeItem(POINT_CLOUD_RESUME_KEY); } catch { /* Ignore unavailable storage. */ } }
+function readSpatialTaskResume() { try { return window.localStorage.getItem(SPATIAL_TASK_RESUME_KEY) || ""; } catch { return ""; } }
+function writeSpatialTaskResume(taskId: string) { try { window.localStorage.setItem(SPATIAL_TASK_RESUME_KEY, taskId); } catch { /* Ignore unavailable storage. */ } }
+function clearSpatialTaskResume(taskId: string) { try { if (window.localStorage.getItem(SPATIAL_TASK_RESUME_KEY) === taskId) window.localStorage.removeItem(SPATIAL_TASK_RESUME_KEY); } catch { /* Ignore unavailable storage. */ } }
 function localTime(value?: string) { if (!value) return ""; const date = new Date(value); if (Number.isNaN(date.valueOf())) return value.slice(0, 16); const offset = date.getTimezoneOffset() * 60_000; return new Date(date.valueOf() - offset).toISOString().slice(0, 16); }
-function formatDate(value?: string) { if (!value) return "采集时间待补"; const date = new Date(value); return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false }); }
+function formatDate(value?: string) { if (!value) return "时间待补"; const date = new Date(value); return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false }); }
 function formatBytes(value: number) { if (!value) return "0 B"; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`; return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`; }
 function formatNumber(value: number) { return new Intl.NumberFormat("zh-CN").format(value); }
 function Summary({ label, value, detail, tone = "" }: { label: string; value: string | number; detail: string; tone?: string }) { return <article className={tone}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
