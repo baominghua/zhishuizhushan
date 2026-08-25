@@ -331,7 +331,7 @@ async def prevent_stale_application_shells(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.rstrip("/") or "/"
     suffix = Path(path).suffix.lower()
-    if path.startswith("/v2/assets/"):
+    if path.startswith("/v2/assets/") or path.startswith("/v2/cesiumStatic/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif path == "/" or suffix in {".html", ".js", ".css"}:
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -2031,6 +2031,23 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
     public_record = dict(scene)
+    if str(scene.get("assetType") or "") == "pointcloud":
+        tileset_value = str(scene.get("tilesetPath") or "").strip()
+        if tileset_value and not scene.get("pointCloudRenderableModes"):
+            try:
+                tileset_metadata = cached_3d_tileset_metadata(str(resolve_catalog_path(tileset_value)))
+                public_record["pointCloudRenderableModes"] = tileset_metadata.get("pointCloudRenderableModes", [])
+                public_record["pointCloudRenderableProperties"] = tileset_metadata.get("pointCloudRenderableProperties", {})
+            except (OSError, ValueError, HTTPException):
+                public_record["pointCloudRenderableModes"] = ["rgb", "elevation"]
+                public_record["pointCloudRenderableProperties"] = {}
+        if not scene.get("pointCloudSourcePaths") and tileset_value:
+            try:
+                source_metadata = cached_sibling_las_metadata(str(resolve_catalog_path(tileset_value)))
+                if source_metadata:
+                    public_record.update(source_metadata)
+            except (OSError, ValueError, HTTPException):
+                pass
     if str(scene.get("assetType") or "") == "pointcloud" and not scene.get("trajectoryAvailable"):
         source_paths = [
             Path(str(scene.get(key)))
@@ -4200,6 +4217,39 @@ def cached_dji_trajectory_metadata(source_paths: tuple[str, ...]) -> dict[str, A
     return discover_dji_trajectory_metadata([Path(path) for path in source_paths])
 
 
+@lru_cache(maxsize=256)
+def cached_3d_tileset_metadata(path_value: str) -> dict[str, Any]:
+    return inspect_3d_tileset(resolve_catalog_path(path_value))
+
+
+@lru_cache(maxsize=256)
+def cached_sibling_las_metadata(tileset_value: str) -> dict[str, Any]:
+    tileset_path = resolve_catalog_path(tileset_value)
+    candidates: list[Path] = []
+    for parent in (tileset_path.parent, tileset_path.parent.parent):
+        for directory_name in ("terra_las_1_4", "terra_las", "las", "laz"):
+            directory = parent / directory_name
+            if directory.is_dir():
+                candidates.extend(
+                    path for path in directory.rglob("*")
+                    if path.is_file() and path.suffix.lower() in {".las", ".laz"}
+                    and not any(part.startswith(".") for part in path.relative_to(directory).parts)
+                )
+    sources = sorted(set(path.resolve() for path in candidates))
+    if not sources:
+        return {}
+    metadata = point_cloud_collection_metadata(sources)
+    return {
+        "pointCloudFileCount": metadata["fileCount"],
+        "pointCloudVersions": metadata["versions"],
+        "pointCloudFormats": metadata["pointFormats"],
+        "pointCloudDimensions": metadata.get("dimensions", []),
+        "pointCloudAttributeModes": metadata.get("attributeModes", []),
+        "pointCloudSourcePaths": [catalog_path(path) for path in sources],
+        "nativeBounds": metadata.get("nativeBounds", []),
+    }
+
+
 def resolve_3d_tileset_import_root(path_value: str) -> Path:
     if not path_value.strip():
         raise HTTPException(status_code=400, detail="3D Tiles import path is required")
@@ -4263,6 +4313,8 @@ def build_registered_tileset_scene_record(
         "bands": 0,
         "dtype": content_type,
         "pointCount": int(tileset.get("pointCount") or 0),
+        "pointCloudRenderableModes": list(tileset.get("pointCloudRenderableModes") or []),
+        "pointCloudRenderableProperties": dict(tileset.get("pointCloudRenderableProperties") or {}),
         "pointCloudFileCount": int(tileset.get("contentFileCount") or 0),
         "tilesetCount": int(tileset.get("tilesetCount") or 0),
         "tileCount": int(tileset.get("tileCount") or 0),
@@ -4396,6 +4448,7 @@ def build_point_cloud_scene_record(
     tiles_path = dataset_dir / "3dtiles" / "tileset.json"
     size = sum(path.stat().st_size for path in source_paths if path.exists())
     trajectory = point_cloud.get("trajectory") or discover_dji_trajectory_metadata(source_paths)
+    render_metadata = inspect_3d_tileset(tiles_path) if tiles_path.is_file() else {}
     return {
         "id": scene_id,
         "source": "server",
@@ -4429,6 +4482,8 @@ def build_point_cloud_scene_record(
         "pointCloudFormats": point_cloud["pointFormats"],
         "pointCloudDimensions": point_cloud.get("dimensions", []),
         "pointCloudAttributeModes": point_cloud.get("attributeModes", []),
+        "pointCloudRenderableModes": render_metadata.get("pointCloudRenderableModes", []),
+        "pointCloudRenderableProperties": render_metadata.get("pointCloudRenderableProperties", {}),
         "trajectoryAvailable": trajectory["available"],
         "trajectoryFileCount": trajectory["fileCount"],
         "trajectorySize": trajectory["totalSize"],

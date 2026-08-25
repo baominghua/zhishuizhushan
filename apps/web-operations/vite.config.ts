@@ -6,7 +6,7 @@ export default defineConfig({
   base: "/v2/",
   publicDir: false,
   define: {
-    CESIUM_BASE_URL: JSON.stringify("/v2/cesiumStatic/"),
+    CESIUM_BASE_URL: JSON.stringify("/v2/cesiumStatic/1.144.0/"),
   },
   plugins: [
     react(),
@@ -14,22 +14,22 @@ export default defineConfig({
       targets: [
         {
           src: "node_modules/cesium/Build/Cesium/Workers",
-          dest: "cesiumStatic",
+          dest: "cesiumStatic/1.144.0",
           rename: { stripBase: 4 },
         },
         {
           src: "node_modules/cesium/Build/Cesium/ThirdParty",
-          dest: "cesiumStatic",
+          dest: "cesiumStatic/1.144.0",
           rename: { stripBase: 4 },
         },
         {
           src: "node_modules/cesium/Build/Cesium/Assets",
-          dest: "cesiumStatic",
+          dest: "cesiumStatic/1.144.0",
           rename: { stripBase: 4 },
         },
         {
           src: "node_modules/cesium/Build/Cesium/Widgets",
-          dest: "cesiumStatic",
+          dest: "cesiumStatic/1.144.0",
           rename: { stripBase: 4 },
         },
       ],

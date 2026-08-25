@@ -398,7 +398,32 @@ def _safe_tileset_target(uri: str, document_path: Path, tiles_root: Path) -> Pat
     return target
 
 
-def _tile_header(path: Path) -> dict[str, int | str]:
+def _point_cloud_render_metadata(
+    feature_table: dict[str, Any],
+    batch_table: dict[str, Any],
+) -> tuple[list[str], dict[str, str]]:
+    feature_names = {str(key).casefold(): str(key) for key in feature_table}
+    batch_names = {str(key).casefold(): str(key) for key in batch_table}
+    modes: list[str] = []
+    properties: dict[str, str] = {}
+    if "rgb" in feature_names or "rgba" in feature_names:
+        modes.append("rgb")
+    if "position" in feature_names or "position_quantized" in feature_names:
+        modes.append("elevation")
+    for candidate in ("return_number", "returnnumber", "echo"):
+        if candidate in batch_names:
+            modes.append("return")
+            properties["return"] = batch_names[candidate]
+            break
+    for candidate in ("intensity", "reflectance"):
+        if candidate in batch_names:
+            modes.append("intensity")
+            properties["intensity"] = batch_names[candidate]
+            break
+    return modes, properties
+
+
+def _tile_header(path: Path) -> dict[str, Any]:
     suffix = path.suffix.lower()
     if suffix not in {".b3dm", ".cmpt", ".i3dm", ".pnts"}:
         return {"pointCount": 0}
@@ -416,16 +441,32 @@ def _tile_header(path: Path) -> dict[str, int | str]:
         if suffix == ".i3dm" and struct.unpack_from("<I", header, 28)[0] not in {0, 1}:
             raise ValueError(f"3D Tiles I3DM glTF 格式标记无效：{path.name}")
         point_count = 0
+        render_modes: list[str] = []
+        render_properties: dict[str, str] = {}
         if suffix == ".pnts":
             feature_json_length = struct.unpack_from("<I", header, 12)[0]
+            feature_binary_length = struct.unpack_from("<I", header, 16)[0]
+            batch_json_length = struct.unpack_from("<I", header, 20)[0]
             if 0 < feature_json_length <= 1024 * 1024:
                 feature_json = source.read(feature_json_length).rstrip(b" \t\r\n\0")
                 try:
                     feature_table = json.loads(feature_json.decode("utf-8"))
                     point_count = max(0, int(feature_table.get("POINTS_LENGTH") or 0))
+                    batch_table: dict[str, Any] = {}
+                    if 0 < batch_json_length <= 1024 * 1024:
+                        source.seek(28 + feature_json_length + feature_binary_length)
+                        batch_json = source.read(batch_json_length).rstrip(b" \t\r\n\0")
+                        batch_table = json.loads(batch_json.decode("utf-8"))
+                    render_modes, render_properties = _point_cloud_render_metadata(feature_table, batch_table)
                 except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
                     point_count = 0
-    return {"magic": magic, "version": version, "pointCount": point_count}
+    return {
+        "magic": magic,
+        "version": version,
+        "pointCount": point_count,
+        "pointCloudRenderableModes": render_modes,
+        "pointCloudRenderableProperties": render_properties,
+    }
 
 
 def _apply_tileset_transform(point: tuple[float, float, float], transform: list[Any] | None) -> tuple[float, float, float]:
@@ -553,6 +594,8 @@ def inspect_3d_tileset(root_path: Path) -> dict[str, Any]:
     formats: dict[str, int] = {}
     asset_versions: set[str] = set()
     point_count = 0
+    point_cloud_renderable_modes: set[str] = set()
+    point_cloud_renderable_properties: dict[str, str] = {}
 
     while pending:
         document_path = pending.pop().resolve()
@@ -578,6 +621,9 @@ def inspect_3d_tileset(root_path: Path) -> dict[str, Any]:
             key = suffix[1:] if suffix else "other"
             formats[key] = formats.get(key, 0) + 1
             point_count += int(header.get("pointCount") or 0)
+            point_cloud_renderable_modes.update(header.get("pointCloudRenderableModes") or [])
+            for mode, property_name in dict(header.get("pointCloudRenderableProperties") or {}).items():
+                point_cloud_renderable_properties.setdefault(str(mode), str(property_name))
 
     supported_files = [path for path in referenced_files if path.suffix.lower() in SUPPORTED_3D_TILE_EXTENSIONS]
     if not supported_files:
@@ -594,6 +640,8 @@ def inspect_3d_tileset(root_path: Path) -> dict[str, Any]:
         "tileCount": len(supported_files),
         "totalSize": total_size,
         "pointCount": point_count,
+        "pointCloudRenderableModes": sorted(point_cloud_renderable_modes),
+        "pointCloudRenderableProperties": point_cloud_renderable_properties,
         "formats": dict(sorted(formats.items())),
         "contentType": content_type,
         "assetVersions": sorted(asset_versions),

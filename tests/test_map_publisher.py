@@ -62,6 +62,8 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert "PublishedAtText" in assistant_script
         assert '"dji-trajectory"' in material_script
         assert '"DJI 航迹与姿态侧车"' in assistant_script
+        assert '"PNTS 浏览点云（自动关联 LAS）"' in assistant_script
+        assert '"LAS/LAZ 源数据（并入 PNTS）"' in assistant_script
         assert '"_smrmsg"' in assistant_script
 
         xaml_match = re.search(r"\[xml\]\$xaml = @'\r?\n(.*?)\r?\n'@", assistant_script, re.DOTALL)

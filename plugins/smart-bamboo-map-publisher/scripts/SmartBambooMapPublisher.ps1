@@ -53,8 +53,8 @@ function Get-MaterialTypeLabel([string]$Kind) {
         "dsm" { return "DSM 地表模型" }
         "dtm" { return "DTM 地形模型" }
         "tiles-b3dm" { return "DJI B3DM 实景模型" }
-        "tiles-pnts" { return "DJI PNTS 点云瓦片" }
-        "pointcloud-las" { return "LAS/LAZ 原始点云" }
+        "tiles-pnts" { return "PNTS 浏览点云（自动关联 LAS）" }
+        "pointcloud-las" { return "LAS/LAZ 源数据（并入 PNTS）" }
         "dji-trajectory" { return "DJI 航迹与姿态侧车" }
         default { return $Kind }
     }
@@ -206,7 +206,7 @@ function Get-MapMaterials([string]$Root) {
         $pnts = Get-ChildItem -LiteralPath $directoryPath -Recurse -File -Filter "*.pnts" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($b3dm -or $pnts) {
             $kind = if ($b3dm) { "tiles-b3dm" } else { "tiles-pnts" }
-            $label = if ($b3dm) { "DJI B3DM 实景模型" } else { "DJI PNTS 点云瓦片" }
+            $label = if ($b3dm) { "DJI B3DM 实景模型" } else { "PNTS 浏览点云（自动关联 LAS）" }
             $items.Add((New-MapItem $true $kind $label $tileset.Directory (Get-DirectorySize $tileset.Directory)))
             $claimedDirectories.Add($directoryPath)
         }
@@ -228,7 +228,7 @@ function Get-MapMaterials([string]$Root) {
     foreach ($group in ($pointFiles | Group-Object DirectoryName)) {
         $directory = Get-Item -LiteralPath $group.Name
         [long]$size = ($group.Group | Measure-Object -Property Length -Sum).Sum
-        $items.Add((New-MapItem $true "pointcloud-las" "LAS/LAZ 原始点云" $directory $size))
+        $items.Add((New-MapItem $true "pointcloud-las" "LAS/LAZ 源数据（并入 PNTS）" $directory $size))
     }
     $trajectoryDirectories = @(Get-ChildItem -LiteralPath $rootItem.FullName -Recurse -Directory -Filter "terra_trajectory" -ErrorAction SilentlyContinue | Where-Object { Test-PublishablePath $_.FullName })
     foreach ($directory in $trajectoryDirectories) {
@@ -260,10 +260,10 @@ function Get-SingleMaterial([string]$Path) {
         $b3dm = Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Filter "*.b3dm" -ErrorAction SilentlyContinue | Select-Object -First 1
         $pnts = Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Filter "*.pnts" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($b3dm) { return New-MapItem $true "tiles-b3dm" "DJI B3DM 实景模型" $item (Get-DirectorySize $item) }
-        if ($pnts) { return New-MapItem $true "tiles-pnts" "DJI PNTS 点云瓦片" $item (Get-DirectorySize $item) }
+        if ($pnts) { return New-MapItem $true "tiles-pnts" "PNTS 浏览点云（自动关联 LAS）" $item (Get-DirectorySize $item) }
     }
     if (Get-ChildItem -LiteralPath $item.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @(".las", ".laz") } | Select-Object -First 1) {
-        return New-MapItem $true "pointcloud-las" "LAS/LAZ 原始点云" $item (Get-DirectorySize $item)
+        return New-MapItem $true "pointcloud-las" "LAS/LAZ 源数据（并入 PNTS）" $item (Get-DirectorySize $item)
     }
     if (Get-ChildItem -LiteralPath $item.FullName -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
         $lowerName = $_.Name.ToLowerInvariant()

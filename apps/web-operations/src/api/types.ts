@@ -267,6 +267,9 @@ export interface ImageryAsset {
   pointCloudFormats?: number[];
   pointCloudDimensions?: string[];
   pointCloudAttributeModes?: Array<"rgb" | "elevation" | "return" | "intensity" | "gps-time">;
+  pointCloudRenderableModes?: Array<"rgb" | "elevation" | "return" | "intensity">;
+  pointCloudRenderableProperties?: Partial<Record<"return" | "intensity", string>>;
+  pointCloudSourcePaths?: string[];
   trajectoryAvailable?: boolean;
   trajectoryFileCount?: number;
   trajectorySize?: number;

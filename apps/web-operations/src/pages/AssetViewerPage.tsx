@@ -99,6 +99,8 @@ export function AssetViewerPage() {
       ...DEFAULT_SETTINGS,
       elevationMinimum: asset.nativeBounds?.[2],
       elevationMaximum: asset.nativeBounds?.[5],
+      returnProperty: asset.pointCloudRenderableProperties?.return,
+      intensityProperty: asset.pointCloudRenderableProperties?.intensity,
     };
     try {
       const saved = window.localStorage.getItem(calibrationKey(asset.id));
@@ -106,9 +108,11 @@ export function AssetViewerPage() {
     } catch {
       setSettings(assetSettings);
     }
+    setPointInformationMode("rgb");
   }, [asset]);
 
   const pointAttributeModes = useMemo(() => new Set(asset?.pointCloudAttributeModes ?? []), [asset?.pointCloudAttributeModes]);
+  const pointRenderableModes = useMemo(() => new Set(asset?.pointCloudRenderableModes ?? ["rgb", "elevation"]), [asset?.pointCloudRenderableModes]);
   const pointDimensionSummary = useMemo(() => {
     const labels: string[] = [];
     if (pointAttributeModes.has("rgb")) labels.push("RGB");
@@ -230,13 +234,13 @@ export function AssetViewerPage() {
               {mode === "3d" && <>
                 <section><header><ScanSearch /><div><small>点云显示</small><strong>大疆信息视图</strong></div></header><div className="point-attribute-switch">
                   <button className={pointInformationMode === "rgb" ? "active" : ""} type="button" onClick={() => selectPointInformationMode("rgb")}>RGB</button>
-                  <button className={pointInformationMode === "elevation" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("elevation")} onClick={() => selectPointInformationMode("elevation")}>高程</button>
-                  <button className={pointInformationMode === "return" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("return")} title={pointAttributeModes.has("return") ? "按回波序号分级着色" : "当前网页瓦片未保留 ReturnNumber"} onClick={() => selectPointInformationMode("return")}>回波</button>
-                  <button className={pointInformationMode === "intensity" ? "active" : ""} type="button" disabled={!pointAttributeModes.has("intensity")} title={pointAttributeModes.has("intensity") ? "按反射强度分级着色" : "当前网页瓦片未保留 Intensity"} onClick={() => selectPointInformationMode("intensity")}>反射强度</button>
+                  <button className={pointInformationMode === "elevation" ? "active" : ""} type="button" disabled={!pointRenderableModes.has("elevation")} onClick={() => selectPointInformationMode("elevation")}>高程</button>
+                  <button className={pointInformationMode === "return" ? "active" : ""} type="button" disabled={!pointRenderableModes.has("return")} title={pointRenderableModes.has("return") ? "按当前 PNTS 的回波字段分级着色" : "原始 LAS 有回波，但当前网页瓦片未保留该字段"} onClick={() => selectPointInformationMode("return")}>回波</button>
+                  <button className={pointInformationMode === "intensity" ? "active" : ""} type="button" disabled={!pointRenderableModes.has("intensity")} title={pointRenderableModes.has("intensity") ? "按当前 PNTS 的反射强度字段分级着色" : "原始 LAS 有反射强度，但当前网页瓦片未保留该字段"} onClick={() => selectPointInformationMode("intensity")}>反射强度</button>
                   <button className={pointInformationMode === "trajectory" ? "active" : ""} type="button" disabled={!asset.trajectoryAvailable} onClick={() => selectPointInformationMode("trajectory")}>轨迹</button>
                 </div>
-                <div className="point-source-summary"><strong>源数据识别</strong><span>{pointDimensionSummary.length ? pointDimensionSummary.join(" · ") : "当前成果仅含网页瓦片，尚未登记原始 LAS"}</span><small>{asset.trajectoryAvailable ? `DJI 轨迹侧车：${asset.trajectoryFileCount ?? 0} 个文件（${asset.trajectoryFormats?.join(" / ") || "POS"}）` : "未发现 terra_trajectory 轨迹侧车目录"}</small></div>
-                <p className="asset-viewer-hint">{pointInformationMode === "trajectory" ? "轨迹资料已登记；POS/SBET 可用于后续抽稀航迹叠加。" : "RGB、高程、回波和反射强度按成果实际保留字段开放；旧 PNTS 如无属性需从原 LAS 重新生成。"}</p><label className="asset-range"><span>点大小 <strong>{settings.pointSize.toFixed(1)}</strong></span><input type="range" min="1" max="10" step="0.5" value={settings.pointSize} onChange={(event) => setSettings((current) => ({ ...current, pointSize: Number(event.target.value) }))} /></label></section>
+                <div className="point-source-summary"><strong>PNTS 与 LAS 已合并关联</strong><span>{pointDimensionSummary.length ? `原始 LAS：${pointDimensionSummary.join(" · ")}` : "当前成果仅含网页瓦片，尚未登记原始 LAS"}</span><small>{asset.pointCloudSourcePaths?.length ? `${asset.pointCloudSourcePaths.length} 个 LAS/LAZ 源文件 · ` : ""}{asset.trajectoryAvailable ? `DJI 轨迹：${asset.trajectoryFileCount ?? 0} 个文件（${asset.trajectoryFormats?.join(" / ") || "POS"}）` : "未发现 terra_trajectory 轨迹侧车目录"}</small></div>
+                <p className="asset-viewer-hint">{pointInformationMode === "trajectory" ? "轨迹资料已登记；POS/SBET 可用于后续抽稀航迹叠加。" : `当前 PNTS 可直接显示：${["rgb", "elevation", "return", "intensity"].filter((item) => pointRenderableModes.has(item as "rgb" | "elevation" | "return" | "intensity")).map((item) => ({ rgb: "RGB", elevation: "高程", return: "回波", intensity: "反射强度" })[item]).join("、") || "RGB"}。LAS 仅作为源数据，不会与 PNTS 重复绘制。`}</p><label className="asset-range"><span>点大小 <strong>{settings.pointSize.toFixed(1)}</strong></span><input type="range" min="1" max="10" step="0.5" value={settings.pointSize} onChange={(event) => setSettings((current) => ({ ...current, pointSize: Number(event.target.value) }))} /></label></section>
                 <section><header><Box /><div><small>模型校准</small><strong>本地坐标偏移</strong></div></header><div className="calibration-grid"><label><span>向东（米）</span><input type="number" step="0.1" value={settings.eastOffset ?? 0} onChange={(event) => updateOffset("eastOffset", event.target.value)} /></label><label><span>向北（米）</span><input type="number" step="0.1" value={settings.northOffset ?? 0} onChange={(event) => updateOffset("northOffset", event.target.value)} /></label><label><span>高程（米）</span><input type="number" step="0.1" value={settings.heightOffset ?? 0} onChange={(event) => updateOffset("heightOffset", event.target.value)} /></label></div><div className="calibration-actions"><button className="button primary" type="button" onClick={saveCalibration}><Save />保存本机校准</button><button className="button secondary" type="button" onClick={resetCalibration}><RotateCcw />恢复原值</button></div><p className="asset-viewer-hint">当前先保存到本机浏览器；正式控制点配准通过后再写入平台资产版本。</p></section>
               </>}
             </aside>

@@ -72,6 +72,8 @@ export interface Spatial3dDisplaySettings {
   opacity: number;
   pointSize: number;
   colorMode?: "rgb" | "elevation" | "return" | "intensity";
+  returnProperty?: string;
+  intensityProperty?: string;
   elevationMinimum?: number;
   elevationMaximum?: number;
   eastOffset?: number;
@@ -99,6 +101,9 @@ function applySpatialTilesetStyle(
   assetType: string | undefined,
   settings: Spatial3dDisplaySettings,
 ) {
+  const styleProperty = (value: string | undefined, fallback: string) => (
+    value && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : fallback
+  );
   if (assetType === "pointcloud") {
     // Do not assign a constant color here. DJI PNTS tiles carry per-point RGB,
     // and a white style discards the canopy colour that operators need to see.
@@ -119,25 +124,27 @@ function applySpatialTilesetStyle(
         },
       });
     } else if (settings.colorMode === "intensity") {
+      const propertyName = styleProperty(settings.intensityProperty, "intensity");
       tileset.style = new Cesium3DTileStyle({
         pointSize: String(settings.pointSize),
         color: {
           conditions: [
-            ["${intensity} >= 49152", "color('#f7fcf5')"],
-            ["${intensity} >= 32768", "color('#74c476')"],
-            ["${intensity} >= 16384", "color('#238b45')"],
+            [`\${${propertyName}} >= 49152`, "color('#f7fcf5')"],
+            [`\${${propertyName}} >= 32768`, "color('#74c476')"],
+            [`\${${propertyName}} >= 16384`, "color('#238b45')"],
             ["true", "color('#00441b')"],
           ],
         },
       });
     } else if (settings.colorMode === "return") {
+      const propertyName = styleProperty(settings.returnProperty, "return_number");
       tileset.style = new Cesium3DTileStyle({
         pointSize: String(settings.pointSize),
         color: {
           conditions: [
-            ["${return_number} >= 4", "color('#984ea3')"],
-            ["${return_number} == 3", "color('#ff7f00')"],
-            ["${return_number} == 2", "color('#4daf4a')"],
+            [`\${${propertyName}} >= 4`, "color('#984ea3')"],
+            [`\${${propertyName}} == 3`, "color('#ff7f00')"],
+            [`\${${propertyName}} == 2`, "color('#4daf4a')"],
             ["true", "color('#377eb8')"],
           ],
         },
@@ -740,11 +747,21 @@ export function CesiumGlobe({
   useEffect(() => {
     spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
       const settings = spatial3dDisplaySettings[assetId] ?? { opacity: 1, pointSize: 3 };
-      applySpatialTilesetStyle(
-        tileset,
-        spatial3dAssetTypesRef.current.get(assetId),
-        settings,
-      );
+      try {
+        applySpatialTilesetStyle(
+          tileset,
+          spatial3dAssetTypesRef.current.get(assetId),
+          settings,
+        );
+      } catch {
+        // A malformed third-party batch-table property must never tear down the
+        // whole viewer. Fall back to the per-point RGB carried by the PNTS tile.
+        applySpatialTilesetStyle(
+          tileset,
+          spatial3dAssetTypesRef.current.get(assetId),
+          { ...settings, colorMode: "rgb" },
+        );
+      }
       const baseMatrix = spatial3dBaseMatricesRef.current.get(assetId);
       if (baseMatrix) applySpatialTilesetTransform(tileset, baseMatrix, settings);
     });

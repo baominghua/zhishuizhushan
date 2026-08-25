@@ -69,10 +69,25 @@ def write_las_14_with_wkt(path: Path, *, bounds: tuple[float, float, float, floa
     path.write_bytes(header + vlr + wkt)
 
 
-def write_pnts(path: Path, point_count: int = 12) -> None:
-    feature_json = json.dumps({"POINTS_LENGTH": point_count}, separators=(",", ":")).encode("utf-8")
-    byte_length = 28 + len(feature_json)
-    path.write_bytes(b"pnts" + struct.pack("<IIIIII", 1, byte_length, len(feature_json), 0, 0, 0) + feature_json)
+def write_pnts(
+    path: Path,
+    point_count: int = 12,
+    *,
+    feature_table: dict | None = None,
+    batch_table: dict | None = None,
+) -> None:
+    feature_json = json.dumps(
+        feature_table or {"POINTS_LENGTH": point_count},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    batch_json = json.dumps(batch_table or {}, separators=(",", ":")).encode("utf-8") if batch_table else b""
+    byte_length = 28 + len(feature_json) + len(batch_json)
+    path.write_bytes(
+        b"pnts"
+        + struct.pack("<IIIIII", 1, byte_length, len(feature_json), 0, len(batch_json), 0)
+        + feature_json
+        + batch_json
+    )
 
 
 def write_b3dm(path: Path) -> None:
@@ -248,6 +263,28 @@ def test_dji_tileset_inspection_reads_pnts_and_normalizes_legacy_asset_version(t
     assert json.loads(root.read_text(encoding="utf-8"))["asset"]["version"] == "0.0"
 
 
+def test_dji_tileset_inspection_reports_actual_renderable_batch_properties(tmp_path):
+    root = tmp_path / "tileset.json"
+    write_pnts(
+        tmp_path / "tile.pnts",
+        point_count=321,
+        feature_table={"POINTS_LENGTH": 321, "POSITION": {"byteOffset": 0}, "RGB": {"byteOffset": 100}},
+        batch_table={
+            "ECHO": {"byteOffset": 0, "componentType": "UNSIGNED_BYTE", "type": "SCALAR"},
+            "INTENSITY": {"byteOffset": 321, "componentType": "UNSIGNED_BYTE", "type": "SCALAR"},
+        },
+    )
+    write_tileset(root)
+
+    metadata = inspect_3d_tileset(root)
+
+    assert metadata["pointCloudRenderableModes"] == ["elevation", "intensity", "return", "rgb"]
+    assert metadata["pointCloudRenderableProperties"] == {
+        "return": "ECHO",
+        "intensity": "INTENSITY",
+    }
+
+
 def test_dji_tileset_inspection_identifies_b3dm_oblique_model(tmp_path):
     root = tmp_path / "tileset.json"
     write_b3dm(tmp_path / "tile.b3dm")
@@ -339,6 +376,58 @@ def test_registered_dji_tileset_service_normalizes_json_and_serves_binary(app_cl
     assert document.json()["root"]["content"]["uri"] == "tile.pnts?token=visual-token"
     assert binary.status_code == 200
     assert binary.content[:4] == b"pnts"
+
+
+def test_registered_pnts_scene_auto_associates_sibling_las_and_real_render_fields(app_client, isolated_env):
+    import server.app as app_module
+
+    project = isolated_env / "inbox" / "尤溪项目地块"
+    tiles_dir = project / "terra_pnts"
+    las_dir = project / "terra_las_1_4"
+    tiles_dir.mkdir(parents=True)
+    las_dir.mkdir(parents=True)
+    write_pnts(
+        tiles_dir / "tile.pnts",
+        point_count=19,
+        feature_table={"POINTS_LENGTH": 19, "POSITION": {"byteOffset": 0}, "RGB": {"byteOffset": 228}},
+        batch_table={
+            "ECHO": {"byteOffset": 0, "componentType": "UNSIGNED_BYTE", "type": "SCALAR"},
+            "INTENSITY": {"byteOffset": 19, "componentType": "UNSIGNED_SHORT", "type": "SCALAR"},
+        },
+    )
+    write_tileset(tiles_dir / "tileset.json")
+    write_las_14_with_wkt(
+        las_dir / "cloud0.las",
+        bounds=(503000, 3002800, 600, 503500, 3003300, 900),
+    )
+    app_module.IMPORT_DIRS = [isolated_env]
+    app_module.cached_3d_tileset_metadata.cache_clear()
+    app_module.cached_sibling_las_metadata.cache_clear()
+    app_module.save_scene(
+        {
+            "id": "tiles-auto-associated",
+            "name": "尤溪项目点云",
+            "assetType": "pointcloud",
+            "tilesetPath": str(tiles_dir / "tileset.json"),
+            "allowedRoles": [],
+            "allowedUsers": [],
+            "linkedBlockCodes": [],
+            "processingStage": "ready",
+        }
+    )
+
+    response = app_client.get(
+        "/api/scenes/tiles-auto-associated",
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pointCloudRenderableModes"] == ["elevation", "intensity", "return", "rgb"]
+    assert payload["pointCloudRenderableProperties"] == {"return": "ECHO", "intensity": "INTENSITY"}
+    assert payload["pointCloudFileCount"] == 1
+    assert payload["pointCloudSourcePaths"] == [str((las_dir / "cloud0.las").resolve())]
+    assert payload["pointCloudAttributeModes"] == ["rgb", "elevation", "return", "intensity", "gps-time"]
 
 
 def test_point_cloud_upload_session_is_chunk_idempotent_and_resumable(app_client, monkeypatch):
