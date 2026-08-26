@@ -522,6 +522,7 @@ export interface ForestBlockRecord {
   avgHeightM: number | null;
   standingDensity: number | null;
   carbonEstimateTco2e: number | null;
+  yieldEstimate: Record<string, unknown>;
   tags: string[];
   properties: Record<string, unknown>;
   geometry: Record<string, unknown> | null;
@@ -529,6 +530,43 @@ export interface ForestBlockRecord {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+}
+
+export interface MosoInventoryEstimate {
+  modelVersion: string;
+  status: "trial" | string;
+  species: string;
+  estimatedAt: string;
+  blockArea: { value: number; unit: string };
+  canopyClosure: { value: number; unit: string };
+  crownEquivalentCount: { value: number; unit: string };
+  resourceStock: { value: number; lower: number; upper: number; unit: string; label: string };
+  stemDensity: { value: number; lower: number; upper: number; unit: string };
+  abovegroundBiomass: { value: number; lower: number; upper: number; unit: string; dbhCm: number; dbhSource: string };
+  standingVolume: { value: number | null; unit: string; status: string; reason: string };
+  confidence: { score: number; level: string; reasons: string[] };
+  imageryEvidence: Record<string, unknown>;
+  pointCloudEvidence: Record<string, unknown> & { available?: boolean };
+  disclaimer: string;
+}
+
+export interface MosoInventoryEstimateResponse {
+  estimate: MosoInventoryEstimate;
+  saved: boolean;
+  block?: ForestBlockRecord;
+}
+
+export interface MosoInventoryBatchTask {
+  id: string;
+  type: "moso-bamboo-inventory" | string;
+  status: string;
+  progress: number;
+  message: string;
+  blockTotal: number;
+  result?: {
+    completed: Array<{ blockId: string; blockCode: string; estimatedCulms: number }>;
+    failed: Array<{ blockId: string; blockCode: string; message: string }>;
+  };
 }
 
 export interface ForestBlockPayload {

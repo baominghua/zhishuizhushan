@@ -3670,6 +3670,28 @@ svg {
 .detail-group dl > div:nth-child(odd) { padding-right: 14px; }
 .detail-group dt { color: var(--muted); font-size: 11px; }
 .detail-group dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.inventory-task-banner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 320px) auto; align-items: center; gap: 14px; padding: 12px 16px; color: #185c48; background: #edf7f3; border: 1px solid #bddfd2; border-radius: 8px; }
+.inventory-task-banner > div:first-child { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.inventory-task-banner svg { width: 17px; height: 17px; }
+.inventory-task-banner span { color: var(--muted); font-size: 12px; }
+.inventory-task-banner.failed { color: #8c3434; background: #fff1f1; border-color: #e8c2c2; }
+.inventory-task-progress { height: 7px; overflow: hidden; background: rgba(22, 107, 79, .13); border-radius: 999px; }
+.inventory-task-progress i { display: block; height: 100%; background: #17815f; border-radius: inherit; transition: width .25s ease; }
+.moso-inventory-card { background: linear-gradient(145deg, #f4faf7 0%, #edf7f2 100%); border-color: #bddfd2; }
+.moso-inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.moso-inventory-heading span { color: #17815f; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.moso-inventory-heading h3 { margin: 2px 0 0; font-size: 16px; }
+.moso-inventory-heading .button { min-height: 36px; padding: 0 12px; }
+.moso-inventory-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; background: white; border: 1px solid #cee4db; border-radius: 7px; }
+.moso-inventory-metrics > div { display: grid; gap: 3px; padding: 12px; border-right: 1px solid #e0ece7; border-bottom: 1px solid #e0ece7; }
+.moso-inventory-metrics > div:nth-child(2n) { border-right: 0; }
+.moso-inventory-metrics > div:nth-last-child(-n+2) { border-bottom: 0; }
+.moso-inventory-metrics span, .moso-inventory-metrics small { color: var(--muted); font-size: 11px; }
+.moso-inventory-metrics strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.moso-volume-warning { margin: 12px 0 0; padding: 10px 12px; color: #79501c; background: #fff7e9; border-radius: 6px; font-size: 12px; line-height: 1.55; }
+.moso-disclaimer { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.moso-empty { padding: 14px; color: var(--muted); background: rgba(255, 255, 255, .72); border: 1px dashed #c9ddd5; border-radius: 7px; }
+.moso-empty p { margin: 0 0 4px; color: var(--text); }
 
 .spatial-version-history { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .spatial-version-history > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }

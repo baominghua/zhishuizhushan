@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from shapely.geometry import shape
 
 try:
     from fastapi.routing import iter_route_contexts as fastapi_iter_route_contexts
@@ -90,10 +91,12 @@ from server.modules.mysql_schema import REMOTE_SENSING_MYSQL_TABLES, mysql_catal
 from server.modules.forest_blocks import (
     FOREST_BLOCK_IDENTITY_LOOKUP_BATCH_SIZE,
     FOREST_BLOCK_MYSQL_WRITE_BATCH_SIZE,
+    ForestBlockPatch,
     ForestBlockFilters,
     block_by_code,
     filtered_forest_blocks,
     find_block,
+    patch_forest_block,
     router as forest_blocks_router,
 )
 from server.modules.forest_rights import router as forest_rights_router
@@ -103,6 +106,12 @@ from server.modules.imports import (
     import_workflow_summary,
     list_import_delivery_packages,
     router as imports_router,
+)
+from server.modules.moso_bamboo_inventory import (
+    MosoInventoryError,
+    analyze_rgb_orthophoto,
+    estimate_from_rgb_metrics,
+    merge_moso_estimate,
 )
 from server.modules.settings import enforce_production_configuration, get_settings
 from server.modules.spatial_assets import (
@@ -507,6 +516,15 @@ class QualityIssueUpdateRequest(BaseModel):
 class SceneDeliveryRequest(BaseModel):
     status: str
     comment: str = ""
+
+
+class MosoInventoryEstimateRequest(BaseModel):
+    blockId: str = Field(min_length=1)
+    save: bool = True
+
+
+class MosoInventoryBatchRequest(BaseModel):
+    blockIds: list[str] = Field(default_factory=list, max_length=1000)
 
 
 class TiandituPrewarmRequest(BaseModel):
@@ -5894,6 +5912,218 @@ def get_dashboard_workflow_status(request: Request) -> dict[str, Any]:
         "layers": dashboard_map_layers_payload(),
         "generatedAt": now_iso(),
     }
+
+
+def moso_block_bounds(block: dict[str, Any]) -> list[float] | None:
+    geometry = block.get("geometry")
+    if not isinstance(geometry, dict):
+        return None
+    try:
+        west, south, east, north = shape(geometry).bounds
+        return [float(west), float(south), float(east), float(north)]
+    except Exception:
+        return None
+
+
+def moso_scene_candidates(
+    block: dict[str, Any],
+    scenes: list[dict[str, Any]],
+    *,
+    asset_type: str,
+    preferred_mission: str = "",
+) -> list[dict[str, Any]]:
+    block_code = str(block.get("blockCode") or "").strip()
+    block_bounds = moso_block_bounds(block)
+    candidates: list[tuple[tuple[int, int, str, str], dict[str, Any]]] = []
+    for scene in scenes:
+        if str(scene.get("assetType") or "orthophoto").strip().lower() != asset_type:
+            continue
+        if str(scene.get("status") or "active") in {"archived", "deleted"}:
+            continue
+        linked_codes = set(split_tokens(scene.get("linkedBlockCodes")))
+        linked = bool(block_code and block_code in linked_codes)
+        spatial = bool(block_bounds and bounds_intersect(block_bounds, scene_query_bounds(scene)))
+        if not linked and not spatial:
+            continue
+        mission_match = bool(preferred_mission and str(scene.get("missionId") or "") == preferred_mission)
+        sort_key = (
+            1 if linked else 0,
+            1 if mission_match else 0,
+            str(scene.get("capturedAt") or ""),
+            str(scene.get("createdAt") or ""),
+        )
+        candidates.append((sort_key, scene))
+    return [item for _, item in sorted(candidates, key=lambda entry: entry[0], reverse=True)]
+
+
+def build_moso_inventory_estimate(
+    block: dict[str, Any],
+    scenes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    orthophotos = moso_scene_candidates(block, scenes, asset_type="orthophoto")
+    if not orthophotos:
+        raise MosoInventoryError("该林班没有匹配到已入库的正射影像")
+    imagery_scene = orthophotos[0]
+    cog_value = str(imagery_scene.get("cogPath") or "").strip()
+    if not cog_value:
+        raise MosoInventoryError("匹配到的正射成果尚未生成 COG")
+    cog_path = resolve_catalog_path(cog_value)
+    point_clouds = moso_scene_candidates(
+        block,
+        scenes,
+        asset_type="pointcloud",
+        preferred_mission=str(imagery_scene.get("missionId") or ""),
+    )
+    rgb_metrics = analyze_rgb_orthophoto(cog_path, dict(block.get("geometry") or {}))
+    return estimate_from_rgb_metrics(
+        block,
+        rgb_metrics,
+        imagery_scene=imagery_scene,
+        point_cloud_scene=point_clouds[0] if point_clouds else None,
+    )
+
+
+def save_moso_inventory_estimate(
+    block: dict[str, Any],
+    estimate: dict[str, Any],
+    context: AuthContext,
+) -> dict[str, Any]:
+    updated = patch_forest_block(
+        str(block["id"]),
+        ForestBlockPatch(
+            yieldEstimate=merge_moso_estimate(block.get("yieldEstimate"), estimate)
+        ),
+        context,
+    )
+    return updated.model_dump()
+
+
+def run_moso_inventory_batch_task(
+    task_id: str,
+    blocks: list[dict[str, Any]],
+    scenes: list[dict[str, Any]],
+    context: AuthContext,
+) -> None:
+    update_task(
+        task_id,
+        status="running",
+        progress=1,
+        message="正在逐林班分析正射影像",
+        startedAt=now_iso(),
+    )
+    completed: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    total = max(1, len(blocks))
+    for index, block in enumerate(blocks):
+        if find_task_record(task_id).get("status") == "canceled":
+            return
+        try:
+            estimate = build_moso_inventory_estimate(block, scenes)
+            saved = save_moso_inventory_estimate(block, estimate, context)
+            completed.append(
+                {
+                    "blockId": saved.get("id"),
+                    "blockCode": saved.get("blockCode"),
+                    "estimatedCulms": estimate.get("resourceStock", {}).get("value"),
+                }
+            )
+        except Exception as exc:
+            failed.append(
+                {
+                    "blockId": str(block.get("id") or ""),
+                    "blockCode": str(block.get("blockCode") or ""),
+                    "message": str(exc),
+                }
+            )
+        progress = min(99, max(2, int((index + 1) / total * 98)))
+        update_task(
+            task_id,
+            progress=progress,
+            message=f"已完成 {index + 1}/{len(blocks)} 个林班，失败 {len(failed)} 个",
+        )
+    update_task(
+        task_id,
+        status="completed" if completed else "failed",
+        progress=100,
+        message=f"毛竹资源试算完成：成功 {len(completed)} 个，失败 {len(failed)} 个",
+        result={"completed": completed, "failed": failed},
+        completedAt=now_iso(),
+    )
+
+
+@app.get("/api/v2/ai/moso-inventory/model-card")
+def moso_inventory_model_card(request: Request) -> dict[str, Any]:
+    require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
+    from server.modules.moso_bamboo_inventory import MODEL_REFERENCES, MODEL_VERSION
+
+    return {
+        "modelVersion": MODEL_VERSION,
+        "status": "trial",
+        "target": "毛竹冠层、资源株数和地上生物量试算",
+        "standingVolumeStatus": "requires-local-plot-calibration",
+        "references": MODEL_REFERENCES,
+        "disclaimer": "科研试算值，不替代森林资源调查或法定蓄积量。",
+    }
+
+
+@app.post("/api/v2/ai/moso-inventory/estimate")
+def estimate_moso_inventory(
+    payload: MosoInventoryEstimateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    imagery_context = require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
+    context = platform_auth_context(imagery_context)
+    require_admin_permission(context, "forest.blocks.view")
+    if payload.save:
+        require_admin_permission(context, "ai.inference.operate")
+        require_admin_permission(context, "forest.blocks.update")
+    block = find_block(payload.blockId, context)
+    if not block.get("geometry"):
+        raise HTTPException(status_code=422, detail="林班缺少空间边界，无法进行影像裁切")
+    scenes = filter_scenes(load_catalog(), imagery_context)
+    try:
+        estimate = build_moso_inventory_estimate(block, scenes)
+    except MosoInventoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    response: dict[str, Any] = {"estimate": estimate, "saved": False}
+    if payload.save:
+        response["block"] = save_moso_inventory_estimate(block, estimate, context)
+        response["saved"] = True
+    return response
+
+
+@app.post("/api/v2/ai/moso-inventory/estimate-batch")
+def estimate_moso_inventory_batch(
+    payload: MosoInventoryBatchRequest,
+    request: Request,
+) -> dict[str, Any]:
+    imagery_context = require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
+    context = platform_auth_context(imagery_context)
+    require_admin_permission(context, "ai.inference.operate")
+    require_admin_permission(context, "forest.blocks.update")
+    blocks = filtered_forest_blocks(ForestBlockFilters(limit=1000), context, limit=1000)
+    requested = set(payload.blockIds)
+    if requested:
+        blocks = [block for block in blocks if str(block.get("id") or "") in requested]
+    blocks = [block for block in blocks if block.get("geometry")]
+    if not blocks:
+        raise HTTPException(status_code=422, detail="当前权限范围内没有可分析的林班边界")
+    scenes = filter_scenes(load_catalog(), imagery_context)
+    task = {
+        "id": f"task-{uuid.uuid4().hex[:12]}",
+        "type": "moso-bamboo-inventory",
+        "status": "queued",
+        "progress": 0,
+        "message": f"已排队，待分析 {len(blocks)} 个林班",
+        "blockTotal": len(blocks),
+        "createdBy": context.user,
+        "createdAt": now_iso(),
+        "updatedAt": now_iso(),
+        "events": [],
+    }
+    upsert_task(task)
+    TASK_EXECUTOR.submit(run_moso_inventory_batch_task, task["id"], blocks, scenes, context)
+    return {"accepted": True, "task": task}
 
 
 @app.get("/api/scenes")

@@ -23,6 +23,8 @@ import type {
   ForestBlockQuery,
   ForestBlockRecord,
   ForestBlockOptionsResponse,
+  MosoInventoryBatchTask,
+  MosoInventoryEstimateResponse,
   ForestSubcompartmentOptionsResponse,
   ForestSubcompartmentPatch,
   ForestSubcompartmentPayload,
@@ -379,6 +381,18 @@ export const api = {
       `/api/v2/resources/forest-blocks/${encodeURIComponent(id)}/rollback`,
       { method: "POST", body: JSON.stringify({ versionId }) },
     ),
+  estimateMosoInventory: (blockId: string, save = true) =>
+    request<MosoInventoryEstimateResponse>("/api/v2/ai/moso-inventory/estimate", {
+      method: "POST",
+      body: JSON.stringify({ blockId, save }),
+    }),
+  estimateMosoInventoryBatch: (blockIds: string[] = []) =>
+    request<{ accepted: true; task: MosoInventoryBatchTask }>(
+      "/api/v2/ai/moso-inventory/estimate-batch",
+      { method: "POST", body: JSON.stringify({ blockIds }) },
+    ),
+  mosoInventoryTask: (id: string) =>
+    request<MosoInventoryBatchTask>(`/api/tasks/${encodeURIComponent(id)}`),
   forestSubcompartmentLedger: (query: ForestSubcompartmentQuery) =>
     request<LedgerResponse<ForestSubcompartmentRecord>>(
       `/api/v2/resources/forest-subcompartments?${queryString(query)}`,

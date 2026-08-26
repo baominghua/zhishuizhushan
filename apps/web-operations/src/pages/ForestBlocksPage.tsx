@@ -10,12 +10,13 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Trash2,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useDeferredValue, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { api, downloadFile } from "../api/client";
-import type { ForestBlockPayload, ForestBlockRecord } from "../api/types";
+import type { ForestBlockPayload, ForestBlockRecord, MosoInventoryEstimate } from "../api/types";
 import { BoundaryEditor } from "../components/SubcompartmentBoundaryEditor";
 import { AdministrativeDivisionSelector } from "../components/AdministrativeDivisionSelector";
 import { LedgerPagination } from "../components/LedgerPagination";
@@ -45,6 +46,7 @@ export function ForestBlocksPage() {
   const [offset, setOffset] = useState(0);
   const [panel, setPanel] = useState<PanelState>(EMPTY_PANEL);
   const [exporting, setExporting] = useState(false);
+  const [inventoryTaskId, setInventoryTaskId] = useState("");
   const deferredQ = useDeferredValue(q);
   const query = useQuery({
     queryKey: ["v2-forest-block-ledger", deferredQ, riskLevel, baseType, operationType, offset],
@@ -65,6 +67,7 @@ export function ForestBlocksPage() {
   const canDelete = hasPermission(permissions, roles, "forest.blocks.delete");
   const canRollback = hasPermission(permissions, roles, "forest.blocks.rollback");
   const canExport = hasPermission(permissions, roles, "forest.blocks.export");
+  const canEstimate = canUpdate && hasPermission(permissions, roles, "ai.inference.operate");
   const exportHref = `/api/v2/resources/forest-blocks-export.csv?${new URLSearchParams({
     q: deferredQ,
     riskLevel,
@@ -100,6 +103,29 @@ export function ForestBlocksPage() {
       await queryClient.invalidateQueries({ queryKey: ["workspace-summary"] });
     },
   });
+  const estimate = useMutation({
+    mutationFn: (record: ForestBlockRecord) => api.estimateMosoInventory(record.id, true),
+    onSuccess: async (response) => {
+      if (response.block) setPanel({ mode: "view", record: response.block });
+      await queryClient.invalidateQueries({ queryKey: ["v2-forest-block-ledger"] });
+      await queryClient.invalidateQueries({ queryKey: ["forest-block-map"] });
+    },
+  });
+  const batchEstimate = useMutation({
+    mutationFn: () => api.estimateMosoInventoryBatch(),
+    onSuccess: (response) => setInventoryTaskId(response.task.id),
+  });
+  const inventoryTask = useQuery({
+    queryKey: ["moso-inventory-task", inventoryTaskId],
+    queryFn: () => api.mosoInventoryTask(inventoryTaskId),
+    enabled: Boolean(inventoryTaskId),
+    refetchInterval: (taskQuery) => ["queued", "running"].includes(taskQuery.state.data?.status || "") ? 1600 : false,
+  });
+  useEffect(() => {
+    if (inventoryTask.data?.status !== "completed") return;
+    void queryClient.invalidateQueries({ queryKey: ["v2-forest-block-ledger"] });
+    void queryClient.invalidateQueries({ queryKey: ["forest-block-map"] });
+  }, [inventoryTask.data?.status, queryClient]);
 
   const resetFilters = () => {
     setQ("");
@@ -116,12 +142,21 @@ export function ForestBlocksPage() {
         <div className="heading-actions">
           <button className="button secondary" type="button" onClick={() => query.refetch()}><RefreshCw aria-hidden="true" />刷新</button>
           <button className="button secondary" type="button" disabled={!canExport || exporting} title={canExport ? "导出当前筛选结果" : "当前角色无导出权限"} onClick={async () => { setExporting(true); try { await downloadFile(exportHref, "林班台账.csv"); } finally { setExporting(false); } }}><Download aria-hidden="true" />{exporting ? "正在导出" : "导出台账"}</button>
+          <button className="button secondary" type="button" disabled={!canEstimate || batchEstimate.isPending || ["queued", "running"].includes(inventoryTask.data?.status || "")} title={canEstimate ? "按当前权限范围异步生成毛竹资源科研试算" : "需要林班更新和 AI 推理权限"} onClick={() => batchEstimate.mutate()}><Sparkles aria-hidden="true" />{batchEstimate.isPending ? "正在排队" : "批量毛竹试算"}</button>
           <Link className="button secondary" to="/resources/imports"><FileUp aria-hidden="true" />批量导入</Link>
           <button className="button primary" type="button" disabled={!canCreate} onClick={() => setPanel({ mode: "create", record: null })} title={canCreate ? "新增林班" : "当前角色无新增权限"}><Plus aria-hidden="true" />新增林班</button>
         </div>
       </section>
 
       <LedgerSummaryStrip metrics={summary} />
+
+      {(inventoryTaskId || batchEstimate.error) && (
+        <section className={`inventory-task-banner ${inventoryTask.data?.status || "queued"}`}>
+          <div><Sparkles aria-hidden="true" /><strong>毛竹资源 AI 试算</strong><span>{batchEstimate.error?.message || inventoryTask.data?.message || "任务已排队"}</span></div>
+          <div className="inventory-task-progress"><i style={{ width: `${inventoryTask.data?.progress || 0}%` }} /></div>
+          <span>{inventoryTask.data?.progress || 0}%</span>
+        </section>
+      )}
 
       <section className="ledger-shell">
         <div className="ledger-toolbar">
@@ -147,7 +182,7 @@ export function ForestBlocksPage() {
                   <tr key={record.id} onClick={() => setPanel({ mode: "view", record })}>
                     <td><strong>{record.blockCode}</strong><small>{record.name}</small></td>
                     <td><strong>{locationLabel(record) || "区划待补充"}</strong><small>{formatArea(record.areaMu)}</small></td>
-                    <td><strong>{record.forestType || record.operationType || "资源属性待补充"}</strong><small>{record.baseType || record.qualityGrade || "未分级"}</small></td>
+                    <td><strong>{record.forestType || record.operationType || "资源属性待补充"}</strong><small>{mosoStockLabel(record) || record.baseType || record.qualityGrade || "未分级"}</small></td>
                     <td><StatusBadge tone={record.geometry ? "success" : "warning"}>{record.geometry ? "有边界" : "待补图"}</StatusBadge></td>
                     <td>{formatDateTime(record.updatedAt)}</td>
                     <td className="action-column">
@@ -170,7 +205,7 @@ export function ForestBlocksPage() {
       </section>
 
       <SidePanel open={panel.mode === "view"} eyebrow="空间资源详情" title={panel.record?.name || "林班详情"} onClose={() => setPanel(EMPTY_PANEL)} footer={panel.record && canUpdate ? <button className="button primary" type="button" onClick={() => setPanel({ mode: "edit", record: panel.record! })}><Pencil aria-hidden="true" />编辑林班</button> : undefined}>
-        {panel.record && <ForestBlockDetail record={panel.record} canRollback={canRollback} onRestored={async () => {
+        {panel.record && <ForestBlockDetail record={panel.record} canRollback={canRollback} canEstimate={canEstimate} estimatePending={estimate.isPending} estimateError={estimate.error} onEstimate={() => estimate.mutate(panel.record!)} onRestored={async () => {
           setPanel(EMPTY_PANEL);
           await queryClient.invalidateQueries({ queryKey: ["v2-forest-block-ledger"] });
           await queryClient.invalidateQueries({ queryKey: ["forest-block-map"] });
@@ -241,15 +276,34 @@ function ForestBlockForm({ record, pending, error, onCancel, onSubmit }: { recor
   );
 }
 
-function ForestBlockDetail({ record, canRollback, onRestored }: { record: ForestBlockRecord; canRollback: boolean; onRestored: () => Promise<void> }) {
+function ForestBlockDetail({ record, canRollback, canEstimate, estimatePending, estimateError, onEstimate, onRestored }: { record: ForestBlockRecord; canRollback: boolean; canEstimate: boolean; estimatePending: boolean; estimateError: Error | null; onEstimate: () => void; onRestored: () => Promise<void> }) {
+  const mosoInventory = record.yieldEstimate?.mosoInventory as MosoInventoryEstimate | undefined;
   return <div className="detail-stack">
     <DetailGroup title="空间身份"><Detail label="林班编号" value={record.blockCode} /><Detail label="名称" value={record.name} /><Detail label="行政区划" value={locationLabel(record)} /><Detail label="面积" value={formatArea(record.areaMu)} /><Detail label="边界" value={record.geometry ? "已入库" : "待补图"} /></DetailGroup>
     <DetailGroup title="资源属性"><Detail label="竹种 / 林种" value={record.forestType} /><Detail label="基地类型" value={record.baseType} /><Detail label="经营类型" value={record.operationType} /><Detail label="质量等级" value={record.qualityGrade} /><Detail label="健康状态" value={record.healthStatus} /><Detail label="风险等级" value={record.riskLevel} /></DetailGroup>
     <DetailGroup title="调查指标"><Detail label="竹龄" value={record.bambooAge} /><Detail label="平均胸径" value={record.avgDbhCm == null ? "" : `${record.avgDbhCm} cm`} /><Detail label="平均高度" value={record.avgHeightM == null ? "" : `${record.avgHeightM} m`} /><Detail label="密度" value={record.standingDensity == null ? "" : `${record.standingDensity} 株/亩`} /><Detail label="碳储量估算" value={record.carbonEstimateTco2e == null ? "" : `${record.carbonEstimateTco2e} tCO₂e`} /></DetailGroup>
+    <section className="detail-group moso-inventory-card">
+      <div className="moso-inventory-heading"><div><span>AI 科研试算</span><h3>毛竹资源量</h3></div><button className="button secondary" type="button" disabled={!canEstimate || estimatePending || !record.geometry} onClick={onEstimate}><Sparkles aria-hidden="true" />{estimatePending ? "分析中" : mosoInventory ? "更新试算" : "生成试算"}</button></div>
+      {mosoInventory ? <>
+        <div className="moso-inventory-metrics">
+          <InventoryMetric label="资源株数" value={`${formatNumber(mosoInventory.resourceStock.value)} 株`} detail={`${formatNumber(mosoInventory.resourceStock.lower)}–${formatNumber(mosoInventory.resourceStock.upper)} 株`} />
+          <InventoryMetric label="密度" value={`${formatNumber(mosoInventory.stemDensity.value, 1)} 株/亩`} detail={`置信度：${mosoInventory.confidence.level}（${Math.round(mosoInventory.confidence.score * 100)}%）`} />
+          <InventoryMetric label="冠层覆盖" value={`${formatNumber(mosoInventory.canopyClosure.value, 1)}%`} detail={`${formatNumber(mosoInventory.crownEquivalentCount.value)} 个竹冠等价峰值`} />
+          <InventoryMetric label="地上生物量" value={`${formatNumber(mosoInventory.abovegroundBiomass.value, 1)} t`} detail={`${formatNumber(mosoInventory.abovegroundBiomass.lower, 1)}–${formatNumber(mosoInventory.abovegroundBiomass.upper, 1)} t`} />
+        </div>
+        <p className="moso-volume-warning"><strong>正式蓄积量（m³）尚未生成：</strong>{mosoInventory.standingVolume.reason}</p>
+        <p className="moso-disclaimer">{mosoInventory.disclaimer} · 模型 {mosoInventory.modelVersion} · {formatDateTime(mosoInventory.estimatedAt)}</p>
+      </> : <div className="moso-empty"><p>{record.geometry ? "可利用已关联正射影像生成毛竹冠层、资源株数和生物量试算。" : "请先补齐林班边界。"}</p><small>不会覆盖正式胸径、树高、密度和蓄积调查字段。</small></div>}
+      {estimateError && <p className="form-error">{estimateError.message}</p>}
+    </section>
     <DetailGroup title="数据追溯"><Detail label="来源批次" value={record.sourceBatchId} /><Detail label="创建时间" value={formatDateTime(record.createdAt)} /><Detail label="更新时间" value={formatDateTime(record.updatedAt)} /></DetailGroup>
     <SpatialVersionHistory entityId={record.id} queryKey="forest-block-versions" canRollback={canRollback} load={() => api.forestBlockVersions(record.id)} rollback={(versionId) => api.rollbackForestBlock(record.id, versionId)} onRestored={onRestored} />
   </div>;
 }
+
+function InventoryMetric({ label, value, detail }: { label: string; value: string; detail: string }) { return <div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>; }
+function formatNumber(value: number, digits = 0) { return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: digits }); }
+function mosoStockLabel(record: ForestBlockRecord) { const estimate = record.yieldEstimate?.mosoInventory as MosoInventoryEstimate | undefined; return estimate?.resourceStock?.value ? `AI 试算 ${formatNumber(estimate.resourceStock.value)} 株` : ""; }
 
 function ActionButton({ label, icon: Icon, onClick, disabled = false, danger = false }: { label: string; icon: typeof Eye; onClick: () => void; disabled?: boolean; danger?: boolean }) {
   return <button className={`icon-button ${danger ? "danger" : ""}`} type="button" disabled={disabled} aria-label={label} title={label} onClick={(event) => { event.stopPropagation(); onClick(); }}><Icon aria-hidden="true" /></button>;

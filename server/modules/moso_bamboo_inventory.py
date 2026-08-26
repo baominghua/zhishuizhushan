@@ -1,0 +1,357 @@
+from __future__ import annotations
+
+import math
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import rasterio
+from PIL import Image, ImageFilter
+from rasterio.enums import Resampling
+from rasterio.features import geometry_mask, geometry_window
+from rasterio.transform import Affine
+from rasterio.warp import transform_geom
+from shapely.geometry import shape
+
+
+MODEL_VERSION = "moso-uav-rgb-baseline-0.1"
+SPECIES_SCIENTIFIC_NAME = "Phyllostachys edulis"
+MAX_ANALYSIS_DIMENSION = 1600
+MIN_VALID_PIXELS = 256
+
+MODEL_REFERENCES = [
+    {
+        "title": "Estimation method of Phyllostachys edulis forest canopy density based on UAV visible image",
+        "url": "https://zlxb.zafu.edu.cn/en/article/doi/10.11833/j.issn.2095-0756.20210576",
+        "use": "RGB 多尺度分割与郁闭度证据",
+    },
+    {
+        "title": "Estimating canopy structure and biomass in bamboo forests using airborne LiDAR data",
+        "url": "https://www.sciencedirect.com/science/article/pii/S0924271618303344",
+        "use": "点云高度分位数与毛竹地上生物量证据",
+    },
+    {
+        "title": "An improved YOLOv7 network achieved precise mapping of Moso bamboo stem density",
+        "url": "https://www.sciencedirect.com/science/article/pii/S1470160X25013214",
+        "use": "无人机单株识别及密度制图精度边界",
+    },
+    {
+        "title": "Culm height development, biomass accumulation and carbon storage in moso bamboo",
+        "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5430563/",
+        "use": "胸径—地上生物量异速生长关系",
+    },
+]
+
+
+class MosoInventoryError(ValueError):
+    pass
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def otsu_threshold(values: np.ndarray) -> float:
+    finite = values[np.isfinite(values)]
+    if finite.size < MIN_VALID_PIXELS:
+        raise MosoInventoryError("有效 RGB 像素不足，无法进行冠层分割")
+    low, high = np.percentile(finite, [1, 99])
+    if not math.isfinite(float(low)) or not math.isfinite(float(high)) or high <= low:
+        return float(np.median(finite))
+    histogram, edges = np.histogram(np.clip(finite, low, high), bins=256, range=(low, high))
+    probability = histogram.astype(np.float64) / max(1, histogram.sum())
+    centers = (edges[:-1] + edges[1:]) / 2
+    cumulative_probability = np.cumsum(probability)
+    cumulative_mean = np.cumsum(probability * centers)
+    total_mean = cumulative_mean[-1]
+    denominator = cumulative_probability * (1 - cumulative_probability)
+    between = np.zeros_like(denominator)
+    valid = denominator > 1e-12
+    between[valid] = (
+        (total_mean * cumulative_probability[valid] - cumulative_mean[valid]) ** 2
+        / denominator[valid]
+    )
+    return float(centers[int(np.argmax(between))])
+
+
+def _scaled_transform(dataset: rasterio.io.DatasetReader, window: Any, width: int, height: int) -> Affine:
+    return dataset.window_transform(window) * Affine.scale(window.width / width, window.height / height)
+
+
+def _rgb_canopy_score(rgb: np.ndarray) -> np.ndarray:
+    red, green, blue = (band.astype(np.float32) for band in rgb[:3])
+    denominator = red + green + blue
+    return np.divide(
+        2 * green - red - blue,
+        denominator,
+        out=np.zeros_like(green),
+        where=denominator > 1,
+    )
+
+
+def _crown_equivalent_peaks(
+    score: np.ndarray,
+    canopy_mask: np.ndarray,
+    *,
+    pixel_size_x: float,
+    pixel_size_y: float,
+    threshold: float,
+) -> int:
+    if not np.any(canopy_mask):
+        return 0
+    finite_score = np.where(np.isfinite(score), score, threshold)
+    low, high = np.percentile(finite_score[canopy_mask], [2, 98])
+    scaled = np.zeros(score.shape, dtype=np.uint8)
+    if high > low:
+        scaled = np.clip((finite_score - low) / (high - low) * 255, 0, 255).astype(np.uint8)
+    blurred = np.asarray(Image.fromarray(scaled).filter(ImageFilter.GaussianBlur(radius=1.0)))
+    # The baseline operates on crown-texture peaks, not stem spacing. A 1.8 m neighbourhood
+    # preserves separate Moso crown centres in the current 2--3 cm DJI orthomosaics while still
+    # suppressing leaf-level texture. This parameter must be replaced by a locally fitted crown
+    # diameter after field/crown labels are available.
+    expected_spacing_m = 1.8
+    filter_size = max(
+        3,
+        int(round(expected_spacing_m / max(pixel_size_x, pixel_size_y, 0.01))),
+    )
+    filter_size = min(filter_size, 31)
+    if filter_size % 2 == 0:
+        filter_size += 1
+    local_maximum = np.asarray(
+        Image.fromarray(blurred).filter(ImageFilter.MaxFilter(size=filter_size))
+    )
+    peak_floor = max(16, int(np.percentile(blurred[canopy_mask], 55)))
+    candidates = canopy_mask & (blurred == local_maximum) & (blurred >= peak_floor)
+    y, x = np.where(candidates)
+    if not len(x):
+        return 0
+    cell_x = max(1, int(round(expected_spacing_m / max(pixel_size_x, 0.01))))
+    cell_y = max(1, int(round(expected_spacing_m / max(pixel_size_y, 0.01))))
+    cell_ids = (y // cell_y).astype(np.int64) * (score.shape[1] // cell_x + 2) + (x // cell_x)
+    return int(np.unique(cell_ids).size)
+
+
+def analyze_rgb_orthophoto(
+    raster_path: Path,
+    block_geometry: dict[str, Any],
+    *,
+    max_dimension: int = MAX_ANALYSIS_DIMENSION,
+) -> dict[str, Any]:
+    if not raster_path.exists():
+        raise MosoInventoryError(f"正射影像不存在：{raster_path}")
+    if not block_geometry:
+        raise MosoInventoryError("林班缺少空间边界")
+    with rasterio.open(raster_path) as dataset:
+        if dataset.count < 3:
+            raise MosoInventoryError("正射影像至少需要 RGB 三个波段")
+        if dataset.crs is None:
+            raise MosoInventoryError("正射影像缺少坐标系")
+        projected_geometry = transform_geom(
+            "EPSG:4326",
+            dataset.crs,
+            block_geometry,
+            precision=7,
+        )
+        try:
+            window = geometry_window(dataset, [projected_geometry], pad_x=0.01, pad_y=0.01)
+        except Exception as exc:
+            raise MosoInventoryError("林班边界与正射影像没有有效交集") from exc
+        if window.width <= 0 or window.height <= 0:
+            raise MosoInventoryError("林班边界与正射影像没有有效交集")
+        scale = max(1.0, window.width / max_dimension, window.height / max_dimension)
+        output_width = max(1, int(round(window.width / scale)))
+        output_height = max(1, int(round(window.height / scale)))
+        rgb = dataset.read(
+            [1, 2, 3],
+            window=window,
+            out_shape=(3, output_height, output_width),
+            resampling=Resampling.average,
+            masked=True,
+        )
+        output_transform = _scaled_transform(dataset, window, output_width, output_height)
+        inside = geometry_mask(
+            [projected_geometry],
+            out_shape=(output_height, output_width),
+            transform=output_transform,
+            invert=True,
+        )
+        band_valid = ~np.any(np.ma.getmaskarray(rgb), axis=0)
+        valid = inside & band_valid
+        if int(valid.sum()) < MIN_VALID_PIXELS:
+            raise MosoInventoryError("林班内有效 RGB 像素不足")
+        score = _rgb_canopy_score(np.asarray(rgb.filled(0)))
+        threshold = float(np.clip(otsu_threshold(score[valid]), -0.08, 0.18))
+        canopy = valid & (score >= threshold)
+        closure = float(canopy.sum() / valid.sum())
+        pixel_size_x = abs(float(output_transform.a))
+        pixel_size_y = abs(float(output_transform.e))
+        crown_count = _crown_equivalent_peaks(
+            score,
+            canopy,
+            pixel_size_x=pixel_size_x,
+            pixel_size_y=pixel_size_y,
+            threshold=threshold,
+        )
+        projected_area_m2 = float(shape(projected_geometry).area)
+        analyzed_area_m2 = float(valid.sum()) * pixel_size_x * pixel_size_y
+        image_coverage_pct = min(100.0, analyzed_area_m2 / max(projected_area_m2, 1e-9) * 100)
+        native_resolution = math.sqrt(abs(float(dataset.transform.a * dataset.transform.e)))
+        analysis_resolution = math.sqrt(max(1e-12, pixel_size_x * pixel_size_y))
+        return {
+            "validPixelCount": int(valid.sum()),
+            "analysisWidth": output_width,
+            "analysisHeight": output_height,
+            "nativeResolutionM": round(native_resolution, 4),
+            "analysisResolutionM": round(analysis_resolution, 4),
+            "projectedAreaM2": round(projected_area_m2, 2),
+            "analyzedAreaM2": round(analyzed_area_m2, 2),
+            "imageCoveragePct": round(image_coverage_pct, 2),
+            "canopyClosurePct": round(closure * 100, 2),
+            "canopyThreshold": round(threshold, 4),
+            "crownEquivalentCount": crown_count,
+        }
+
+
+def estimate_from_rgb_metrics(
+    block: dict[str, Any],
+    rgb_metrics: dict[str, Any],
+    *,
+    imagery_scene: dict[str, Any],
+    point_cloud_scene: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    area_mu = float(block.get("areaMu") or 0)
+    if area_mu <= 0:
+        area_mu = float(rgb_metrics.get("projectedAreaM2") or 0) / 666.6666667
+    if area_mu <= 0:
+        raise MosoInventoryError("林班面积无效")
+    area_ha = area_mu / 15
+    raw_crown_count = max(0, int(rgb_metrics.get("crownEquivalentCount") or 0))
+    image_coverage_ratio = min(1.0, max(0.0, float(rgb_metrics.get("imageCoveragePct") or 100) / 100))
+    if image_coverage_ratio < 0.5:
+        raise MosoInventoryError("正射影像有效覆盖不足林班面积的 50%，请补齐影像后再试算")
+    crown_count = int(round(raw_crown_count / image_coverage_ratio)) if image_coverage_ratio else 0
+    raw_density_ha = crown_count / area_ha if area_ha else 0
+    # The detector is intentionally bounded to a broad managed/natural Moso range. Values outside
+    # this interval signal that the RGB-only baseline needs local labels rather than being reported
+    # as implausible precision.
+    density_ha = min(7000.0, max(500.0, raw_density_ha)) if crown_count else 0.0
+    estimated_culms = int(round(density_ha * area_ha))
+    lower_culms = int(round(estimated_culms * 0.72))
+    upper_culms = int(round(estimated_culms * 1.28))
+
+    avg_dbh = block.get("avgDbhCm")
+    dbh_source = "forest-inventory" if avg_dbh not in (None, "") else "research-prior"
+    dbh_cm = float(avg_dbh) if avg_dbh not in (None, "") else 8.9
+    biomass_per_culm_kg = 0.0171 * (dbh_cm**3.03)
+    biomass_tonnes = estimated_culms * biomass_per_culm_kg / 1000
+    biomass_low = lower_culms * 0.0171 * ((dbh_cm * (0.92 if dbh_source == "forest-inventory" else 0.80)) ** 3.03) / 1000
+    biomass_high = upper_culms * 0.0171 * ((dbh_cm * (1.08 if dbh_source == "forest-inventory" else 1.20)) ** 3.03) / 1000
+
+    closure = float(rgb_metrics.get("canopyClosurePct") or 0)
+    point_evidence = point_cloud_scene is not None
+    confidence_score = 0.38
+    confidence_reasons = ["使用林班内 RGB 有效像素进行冠层分割"]
+    if float(rgb_metrics.get("nativeResolutionM") or 99) <= 0.05:
+        confidence_score += 0.14
+        confidence_reasons.append("正射地面分辨率优于 5 cm")
+    if image_coverage_ratio < 0.95:
+        confidence_score -= 0.10
+        confidence_reasons.append(f"影像仅覆盖林班约 {image_coverage_ratio * 100:.1f}%，按覆盖区外推")
+    if point_evidence:
+        confidence_score += 0.10
+        confidence_reasons.append("存在同区域 RGB/多回波点云，可用于后续结构校准")
+    if dbh_source == "forest-inventory":
+        confidence_score += 0.12
+        confidence_reasons.append("林班已有平均胸径调查值")
+    else:
+        confidence_reasons.append("平均胸径暂用科研先验，尚未本地样地标定")
+    if 35 <= closure <= 100:
+        confidence_score += 0.06
+    confidence_score = min(0.80, confidence_score)
+    confidence_level = "中" if confidence_score >= 0.58 else "低"
+
+    point_attributes = []
+    if point_cloud_scene:
+        point_attributes = list(
+            point_cloud_scene.get("pointAttributes")
+            or point_cloud_scene.get("attributeModes")
+            or point_cloud_scene.get("dimensions")
+            or []
+        )
+    return {
+        "modelVersion": MODEL_VERSION,
+        "status": "trial",
+        "species": "毛竹",
+        "scientificName": SPECIES_SCIENTIFIC_NAME,
+        "estimatedAt": utc_now_iso(),
+        "blockArea": {"value": round(area_mu, 2), "unit": "亩"},
+        "canopyClosure": {"value": round(closure, 2), "unit": "%"},
+        "crownEquivalentCount": {"value": crown_count, "raw": raw_crown_count, "unit": "个"},
+        "resourceStock": {
+            "value": estimated_culms,
+            "lower": lower_culms,
+            "upper": upper_culms,
+            "unit": "株",
+            "label": "毛竹资源株数试算",
+        },
+        "stemDensity": {
+            "value": round(density_ha / 15, 1),
+            "lower": round(density_ha * 0.72 / 15, 1),
+            "upper": round(density_ha * 1.28 / 15, 1),
+            "unit": "株/亩",
+        },
+        "abovegroundBiomass": {
+            "value": round(biomass_tonnes, 2),
+            "lower": round(biomass_low, 2),
+            "upper": round(biomass_high, 2),
+            "unit": "t",
+            "dbhCm": round(dbh_cm, 2),
+            "dbhSource": dbh_source,
+        },
+        "standingVolume": {
+            "value": None,
+            "unit": "m³",
+            "status": "requires-local-plot-calibration",
+            "reason": "毛竹为空心竹秆，RGB 无法直接反演胸径和竹壁厚；需用本地样地材积表或竹秆形数标定后计算正式蓄积量。",
+        },
+        "confidence": {
+            "score": round(confidence_score, 2),
+            "level": confidence_level,
+            "reasons": confidence_reasons,
+        },
+        "imageryEvidence": {
+            "sceneId": imagery_scene.get("id"),
+            "name": imagery_scene.get("name"),
+            "capturedAt": imagery_scene.get("capturedAt") or None,
+            **rgb_metrics,
+        },
+        "pointCloudEvidence": {
+            "available": point_evidence,
+            "sceneId": point_cloud_scene.get("id") if point_cloud_scene else None,
+            "name": point_cloud_scene.get("name") if point_cloud_scene else None,
+            "pointCount": point_cloud_scene.get("pointCount") if point_cloud_scene else None,
+            "attributes": point_attributes,
+            "heightNormalized": False,
+            "note": "当前 DJI LAS 分类码未区分地面/植被；需 SMRF/CSF 地面分类后再生成冠层高度模型。"
+            if point_evidence
+            else "未匹配到同区域点云。",
+        },
+        "method": {
+            "name": "RGB 多尺度冠层分割 + 竹冠等价峰值 + 点云证据融合基线",
+            "assumption": "当前纳入试算的林班已由业务确认主要竹种为毛竹。",
+            "references": MODEL_REFERENCES,
+        },
+        "disclaimer": "科研试算值，不替代森林资源二类调查、样地每木检尺或法定蓄积量。",
+    }
+
+
+def merge_moso_estimate(existing_yield_estimate: Any, estimate: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing_yield_estimate) if isinstance(existing_yield_estimate, dict) else {}
+    history = list(merged.get("mosoInventoryHistory") or [])
+    previous = merged.get("mosoInventory")
+    if isinstance(previous, dict):
+        history.insert(0, previous)
+    merged["mosoInventory"] = estimate
+    merged["mosoInventoryHistory"] = history[:12]
+    return merged
