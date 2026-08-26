@@ -637,6 +637,35 @@ def test_create_list_patch_and_delete_forest_block(app_client):
     assert deleted.json()["ok"] is True
 
 
+def test_non_spatial_patch_does_not_revalidate_unchanged_legacy_geometry(
+    app_client, monkeypatch
+):
+    created = app_client.post(
+        "/api/forest-blocks",
+        json=sample_block_payload("FB-LEGACY-GEOMETRY-001"),
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert created.status_code == 200, created.text
+
+    from server.modules import forest_blocks
+
+    def unexpected_geometry_validation(*_args, **_kwargs):
+        raise AssertionError("非空间字段更新不应重复校验既有边界")
+
+    monkeypatch.setattr(
+        forest_blocks,
+        "validate_forest_block_geometry",
+        unexpected_geometry_validation,
+    )
+    patched = app_client.patch(
+        f"/api/forest-blocks/{created.json()['id']}",
+        json={"yieldEstimate": {"mosoInventory": {"status": "trial"}}},
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["yieldEstimate"]["mosoInventory"]["status"] == "trial"
+
+
 def test_forest_block_versions_capture_create_update_and_delete(app_client):
     created = app_client.post(
         "/api/forest-blocks",

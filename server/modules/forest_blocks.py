@@ -2845,7 +2845,8 @@ def patch_forest_block(
             }
         ))
         require_target_block_allowed(context, updated)
-        validate_forest_block_geometry(block_id, updated.get("geometry"), context)
+        if "geometry" in changes:
+            validate_forest_block_geometry(block_id, updated.get("geometry"), context)
         save_block(updated)
         sync_block_administrative_divisions(updated)
         record_block_version(updated, "update", context)
@@ -2870,7 +2871,8 @@ def patch_forest_block(
             }
         ))
         require_target_block_allowed(context, updated)
-        validate_forest_block_geometry(block_id, updated.get("geometry"), context)
+        if "geometry" in changes:
+            validate_forest_block_geometry(block_id, updated.get("geometry"), context)
         blocks[index] = updated
         save_blocks(blocks)
         sync_block_administrative_divisions(updated)
