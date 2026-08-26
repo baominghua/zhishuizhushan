@@ -4967,6 +4967,10 @@ svg {
 .source-mode-tabs button.active { color: var(--accent-strong); background: #fff; box-shadow: 0 1px 4px rgba(25,60,48,.12); }
 .source-mode-tabs button:disabled { color: #91a49b; cursor: not-allowed; opacity: .65; }
 .tileset-register-note { margin: 0 0 14px; padding: 10px 12px; color: var(--accent-strong); background: var(--accent-soft); border: 1px solid #cfe1d8; border-radius: 6px; }
+.pointcloud-output-option { padding: 12px 14px; background: #f3f8f5; border: 1px solid #d3e3da; border-radius: 7px; }
+.form-grid .pointcloud-output-option > .checkbox-line { display: flex; align-items: center; gap: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.form-grid .pointcloud-output-option input[type="checkbox"] { width: 16px; height: 16px; min-width: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
+.pointcloud-output-option > small { color: var(--muted); font-size: 10px; line-height: 1.65; }
 .transfer-progress { display: grid; gap: 8px; padding: 13px 15px; background: #eff6f2; border: 1px solid #d5e4dc; border-radius: 7px; }
 .transfer-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
 .transfer-progress strong { font-size: 11px; }
@@ -5049,7 +5053,11 @@ svg {
 .asset-quality-switch button.active { background: #dff8ed; color: #07543f; font-weight: 700; }
 .asset-viewer-layout { display: grid; min-height: 0; grid-template-columns: minmax(0,1fr) 340px; }
 .asset-viewer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #071b16; }
-.asset-viewer-stage .ol-map,.asset-viewer-stage .cesium-map { position: absolute; inset: 0; }
+.asset-viewer-stage .ol-map,.asset-viewer-stage .cesium-map,.copc-point-cloud-viewer { position: absolute; inset: 0; }
+.copc-point-cloud-viewer,.copc-point-cloud-viewer .maplibregl-map,.copc-point-cloud-viewer .maplibregl-canvas-container,.copc-point-cloud-viewer canvas { width: 100%; height: 100%; }
+.copc-point-cloud-viewer .maplibregl-ctrl-top-right { top: 10px; right: 10px; }
+.copc-point-cloud-viewer .maplibregl-ctrl-group { overflow: hidden; border: 1px solid rgba(143,220,191,.28); border-radius: 9px; background: rgba(6,39,31,.88); box-shadow: 0 8px 24px rgba(0,0,0,.22); }
+.copc-point-cloud-viewer .maplibregl-ctrl-group button { filter: invert(1) brightness(1.8); }
 .asset-viewer-panel { display: flex; flex-direction: column; gap: 12px; overflow: auto; padding: 14px; border-left: 1px solid rgba(156,218,194,.2); background: #f7fbf9; color: #17372e; }
 .asset-viewer-panel section { display: grid; gap: 13px; padding: 15px; border: 1px solid #d9e8e2; border-radius: 14px; background: white; }
 .asset-viewer-panel section > header { display: flex; align-items: center; gap: 10px; }
@@ -5074,12 +5082,14 @@ svg {
 .asset-range { display: grid; gap: 7px; }
 .asset-range span { display: flex; justify-content: space-between; }
 .calibration-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+.calibration-grid.single { grid-template-columns: 1fr; }
 .calibration-grid label { display: grid; gap: 5px; color: #69837a; font-size: 11px; }
 .calibration-grid input { width: 100%; min-width: 0; padding: 8px; border: 1px solid #cadfd7; border-radius: 8px; }
 .calibration-actions { display: flex; gap: 7px; }
 .asset-load-status { position: absolute; z-index: 95; bottom: 18px; left: 50%; display: flex; align-items: center; gap: 9px; padding: 10px 14px; border: 1px solid rgba(132,211,181,.5); border-radius: 11px; background: rgba(4,39,32,.9); color: #dff8ee; transform: translateX(-50%); }
 .asset-load-status svg { width: 18px; }
 .asset-load-status.ready { color: #74e0b7; }
+.asset-load-status.error { max-width: min(760px,calc(100% - 32px)); color: #ffd0c6; border-color: rgba(255,122,98,.62); }
 @media (max-width: 900px) { .asset-viewer-header { align-items: flex-start; } .asset-viewer-actions { flex-wrap: wrap; } .asset-viewer-layout { overflow: auto; grid-template-columns: 1fr; grid-template-rows: minmax(55vh,1fr) auto; } .asset-viewer-panel { max-height: 45vh; border-top: 1px solid #dce9e4; border-left: 0; } .image-clarity-status { align-items: flex-start; min-width: calc(100% - 24px); } .image-clarity-status > div { flex-wrap: wrap; gap: 6px; } .image-clarity-status span { padding-left: 0; border: 0; } .image-clarity-status > small { display: none; } }
 
 /* Shared GIS point details and display-screen layer controls. */

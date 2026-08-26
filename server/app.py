@@ -2128,7 +2128,7 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
         ),
         "archiveDownloadUrl": f"/api/scenes/{scene_id}/download/archive{token_query}",
         "copcUrl": (
-            f"/api/scenes/{scene_id}/point-cloud/copc{token_query}"
+            f"/api/scenes/{scene_id}/point-cloud/data.copc.laz{token_query}"
             if str(scene.get("copcPath") or "").strip()
             else ""
         ),
@@ -4565,6 +4565,9 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
     dataset_dir = Path(str(task["datasetPath"])).resolve()
     delete_original = bool(task.get("deleteOriginalOnSceneDelete"))
     outputs = point_cloud_outputs(task.get("outputs") or [])
+    completed_outputs = list(outputs)
+    conversion_warnings: list[str] = []
+    copc_path = dataset_dir / "dataset.copc.laz"
     try:
         point_cloud = point_cloud_collection_metadata(source_paths)
         point_cloud["trajectory"] = discover_dji_trajectory_metadata(source_paths)
@@ -4582,7 +4585,6 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             update_task(task_id, sourcePaths=[str(path) for path in source_paths], sourcesOwned=True)
         if "copc" in outputs:
             update_task(task_id, progress=25, message="Converting point cloud to COPC")
-            copc_path = dataset_dir / "dataset.copc.laz"
             if copc_path.exists():
                 copc_path.unlink()
             last_copc_heartbeat = {"minute": -1}
@@ -4616,11 +4618,26 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             tiles_dir = dataset_dir / "3dtiles"
             if tiles_dir.exists():
                 shutil.rmtree(tiles_dir)
-            convert_point_cloud_to_3dtiles(
-                source_paths,
-                tiles_dir,
-                py3dtiles_executable=POINT_CLOUD_3DTILES_EXECUTABLE,
-            )
+            try:
+                convert_point_cloud_to_3dtiles(
+                    source_paths,
+                    tiles_dir,
+                    py3dtiles_executable=POINT_CLOUD_3DTILES_EXECUTABLE,
+                )
+            except Exception as exc:
+                if "copc" not in completed_outputs or not copc_path.is_file():
+                    raise
+                completed_outputs = [value for value in completed_outputs if value != "3dtiles"]
+                warning = f"PNTS compatibility output was skipped: {exc}"
+                conversion_warnings.append(warning)
+                if tiles_dir.exists():
+                    shutil.rmtree(tiles_dir)
+                update_task(
+                    task_id,
+                    progress=88,
+                    message="COPC is ready; PNTS compatibility output was skipped",
+                    conversionWarnings=conversion_warnings,
+                )
         update_task(task_id, progress=90, message="Matching point-cloud footprint to forest blocks")
         metadata = {
             "name": task.get("name") or scene_id,
@@ -4638,9 +4655,12 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             source_paths,
             metadata,
             point_cloud,
-            outputs,
+            completed_outputs,
             delete_original,
         )
+        if conversion_warnings:
+            scene["conversionWarnings"] = conversion_warnings
+            scene["transferStatus"] = "pointcloud-ready-with-warnings"
         scene = apply_scene_coverage_analysis(
             scene,
             {
@@ -4656,8 +4676,13 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             task_id,
             status="completed",
             progress=100,
-            message="Point-cloud dataset is ready for coverage confirmation",
+            message=(
+                "COPC dataset is ready for coverage confirmation; PNTS compatibility output was skipped"
+                if conversion_warnings
+                else "Point-cloud dataset is ready for coverage confirmation"
+            ),
             scene=scene,
+            conversionWarnings=conversion_warnings,
             completedAt=now_iso(),
         )
     except Exception as exc:
@@ -6768,6 +6793,7 @@ def archive_task(task_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/scenes/{scene_id}/point-cloud/copc")
+@app.get("/api/scenes/{scene_id}/point-cloud/data.copc.laz")
 def point_cloud_copc(scene_id: str, request: Request) -> FileResponse:
     scene = find_allowed_scene(scene_id, request)
     if str(scene.get("assetType") or "") != "pointcloud":

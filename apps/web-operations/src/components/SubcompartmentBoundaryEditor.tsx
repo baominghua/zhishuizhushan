@@ -50,7 +50,7 @@ function writeGeometry(feature: Feature): GeometryValue {
     featureProjection: "EPSG:3857",
     decimals: 8,
   });
-  return (output.geometry || null) as GeometryValue;
+  return (output.geometry || null) as unknown as GeometryValue;
 }
 
 function extractGeometry(input: unknown): GeometryValue {

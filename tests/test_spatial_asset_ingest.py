@@ -378,6 +378,38 @@ def test_registered_dji_tileset_service_normalizes_json_and_serves_binary(app_cl
     assert binary.content[:4] == b"pnts"
 
 
+def test_copc_scene_exposes_streamable_filename_and_byte_ranges(app_client, isolated_env):
+    import server.app as app_module
+
+    copc_path = isolated_env / "streamable.copc.laz"
+    copc_path.write_bytes(b"LASF" + bytes(range(64)))
+    app_module.save_scene(
+        {
+            "id": "copc-stream-service",
+            "name": "COPC 流式成果",
+            "assetType": "pointcloud",
+            "copcPath": str(copc_path),
+            "allowedRoles": [],
+            "allowedUsers": [],
+            "linkedBlockCodes": [],
+            "processingStage": "ready",
+        }
+    )
+
+    detail = app_client.get("/api/scenes/copc-stream-service", headers={"X-RS-Roles": "admin"})
+    ranged = app_client.get(
+        "/api/scenes/copc-stream-service/point-cloud/data.copc.laz",
+        headers={"X-RS-Roles": "admin", "Range": "bytes=4-11"},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["copcUrl"] == "/api/scenes/copc-stream-service/point-cloud/data.copc.laz"
+    assert ranged.status_code == 206
+    assert ranged.headers["accept-ranges"] == "bytes"
+    assert ranged.headers["content-range"] == f"bytes 4-11/{copc_path.stat().st_size}"
+    assert ranged.content == bytes(range(8))
+
+
 def test_registered_pnts_scene_auto_associates_sibling_las_and_real_render_fields(app_client, isolated_env):
     import server.app as app_module
 
@@ -487,6 +519,82 @@ def test_point_cloud_directory_registration_excludes_hidden_temp_tree(app_client
     source_paths = response.json()["task"]["sourcePaths"]
     assert len(source_paths) == 1
     assert source_paths[0].endswith("cloud0.las")
+
+
+def test_point_cloud_task_keeps_completed_copc_when_optional_pnts_conversion_fails(app_client, isolated_env, monkeypatch):
+    import server.app as app_module
+
+    source = isolated_env / "large-cloud.las"
+    source.write_bytes(b"LASF-large-point-cloud")
+    dataset_dir = isolated_env / "point-cloud-result"
+    task_id = "task-copc-primary"
+    scene_id = "pc-copc-primary"
+    point_cloud = {
+        "bounds": [118.0, 26.0, 118.1, 26.1],
+        "nativeBounds": [500000.0, 2876000.0, 0.0, 510000.0, 2887000.0, 900.0],
+        "crs": "EPSG:4509",
+        "footprint": {
+            "type": "Polygon",
+            "coordinates": [[[118.0, 26.0], [118.1, 26.0], [118.1, 26.1], [118.0, 26.1], [118.0, 26.0]]],
+        },
+        "pointCount": 73_904_650,
+        "fileCount": 1,
+        "versions": ["1.4"],
+        "pointFormats": [7],
+        "dimensions": ["X", "Y", "Z", "Red", "Green", "Blue", "Intensity", "ReturnNumber"],
+        "attributeModes": ["rgb", "elevation", "return", "intensity"],
+        "files": [{"name": source.name, "size": source.stat().st_size}],
+    }
+    trajectory = {
+        "available": False,
+        "fileCount": 0,
+        "totalSize": 0,
+        "formats": [],
+        "path": "",
+        "files": [],
+    }
+    app_module.upsert_task(
+        {
+            "id": task_id,
+            "type": "pointcloud-register",
+            "status": "queued",
+            "progress": 0,
+            "message": "Queued",
+            "sceneId": scene_id,
+            "name": "S7 LAS",
+            "sourcePaths": [str(source)],
+            "datasetPath": str(dataset_dir),
+            "outputs": ["copc", "3dtiles"],
+            "deleteOriginalOnSceneDelete": False,
+            "analysisContext": {},
+            "events": [],
+        }
+    )
+    monkeypatch.setattr(app_module, "point_cloud_collection_metadata", lambda _paths: dict(point_cloud))
+    monkeypatch.setattr(app_module, "discover_dji_trajectory_metadata", lambda _paths: dict(trajectory))
+    monkeypatch.setattr(app_module, "apply_scene_coverage_analysis", lambda scene, *_args: scene)
+
+    def create_copc(_sources, output, **_kwargs):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"COPC-ready")
+
+    monkeypatch.setattr(app_module, "convert_point_cloud_to_copc", create_copc)
+    monkeypatch.setattr(
+        app_module,
+        "convert_point_cloud_to_3dtiles",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("too many PNTS content files")),
+    )
+
+    app_module.run_point_cloud_conversion_task(task_id)
+
+    task = app_module.find_task_record(task_id)
+    scene = next(item for item in app_module.load_catalog() if item["id"] == scene_id)
+    assert task["status"] == "completed"
+    assert task["conversionWarnings"] == ["PNTS compatibility output was skipped: too many PNTS content files"]
+    assert scene["storage"] == "COPC"
+    assert scene["copcPath"].endswith("dataset.copc.laz")
+    assert scene["tilesetPath"] == ""
+    assert scene["transferStatus"] == "pointcloud-ready-with-warnings"
 
 
 def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkeypatch):
