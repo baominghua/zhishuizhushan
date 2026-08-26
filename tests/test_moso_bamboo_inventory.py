@@ -136,3 +136,23 @@ def test_estimate_endpoint_saves_trial_separately_from_formal_inventory(app_clie
     assert updated["yieldEstimate"]["mosoInventory"]["resourceStock"]["value"] == 1800
     assert updated["standingDensity"] == 120
     assert updated["avgDbhCm"] == 9.5
+    assert response.json()["inferenceRun"]["status"] == "succeeded"
+    assert response.json()["inferenceRun"]["blocks"][0]["code"] == "MOSO-001"
+
+    model_card = app_client.get(
+        "/api/v2/ai/moso-inventory/model-card",
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert model_card.status_code == 200, model_card.text
+    assert model_card.json()["deploymentStatus"] == "active"
+
+    assets = app_client.get(
+        "/api/v2/ai/model-assets?q=毛竹",
+        headers={"X-RS-Roles": "admin"},
+    )
+    assert assets.status_code == 200, assets.text
+    assert {item["assetType"] for item in assets.json()["items"]} == {
+        "dataset",
+        "model-version",
+        "deployment",
+    }

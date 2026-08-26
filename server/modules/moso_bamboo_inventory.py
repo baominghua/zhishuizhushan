@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,10 @@ from shapely.geometry import shape
 
 
 MODEL_VERSION = "moso-uav-rgb-baseline-0.1"
+MODEL_CODE = "moso-bamboo-uav-inventory"
+MODEL_DATASET_ASSET_NO = "DS-MOSO-UAV-EVIDENCE"
+MODEL_VERSION_ASSET_NO = "MV-MOSO-UAV-BASELINE-01"
+MODEL_DEPLOYMENT_ASSET_NO = "DP-MOSO-UAV-PRODUCTION"
 SPECIES_SCIENTIFIC_NAME = "Phyllostachys edulis"
 MAX_ANALYSIS_DIMENSION = 1600
 MIN_VALID_PIXELS = 256
@@ -46,6 +51,224 @@ MODEL_REFERENCES = [
 
 class MosoInventoryError(ValueError):
     pass
+
+
+def _asset_by_number(asset_no: str) -> dict[str, Any] | None:
+    from server.modules.ai_model_assets import list_assets
+
+    return next(
+        (
+            item
+            for item in list_assets(include_deleted=True)
+            if str(item.get("assetNo") or "") == asset_no
+        ),
+        None,
+    )
+
+
+def _ensure_asset(definition: dict[str, Any], *, actor: str) -> dict[str, Any]:
+    from server.modules.ai_model_assets import (
+        create_asset,
+        set_asset_deleted,
+        update_asset,
+        utc_now,
+    )
+
+    existing = _asset_by_number(str(definition["assetNo"]))
+    now = utc_now()
+    if existing:
+        if existing.get("deletedAt"):
+            set_asset_deleted(str(existing["id"]), deleted=False)
+            existing["deletedAt"] = None
+        desired = {
+            **existing,
+            **definition,
+            "id": str(existing["id"]),
+            "createdBy": str(existing.get("createdBy") or actor),
+            "createdAt": str(existing.get("createdAt") or now),
+            "deletedAt": None,
+        }
+        compared_fields = {
+            "assetType", "name", "code", "version", "status", "parentId",
+            "framework", "runtimeTarget", "description", "metrics", "metadata",
+        }
+        if any(existing.get(field) != desired.get(field) for field in compared_fields):
+            return update_asset(desired)
+        return existing
+    return create_asset(
+        {
+            **definition,
+            "id": str(uuid.uuid4()),
+            "createdBy": actor,
+            "createdAt": now,
+            "updatedAt": now,
+            "deletedAt": None,
+        }
+    )
+
+
+def ensure_moso_model_assets(*, actor: str = "system") -> dict[str, dict[str, Any]]:
+    """Idempotently expose the built-in baseline in the AI model lifecycle ledger."""
+
+    dataset = _ensure_asset(
+        {
+            "assetNo": MODEL_DATASET_ASSET_NO,
+            "assetType": "dataset",
+            "name": "毛竹无人机资源试算证据集",
+            "code": f"{MODEL_CODE}-evidence",
+            "version": "2026.08",
+            "status": "ready",
+            "parentId": "",
+            "framework": "GeoTIFF / COG / LAS / COPC",
+            "runtimeTarget": "智慧竹山影像资源库",
+            "description": "平台现有正射影像、林班边界与同区域点云构成的可追溯试算证据集；不等同于已完成外业标注的正式训练集。",
+            "metrics": {
+                "evidenceTypes": ["RGB 正射", "林班边界", "点云结构证据"],
+                "groundTruthStatus": "pending-local-plots",
+            },
+            "metadata": {
+                "builtin": True,
+                "species": SPECIES_SCIENTIFIC_NAME,
+                "legalStatus": "trial",
+            },
+        },
+        actor=actor,
+    )
+    model = _ensure_asset(
+        {
+            "assetNo": MODEL_VERSION_ASSET_NO,
+            "assetType": "model-version",
+            "name": "毛竹资源蓄积试算模型",
+            "code": MODEL_CODE,
+            "version": MODEL_VERSION,
+            "status": "active",
+            "parentId": str(dataset["id"]),
+            "framework": "Rasterio / NumPy / Shapely",
+            "runtimeTarget": "CPU 影像批处理",
+            "description": "以 RGB 冠层分割、竹冠等价峰值和点云证据融合估算毛竹株数、密度、郁闭度与地上生物量。正式立木蓄积量仍需本地样地材积表标定。",
+            "metrics": {
+                "outputUnits": {"resourceStock": "株", "density": "株/亩", "biomass": "t"},
+                "confidenceCeiling": 0.8,
+                "standingVolume": "requires-local-plot-calibration",
+            },
+            "metadata": {
+                "builtin": True,
+                "taskType": "moso-bamboo-inventory",
+                "endpoint": "/api/v2/ai/moso-inventory/estimate-batch",
+                "references": MODEL_REFERENCES,
+                "disclaimer": "科研试算值，不替代森林资源调查或法定蓄积量。",
+            },
+        },
+        actor=actor,
+    )
+    deployment = _ensure_asset(
+        {
+            "assetNo": MODEL_DEPLOYMENT_ASSET_NO,
+            "assetType": "deployment",
+            "name": "毛竹资源试算生产部署",
+            "code": f"{MODEL_CODE}-production",
+            "version": MODEL_VERSION,
+            "status": "active",
+            "parentId": str(model["id"]),
+            "framework": "FastAPI background task",
+            "runtimeTarget": "智慧竹山 V2 / CPU",
+            "description": "随平台应用部署的内置批处理实例，按林班裁切 COG 并将试算值回填林班档案，同时登记 AI 推理任务。",
+            "metrics": {"mode": "batch", "maxBlocksPerRequest": 1000},
+            "metadata": {
+                "builtin": True,
+                "healthEndpoint": "/api/v2/ai/moso-inventory/model-card",
+                "rollback": "随应用版本回滚",
+            },
+        },
+        actor=actor,
+    )
+    return {"dataset": dataset, "model": model, "deployment": deployment}
+
+
+def create_moso_inference_run(
+    blocks: list[dict[str, Any]],
+    scenes: list[dict[str, Any]],
+    *,
+    actor: str,
+) -> dict[str, Any]:
+    from server.modules.ai_inference_runs import create_run, utc_now
+
+    assets = ensure_moso_model_assets(actor=actor)
+    now = utc_now()
+    return create_run(
+        {
+            "id": str(uuid.uuid4()),
+            "runNo": f"IR-MOSO-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+            "title": f"毛竹资源批量试算（{len(blocks)} 个林班）",
+            "status": "queued",
+            "modelAssetId": str(assets["model"]["id"]),
+            "deploymentAssetId": str(assets["deployment"]["id"]),
+            "findingId": "",
+            "parameters": {
+                "modelVersion": MODEL_VERSION,
+                "blockCount": len(blocks),
+                "imagerySceneCount": len(scenes),
+                "mode": "existing-resource-batch",
+            },
+            "output": {},
+            "errorMessage": "",
+            "requestedAt": now,
+            "startedAt": None,
+            "completedAt": None,
+            "durationMs": None,
+            "createdBy": actor,
+            "createdAt": now,
+            "updatedAt": now,
+            "deletedAt": None,
+            "blocks": [
+                {"id": str(block["id"]), "code": str(block.get("blockCode") or block["id"])}
+                for block in blocks
+            ],
+        }
+    )
+
+
+def update_moso_inference_run(
+    run_id: str,
+    *,
+    status: str,
+    output: dict[str, Any] | None = None,
+    error_message: str = "",
+) -> dict[str, Any] | None:
+    from server.modules.ai_inference_runs import run_by_id, update_run, utc_now
+
+    record = run_by_id(run_id, include_deleted=False)
+    if not record:
+        return None
+    now = utc_now()
+    started_at = record.get("startedAt") or (now if status == "running" else None)
+    completed_at = now if status in {"succeeded", "failed", "cancelled"} else None
+    duration_ms = record.get("durationMs")
+    if completed_at and started_at:
+        try:
+            duration_ms = max(
+                0,
+                int(
+                    (
+                        datetime.fromisoformat(completed_at)
+                        - datetime.fromisoformat(str(started_at))
+                    ).total_seconds()
+                    * 1000
+                ),
+            )
+        except ValueError:
+            duration_ms = None
+    return update_run(
+        {
+            **record,
+            "status": status,
+            "startedAt": started_at,
+            "completedAt": completed_at,
+            "durationMs": duration_ms,
+            "output": output if output is not None else record.get("output") or {},
+            "errorMessage": error_message[:2000],
+        }
+    )
 
 
 def utc_now_iso() -> str:

@@ -110,8 +110,11 @@ from server.modules.imports import (
 from server.modules.moso_bamboo_inventory import (
     MosoInventoryError,
     analyze_rgb_orthophoto,
+    create_moso_inference_run,
+    ensure_moso_model_assets,
     estimate_from_rgb_metrics,
     merge_moso_estimate,
+    update_moso_inference_run,
 )
 from server.modules.settings import enforce_production_configuration, get_settings
 from server.modules.spatial_assets import (
@@ -369,6 +372,10 @@ try:
     init_platform_schema()
 except Exception as exc:
     record_startup_error("platform_schema_init_failed", "平台数据库 schema 初始化失败", exc)
+try:
+    ensure_moso_model_assets(actor="system-startup")
+except Exception as exc:
+    record_startup_error("moso_model_seed_failed", "毛竹资源试算模型登记失败", exc)
 try:
     ensure_system_dictionaries()
 except Exception as exc:
@@ -6003,7 +6010,10 @@ def run_moso_inventory_batch_task(
     blocks: list[dict[str, Any]],
     scenes: list[dict[str, Any]],
     context: AuthContext,
+    inference_run_id: str = "",
 ) -> None:
+    if inference_run_id:
+        update_moso_inference_run(inference_run_id, status="running")
     update_task(
         task_id,
         status="running",
@@ -6016,6 +6026,13 @@ def run_moso_inventory_batch_task(
     total = max(1, len(blocks))
     for index, block in enumerate(blocks):
         if find_task_record(task_id).get("status") == "canceled":
+            if inference_run_id:
+                update_moso_inference_run(
+                    inference_run_id,
+                    status="cancelled",
+                    output={"completed": completed, "failed": failed},
+                    error_message="任务已由用户取消",
+                )
             return
         try:
             estimate = build_moso_inventory_estimate(block, scenes)
@@ -6024,6 +6041,7 @@ def run_moso_inventory_batch_task(
                 {
                     "blockId": saved.get("id"),
                     "blockCode": saved.get("blockCode"),
+                    "modelVersion": estimate.get("modelVersion"),
                     "estimatedCulms": estimate.get("resourceStock", {}).get("value"),
                 }
             )
@@ -6041,14 +6059,28 @@ def run_moso_inventory_batch_task(
             progress=progress,
             message=f"已完成 {index + 1}/{len(blocks)} 个林班，失败 {len(failed)} 个",
         )
+    result = {"completed": completed, "failed": failed}
     update_task(
         task_id,
         status="completed" if completed else "failed",
         progress=100,
         message=f"毛竹资源试算完成：成功 {len(completed)} 个，失败 {len(failed)} 个",
-        result={"completed": completed, "failed": failed},
+        result=result,
         completedAt=now_iso(),
     )
+    if inference_run_id:
+        update_moso_inference_run(
+            inference_run_id,
+            status="succeeded" if completed else "failed",
+            output={
+                "modelVersion": completed[0].get("modelVersion") if completed else "",
+                "completedCount": len(completed),
+                "failedCount": len(failed),
+                "completed": completed,
+                "failed": failed,
+            },
+            error_message="；".join(item["message"] for item in failed[:8]) if not completed else "",
+        )
 
 
 @app.get("/api/v2/ai/moso-inventory/model-card")
@@ -6056,9 +6088,13 @@ def moso_inventory_model_card(request: Request) -> dict[str, Any]:
     require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
     from server.modules.moso_bamboo_inventory import MODEL_REFERENCES, MODEL_VERSION
 
+    assets = ensure_moso_model_assets(actor="model-card")
     return {
         "modelVersion": MODEL_VERSION,
         "status": "trial",
+        "modelAssetId": assets["model"]["id"],
+        "deploymentAssetId": assets["deployment"]["id"],
+        "deploymentStatus": assets["deployment"]["status"],
         "target": "毛竹冠层、资源株数和地上生物量试算",
         "standingVolumeStatus": "requires-local-plot-calibration",
         "references": MODEL_REFERENCES,
@@ -6089,6 +6125,18 @@ def estimate_moso_inventory(
     if payload.save:
         response["block"] = save_moso_inventory_estimate(block, estimate, context)
         response["saved"] = True
+        inference_run = create_moso_inference_run([block], scenes, actor=context.user)
+        update_moso_inference_run(inference_run["id"], status="running")
+        response["inferenceRun"] = update_moso_inference_run(
+            inference_run["id"],
+            status="succeeded",
+            output={
+                "modelVersion": estimate.get("modelVersion"),
+                "completedCount": 1,
+                "failedCount": 0,
+                "estimate": estimate,
+            },
+        )
     return response
 
 
@@ -6109,6 +6157,7 @@ def estimate_moso_inventory_batch(
     if not blocks:
         raise HTTPException(status_code=422, detail="当前权限范围内没有可分析的林班边界")
     scenes = filter_scenes(load_catalog(), imagery_context)
+    inference_run = create_moso_inference_run(blocks, scenes, actor=context.user)
     task = {
         "id": f"task-{uuid.uuid4().hex[:12]}",
         "type": "moso-bamboo-inventory",
@@ -6116,14 +6165,22 @@ def estimate_moso_inventory_batch(
         "progress": 0,
         "message": f"已排队，待分析 {len(blocks)} 个林班",
         "blockTotal": len(blocks),
+        "inferenceRunId": inference_run["id"],
         "createdBy": context.user,
         "createdAt": now_iso(),
         "updatedAt": now_iso(),
         "events": [],
     }
     upsert_task(task)
-    TASK_EXECUTOR.submit(run_moso_inventory_batch_task, task["id"], blocks, scenes, context)
-    return {"accepted": True, "task": task}
+    TASK_EXECUTOR.submit(
+        run_moso_inventory_batch_task,
+        task["id"],
+        blocks,
+        scenes,
+        context,
+        inference_run["id"],
+    )
+    return {"accepted": True, "task": task, "inferenceRun": inference_run}
 
 
 @app.get("/api/scenes")
