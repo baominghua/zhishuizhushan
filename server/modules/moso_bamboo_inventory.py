@@ -246,13 +246,16 @@ def update_moso_inference_run(
     duration_ms = record.get("durationMs")
     if completed_at and started_at:
         try:
+            completed_value = datetime.fromisoformat(completed_at)
+            started_value = datetime.fromisoformat(str(started_at))
+            if completed_value.tzinfo is None:
+                completed_value = completed_value.replace(tzinfo=timezone.utc)
+            if started_value.tzinfo is None:
+                started_value = started_value.replace(tzinfo=timezone.utc)
             duration_ms = max(
                 0,
                 int(
-                    (
-                        datetime.fromisoformat(completed_at)
-                        - datetime.fromisoformat(str(started_at))
-                    ).total_seconds()
+                    (completed_value - started_value).total_seconds()
                     * 1000
                 ),
             )

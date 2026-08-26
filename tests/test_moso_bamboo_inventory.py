@@ -11,6 +11,7 @@ from server.modules.moso_bamboo_inventory import (
     analyze_rgb_orthophoto,
     estimate_from_rgb_metrics,
     merge_moso_estimate,
+    update_moso_inference_run,
 )
 
 
@@ -96,6 +97,27 @@ def test_moso_estimate_history_is_preserved() -> None:
     assert merged["mosoInventory"] == current
     assert merged["mosoInventoryHistory"][0] == previous
     assert merged["other"] == {"kept": True}
+
+
+def test_inference_duration_accepts_mysql_naive_timestamp(monkeypatch) -> None:
+    import server.modules.ai_inference_runs as inference_store
+
+    record = {
+        "id": "run-1",
+        "status": "running",
+        "startedAt": "2026-08-26T10:00:00",
+        "output": {},
+    }
+    saved = {}
+    monkeypatch.setattr(inference_store, "run_by_id", lambda *_args, **_kwargs: record)
+    monkeypatch.setattr(inference_store, "utc_now", lambda: "2026-08-26T10:00:03+00:00")
+    monkeypatch.setattr(inference_store, "update_run", lambda value: saved.update(value) or value)
+
+    updated = update_moso_inference_run("run-1", status="succeeded", output={"ok": True})
+
+    assert updated is not None
+    assert saved["durationMs"] == 3000
+    assert saved["status"] == "succeeded"
 
 
 def test_estimate_endpoint_saves_trial_separately_from_formal_inventory(app_client, monkeypatch) -> None:
