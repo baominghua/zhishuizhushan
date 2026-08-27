@@ -346,7 +346,7 @@ function styleForestBlocks(
     const base = Color.fromCssColorString(forestBlockColor(propertyText(properties, "riskLevel")));
     const selected = entity.id === selectedBlockId;
     entity.polygon.material = new ColorMaterialProperty(
-      selected ? Color.fromCssColorString("#ffe47b").withAlpha(0.52) : base.withAlpha(0.34),
+      selected ? Color.fromCssColorString("#ffe47b").withAlpha(0.07) : base.withAlpha(0.022),
     );
     entity.polygon.outline = new ConstantProperty(false);
     const hierarchy = entity.polygon.hierarchy?.getValue(JulianDate.now());

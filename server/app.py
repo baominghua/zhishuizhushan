@@ -118,6 +118,7 @@ from server.modules.moso_bamboo_inventory import (
 )
 from server.modules.settings import enforce_production_configuration, get_settings
 from server.modules.spatial_assets import (
+    ConversionCanceledError,
     SUPPORTED_POINT_CLOUD_EXTENSIONS,
     convert_point_cloud_to_3dtiles,
     convert_point_cloud_to_copc,
@@ -1452,8 +1453,8 @@ def cancel_task_record(task_id: str, actor: str) -> dict[str, Any]:
     original = find_task_record(task_id)
     if original.get("archivedAt"):
         raise HTTPException(status_code=409, detail="Archived tasks cannot be canceled")
-    if original.get("status") != "queued":
-        raise HTTPException(status_code=409, detail="Only queued tasks can be canceled")
+    if original.get("status") not in {"queued", "running", "paused"}:
+        raise HTTPException(status_code=409, detail="Only queued, running, or paused tasks can be canceled")
     canceled = update_task(
         task_id,
         status="canceled",
@@ -4637,6 +4638,7 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
                 copc_path,
                 pdal_executable=POINT_CLOUD_PDAL_EXECUTABLE,
                 progress_callback=report_copc_progress,
+                cancel_check=lambda: find_task_record(task_id).get("status") == "canceled",
             )
         if "3dtiles" in outputs:
             update_task(task_id, progress=65, message="Converting point cloud to 3D Tiles")
@@ -4710,6 +4712,16 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             conversionWarnings=conversion_warnings,
             completedAt=now_iso(),
         )
+    except ConversionCanceledError:
+        current = find_task_record(task_id)
+        if current.get("status") != "canceled":
+            update_task(
+                task_id,
+                status="canceled",
+                progress=100,
+                message="点云转换已停止，源 LAS/LAZ 已保留",
+                canceledAt=now_iso(),
+            )
     except Exception as exc:
         update_task(task_id, status="failed", progress=100, message=str(exc), failedAt=now_iso())
 
@@ -4737,6 +4749,8 @@ def create_point_cloud_conversion_task(
         "name": str(metadata.get("name") or scene_id),
         "fileName": f"{len(source_paths)} LAS/LAZ files",
         "sourcePaths": [str(path.resolve()) for path in source_paths],
+        "sourceBytes": sum(path.stat().st_size for path in source_paths),
+        "sourceFileCount": len(source_paths),
         "datasetPath": str((POINT_CLOUD_DIR / scene_id).resolve()),
         "assetType": "pointcloud",
         "missionId": str(metadata.get("missionId") or ""),
@@ -4773,8 +4787,8 @@ def find_task_record(task_id: str) -> dict[str, Any]:
 
 def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
     original = find_task_record(task_id)
-    if original.get("status") != "failed":
-        raise HTTPException(status_code=400, detail="Only failed tasks can be retried")
+    if original.get("status") not in {"failed", "paused"}:
+        raise HTTPException(status_code=400, detail="Only failed or paused tasks can be retried")
 
     is_tileset_registration = str(original.get("type") or "") == "3dtiles-register"
     is_point_cloud = str(original.get("assetType") or "") == "pointcloud"
@@ -4831,17 +4845,17 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
 def recover_interrupted_tasks() -> None:
     tasks = load_tasks()
     changed = False
-    resumable_task_ids: list[str] = []
     for task in tasks:
         if task.get("status") in {"queued", "running"}:
             is_point_cloud = str(task.get("assetType") or "") == "pointcloud"
             source_paths = [Path(str(value)).resolve() for value in task.get("sourcePaths") or []]
             if is_point_cloud and source_paths and all(path.exists() for path in source_paths):
-                task["status"] = "queued"
-                task["progress"] = 0
-                task["message"] = "服务重启后自动恢复点云处理，无需重新上传"
-                task["recoveredAfterRestartAt"] = now_iso()
-                resumable_task_ids.append(str(task.get("id") or ""))
+                # PDAL cannot resume a partially written COPC. Restarting a large
+                # conversion automatically after every deployment can monopolize
+                # the administrator web container, so require an explicit resume.
+                task["status"] = "paused"
+                task["message"] = "服务重启后已暂停；源 LAS/LAZ 已保留，请在任务队列中继续"
+                task["pausedAfterRestartAt"] = now_iso()
             else:
                 task["status"] = "failed"
                 task["progress"] = 100
@@ -4851,9 +4865,6 @@ def recover_interrupted_tasks() -> None:
             changed = True
     if changed:
         save_tasks(tasks)
-    for task_id in resumable_task_ids:
-        if task_id:
-            TASK_EXECUTOR.submit(run_point_cloud_conversion_task, task_id)
 
 
 def mount_optional_titiler() -> bool:

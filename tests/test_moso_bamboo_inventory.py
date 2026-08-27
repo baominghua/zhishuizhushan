@@ -63,6 +63,10 @@ def test_rgb_inventory_estimate_is_traceable_and_does_not_claim_volume(tmp_path:
     assert metrics["validPixelCount"] > 10_000
     assert 10 < metrics["canopyClosurePct"] < 90
     assert metrics["crownEquivalentCount"] > 10
+    assert metrics["crownCandidateLocationCount"] > 10
+    assert len(metrics["crownCandidateLocations"]) <= 1500
+    assert all(-180 <= point["longitude"] <= 180 for point in metrics["crownCandidateLocations"])
+    assert all(-90 <= point["latitude"] <= 90 for point in metrics["crownCandidateLocations"])
 
     estimate = estimate_from_rgb_metrics(
         {
@@ -87,6 +91,8 @@ def test_rgb_inventory_estimate_is_traceable_and_does_not_claim_volume(tmp_path:
     assert estimate["standingVolume"]["value"] is None
     assert estimate["standingVolume"]["status"] == "requires-local-plot-calibration"
     assert estimate["pointCloudEvidence"]["available"] is True
+    assert estimate["crownCandidateLocations"] == metrics["crownCandidateLocations"]
+    assert estimate["crownCandidateLocationCount"] == metrics["crownCandidateLocationCount"]
 
 
 def test_moso_estimate_history_is_preserved() -> None:

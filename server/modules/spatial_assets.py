@@ -24,6 +24,10 @@ MAX_TILESET_JSON_FILES = 5_000
 MAX_TILESET_CONTENT_FILES = 100_000
 
 
+class ConversionCanceledError(RuntimeError):
+    """Raised after a running converter is terminated by an operator request."""
+
+
 def _crs_label(crs: Any, wkt: str = "") -> str:
     epsg = crs.to_epsg() if crs is not None else None
     if epsg:
@@ -39,6 +43,7 @@ def _run_converter(
     label: str,
     *,
     heartbeat: Callable[[float], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
     heartbeat_interval: float = 10.0,
 ) -> None:
     if heartbeat is None:
@@ -56,6 +61,14 @@ def _run_converter(
         process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file, text=True)
         started_at = time.monotonic()
         while process.poll() is None:
+            if cancel_check is not None and cancel_check():
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                raise ConversionCanceledError(f"{label} 已由用户停止")
             if heartbeat is not None:
                 heartbeat(time.monotonic() - started_at)
             time.sleep(max(1.0, heartbeat_interval))
@@ -696,6 +709,7 @@ def convert_point_cloud_to_copc(
     *,
     pdal_executable: str = "pdal",
     progress_callback: Callable[[int, int, float], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     executable = shutil.which(pdal_executable)
     if not executable:
@@ -749,10 +763,17 @@ def convert_point_cloud_to_copc(
             progress_callback(output_size, source_size, elapsed_seconds)
 
     command = [executable, "pipeline", str(pipeline_path)]
+    # Point-cloud conversion is intentionally background-priority work. Large
+    # flight missions can saturate disk I/O for hours; keep the web/API path
+    # responsive while preserving the converter's full address space.
+    if shutil.which("nice"):
+        command = ["nice", "-n", "10", *command]
+    if shutil.which("ionice"):
+        command = ["ionice", "-c", "2", "-n", "7", *command]
     if progress_callback is None:
-        _run_converter(command, "PDAL COPC")
+        _run_converter(command, "PDAL COPC", cancel_check=cancel_check)
     else:
-        _run_converter(command, "PDAL COPC", heartbeat=heartbeat)
+        _run_converter(command, "PDAL COPC", heartbeat=heartbeat, cancel_check=cancel_check)
 
 
 def convert_point_cloud_to_3dtiles(

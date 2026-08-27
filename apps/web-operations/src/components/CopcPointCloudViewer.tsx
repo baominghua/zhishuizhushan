@@ -101,8 +101,9 @@ export function CopcPointCloudViewer({
         },
         layers: [
           { id: "point-cloud-background", type: "background", paint: { "background-color": "#061b16" } },
-          { id: "forest-block-fill", type: "fill", source: "forest-blocks", paint: { "fill-color": "#55d5a8", "fill-opacity": 0.08 } },
-          { id: "forest-block-line", type: "line", source: "forest-blocks", paint: { "line-color": "#b8ffe4", "line-width": 1.6, "line-opacity": 0.92 } },
+          { id: "forest-block-fill", type: "fill", source: "forest-blocks", paint: { "fill-color": "#55d5a8", "fill-opacity": 0.022 } },
+          { id: "forest-block-casing", type: "line", source: "forest-blocks", paint: { "line-color": "#021f19", "line-width": 5, "line-opacity": 0.94 } },
+          { id: "forest-block-line", type: "line", source: "forest-blocks", paint: { "line-color": "#b8ffe4", "line-width": 2, "line-opacity": 0.98 } },
         ],
       },
     });

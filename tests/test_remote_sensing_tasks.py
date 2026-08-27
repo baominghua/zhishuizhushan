@@ -1572,6 +1572,36 @@ def test_queued_imagery_task_can_be_canceled_with_permission(isolated_env):
     assert detail.json()["status"] == "canceled"
 
 
+def test_running_point_cloud_task_can_be_canceled_and_restart_recovery_pauses(isolated_env):
+    app_module = reload_app_module()
+    source_path = isolated_env / "large-flight.las"
+    source_path.write_bytes(b"preserved-source")
+    running_task = sample_task("task-cancel-running-pointcloud") | {
+        "assetType": "pointcloud",
+        "status": "running",
+        "progress": 28,
+        "sourcePaths": [str(source_path)],
+    }
+    app_module.save_tasks([running_task])
+    client = TestClient(app_module.app)
+
+    canceled = client.post(
+        "/api/tasks/task-cancel-running-pointcloud/cancel",
+        headers={"X-RS-Roles": "admin", "X-RS-User": "operator-a"},
+    )
+
+    assert canceled.status_code == 200
+    assert canceled.json()["task"]["status"] == "canceled"
+    assert source_path.read_bytes() == b"preserved-source"
+
+    app_module.save_tasks([running_task])
+    app_module.recover_interrupted_tasks()
+    recovered = app_module.load_tasks()[0]
+    assert recovered["status"] == "paused"
+    assert "任务队列中继续" in recovered["message"]
+    assert source_path.exists()
+
+
 def test_terminal_imagery_task_can_be_archived_and_hidden_from_default_list(isolated_env):
     app_module = reload_app_module()
     failed_task = sample_task("task-archive-failed") | {

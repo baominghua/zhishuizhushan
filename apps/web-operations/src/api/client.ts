@@ -47,6 +47,7 @@ import type {
   ImageryUploadPayload,
   PointCloudUploadSession,
   SpatialAssetTask,
+  SpatialAssetTaskResponse,
   LedgerResponse,
   LaborActionPayload,
   LaborJob,
@@ -703,8 +704,14 @@ export const api = {
     }),
   imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
   spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
+  spatialAssetTasks: (query: { status?: string; includeArchived?: boolean; limit?: number; offset?: number } = {}) =>
+    request<SpatialAssetTaskResponse>(`/api/tasks?${queryString(query)}`),
   retrySpatialAssetTask: (id: string) =>
     request<{ accepted: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+  cancelSpatialAssetTask: (id: string) =>
+    request<{ ok: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  archiveSpatialAssetTask: (id: string) =>
+    request<{ ok: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/archive`, { method: "POST" }),
   confirmImageryCoverage: (id: string, confirmation: string[] | import("./types").ImageryCoverageConfirmationPayload) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}/coverage/confirm`, {
       method: "POST",

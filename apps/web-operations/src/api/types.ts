@@ -335,6 +335,8 @@ export interface ImageryCoverageConfirmationPayload {
 export interface SpatialAssetTask {
   id: string;
   type: string;
+  name?: string;
+  kind?: string;
   status: "queued" | "running" | "completed" | "failed" | "canceled" | string;
   progress: number;
   message: string;
@@ -342,6 +344,24 @@ export interface SpatialAssetTask {
   assetType?: ImageryAssetType;
   sceneUrl?: string;
   scene?: ImageryAsset;
+  sourceBytes?: number;
+  outputBytes?: number;
+  sourceFileCount?: number;
+  createdAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  failedAt?: string;
+  heartbeatAt?: string;
+  retryAttempt?: number;
+  retryOf?: string;
+  archivedAt?: string;
+}
+
+export interface SpatialAssetTaskResponse {
+  tasks: SpatialAssetTask[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface PointCloudUploadFileState {
@@ -547,6 +567,8 @@ export interface MosoInventoryEstimate {
   standingVolume: { value: number | null; unit: string; status: string; reason: string };
   confidence: { score: number; level: string; reasons: string[] };
   imageryEvidence: Record<string, unknown>;
+  crownCandidateLocations?: Array<{ longitude: number; latitude: number; score: number }>;
+  crownCandidateLocationCount?: number;
   pointCloudEvidence: Record<string, unknown> & { available?: boolean };
   method?: { name?: string; assumption?: string; references?: Array<Record<string, unknown>> };
   disclaimer: string;

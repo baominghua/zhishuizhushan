@@ -20,7 +20,6 @@ import "ol/ol.css";
 
 import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
-import { forestBlockColor } from "../maps/forestBlocks";
 import { MAP_ANNOTATION_COLORS } from "../maps/mapAnnotations";
 import type {
   MapAreaFocusRequest,
@@ -88,14 +87,14 @@ function featureText(feature: FeatureLike, resolution: number) {
 
 function createBlockStyle(feature: FeatureLike, selectedBlockId: string | null, resolution: number) {
   const selected = String(feature.getId() ?? feature.get("id") ?? "") === selectedBlockId;
-  const color = forestBlockColor(feature.get("riskLevel") as string | null);
   const label = featureText(feature, resolution);
-  return new Style({
-    fill: new Fill({ color: selected ? "rgba(255, 217, 92, 0.48)" : `${color}54` }),
-    stroke: new Stroke({
-      color: selected ? "#ffe47b" : "rgba(217, 255, 237, 0.96)",
-      width: selected ? 4 : 2.4,
-    }),
+  const casing = new Style({
+    fill: new Fill({ color: selected ? "rgba(255, 217, 92, 0.055)" : "rgba(20, 103, 77, 0.018)" }),
+    stroke: new Stroke({ color: "rgba(2, 34, 27, 0.94)", width: selected ? 6 : 4.8 }),
+    zIndex: selected ? 19 : 4,
+  });
+  const line = new Style({
+    stroke: new Stroke({ color: selected ? "#ffe47b" : "rgba(205, 255, 234, 0.98)", width: selected ? 2.8 : 2 }),
     text: label
       ? new Text({
           text: label,
@@ -111,6 +110,7 @@ function createBlockStyle(feature: FeatureLike, selectedBlockId: string | null, 
       : undefined,
     zIndex: selected ? 20 : 5,
   });
+  return [casing, line];
 }
 
 export function OpenLayersMap({

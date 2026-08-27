@@ -76,7 +76,7 @@ export function AssetViewerPage() {
   const asset = assetQuery.data;
   const mode = viewerMode(asset);
   const [showBasemap, setShowBasemap] = useState(false);
-  const [showForestBlocks, setShowForestBlocks] = useState(false);
+  const [showForestBlocks, setShowForestBlocks] = useState(Boolean(blockId));
   const [metrics, setMetrics] = useState<MapViewMetrics | null>(null);
   const [quality, setQuality] = useState<"smooth" | "standard" | "detail">("standard");
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
@@ -210,7 +210,7 @@ export function AssetViewerPage() {
                   zoomRequest={zoomRequest}
                   areaFocusRequest={focusRequest}
                   featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
-                  selectedBlockId={null}
+                  selectedBlockId={blockId || null}
                   onSelectBlock={() => undefined}
                   onViewportChange={setViewport}
                   onViewMetricsChange={setMetrics}
@@ -243,7 +243,7 @@ export function AssetViewerPage() {
                     zoomRequest={zoomRequest}
                     areaFocusRequest={{ sequence: 0, bbox: viewport.bbox }}
                     featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
-                    selectedBlockId={null}
+                    selectedBlockId={blockId || null}
                     onSelectBlock={() => undefined}
                     onViewportChange={setViewport}
                     imageryAssets={[]}

@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  Archive,
   CheckCircle2,
+  CircleStop,
   CloudUpload,
   Database,
   Download,
@@ -9,16 +11,18 @@ import {
   FileImage,
   Globe2,
   Layers,
+  ListChecks,
   MapPinned,
   Pencil,
   Plus,
+  Play,
   RefreshCw,
   RotateCcw,
   Send,
   Trash2,
   X,
 } from "lucide-react";
-import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useDeferredValue, useMemo, useRef, useState } from "react";
 
 import { api, downloadFile } from "../api/client";
 import type {
@@ -38,7 +42,6 @@ import { hasPermission, useCapabilities } from "../hooks/useCapabilities";
 
 const PAGE_SIZE = 30;
 const POINT_CLOUD_RESUME_KEY = "smart-bamboo.point-cloud-upload-session.v1";
-const SPATIAL_TASK_RESUME_KEY = "smart-bamboo.spatial-task.v1";
 const TYPE_LABELS: Record<ImageryAssetType, string> = {
   orthophoto: "正射影像",
   dsm: "DSM 地表模型",
@@ -47,8 +50,6 @@ const TYPE_LABELS: Record<ImageryAssetType, string> = {
   pointcloud: "点云成果",
   "flight-photos": "航飞原片",
 };
-const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "canceled"]);
-
 export function ImageryAssetsPage() {
   const client = useQueryClient();
   const capabilities = useCapabilities();
@@ -61,10 +62,16 @@ export function ImageryAssetsPage() {
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<ImageryAsset | null>(null);
   const [editing, setEditing] = useState<ImageryAsset | null>(null);
+  const [reviewing, setReviewing] = useState<ImageryAsset | null>(null);
   const deferredQ = useDeferredValue(q);
   const ledger = useQuery({
     queryKey: ["imagery-assets", deferredQ, published, assetTypeFilter, resourceFormat, includeDeleted, offset],
     queryFn: () => api.imageryAssets({ q: deferredQ, published: published ? true : undefined, assetType: assetTypeFilter || undefined, resourceFormat: resourceFormat || undefined, includeDeleted, limit: PAGE_SIZE, offset }),
+  });
+  const tasks = useQuery({
+    queryKey: ["spatial-asset-tasks"],
+    queryFn: () => api.spatialAssetTasks({ limit: 20 }),
+    refetchInterval: (query) => (query.state.data?.tasks ?? []).some((task) => ["queued", "running"].includes(task.status)) ? 2_000 : 10_000,
   });
   const permissions = capabilities.data?.permissions ?? [];
   const roles = capabilities.data?.principal.roles ?? [];
@@ -88,6 +95,11 @@ export function ImageryAssetsPage() {
     mutationFn: () => downloadFile("/api/v2/tools/map-publisher/download", "智慧竹山地图发布助手.zip"),
     onError: (error) => window.alert(error instanceof Error ? error.message : "发布助手下载失败"),
   });
+  const refreshTasks = async () => { await client.invalidateQueries({ queryKey: ["spatial-asset-tasks"] }); };
+  const retryTask = useMutation({ mutationFn: api.retrySpatialAssetTask, onSuccess: refreshTasks });
+  const cancelTask = useMutation({ mutationFn: api.cancelSpatialAssetTask, onSuccess: refreshTasks });
+  const archiveTask = useMutation({ mutationFn: api.archiveSpatialAssetTask, onSuccess: refreshTasks });
+  const reviewTask = useMutation({ mutationFn: (task: SpatialAssetTask) => api.imageryAsset(task.sceneId), onSuccess: setReviewing });
 
   return <div className="standard-page ledger-page imagery-assets-page">
     <section className="page-heading ledger-heading">
@@ -100,6 +112,15 @@ export function ImageryAssetsPage() {
       <Summary label="三维成果" value={metrics.pointClouds} detail="COPC / PNTS / B3DM" />
       <Summary label="待确认覆盖" value={metrics.pendingReview} detail="需人工确认林班" tone={metrics.pendingReview ? "warning" : "active"} />
     </section>
+    <SpatialTaskQueue
+      tasks={tasks.data?.tasks ?? []}
+      loading={tasks.isLoading}
+      error={tasks.error}
+      onRetry={(task) => retryTask.mutate(task.id)}
+      onCancel={(task) => cancelTask.mutate(task.id)}
+      onArchive={(task) => archiveTask.mutate(task.id)}
+      onReview={(task) => reviewTask.mutate(task)}
+    />
     <section className="ledger-shell">
       <div className="ledger-toolbar domain-ledger-toolbar"><label className="search-field"><FileImage aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索成果名称、文件名、任务或林班" /></label><label className="compact-filter"><span>成果类型</span><select value={assetTypeFilter} onChange={(event) => { setAssetTypeFilter(event.target.value); setOffset(0); }}><option value="">全部类型</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="compact-filter"><span>资源格式</span><select value={resourceFormat} onChange={(event) => { setResourceFormat(event.target.value); setOffset(0); }}><option value="">全部格式</option>{["GEOTIFF", "COG", "LAS/LAZ", "COPC", "PNTS", "B3DM"].map((format) => <option key={format}>{format}</option>)}</select></label><label className="compact-filter"><span>发布状态</span><select value={published} onChange={(event) => { setPublished(event.target.value); setOffset(0); }}><option value="">全部成果</option><option value="published">已发布上图</option></select></label><label className="deleted-toggle"><input type="checkbox" checked={includeDeleted} onChange={(event) => { setIncludeDeleted(event.target.checked); setOffset(0); }} /><span>显示回收站</span></label></div>
       <QueryState loading={ledger.isLoading} error={ledger.error}><div className="table-scroll"><table className="ledger-table imagery-ledger-table"><thead><tr><th>成果档案</th><th>类型与时间</th><th>关联林班</th><th>空间信息</th><th>处理状态</th><th className="action-column">操作</th></tr></thead><tbody>
@@ -115,46 +136,51 @@ export function ImageryAssetsPage() {
       </tbody></table></div></QueryState>
       <LedgerPagination total={ledger.data?.total ?? 0} limit={PAGE_SIZE} offset={offset} onPage={setOffset} />
     </section>
-    <SidePanel wide open={creating} eyebrow="林班空间成果" title="上传并自动匹配" onClose={() => setCreating(false)}><SpatialAssetUploadForm onCancel={() => setCreating(false)} onSaved={async (record) => { setCreating(false); setSelected(record); await refresh(); }} /></SidePanel>
+    <SidePanel wide open={creating} eyebrow="林班空间成果" title="上传并自动匹配" onClose={() => setCreating(false)}><SpatialAssetUploadForm onCancel={() => setCreating(false)} onQueued={async () => { setCreating(false); await refreshTasks(); }} /></SidePanel>
     <SidePanel wide open={Boolean(editing)} eyebrow="成果元数据" title={`编辑 ${editing?.name || "成果"}`} onClose={() => setEditing(null)}>{editing ? <ImageryEditForm initial={editing} onCancel={() => setEditing(null)} onSaved={async (record) => { setEditing(null); setSelected(record); await refresh(); }} /> : null}</SidePanel>
     <SidePanel wide open={Boolean(selected)} eyebrow="空间成果详情" title={selected?.name || "成果"} onClose={() => setSelected(null)}>{selected ? <ImageryDetail record={selected} canPublish={canPublish} publishing={publish.isPending} onPublish={() => publish.mutate(selected)} /> : null}</SidePanel>
+    <SidePanel wide open={Boolean(reviewing)} eyebrow="空间分析完成" title={`确认 ${reviewing?.name || "成果"} 空间关系`} onClose={() => setReviewing(null)}>{reviewing ? <CoverageConfirmation asset={reviewing} onCancel={() => setReviewing(null)} onSaved={async (record) => { setReviewing(null); setSelected(record); await Promise.all([refresh(), refreshTasks()]); }} /> : null}</SidePanel>
   </div>;
 }
 
-function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: (record: ImageryAsset) => void }) {
+function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onArchive, onReview }: {
+  tasks: SpatialAssetTask[];
+  loading: boolean;
+  error: Error | null;
+  onRetry: (task: SpatialAssetTask) => void;
+  onCancel: (task: SpatialAssetTask) => void;
+  onArchive: (task: SpatialAssetTask) => void;
+  onReview: (task: SpatialAssetTask) => void;
+}) {
+  const visibleTasks = tasks.filter((task) => !task.archivedAt).slice(0, 8);
+  const activeCount = visibleTasks.filter((task) => ["queued", "running"].includes(task.status)).length;
+  const labels: Record<string, string> = { queued: "排队中", running: "处理中", paused: "已暂停", failed: "失败", completed: "已完成", canceled: "已停止" };
+  return <section className="spatial-task-queue" aria-label="空间处理任务队列">
+    <header><div><ListChecks aria-hidden="true" /><span><strong>空间处理任务</strong><small>{activeCount ? `${activeCount} 项正在顺序处理，页面可继续操作` : "后台任务不会占用当前页面"}</small></span></div><span className={activeCount ? "active" : ""}>{activeCount ? "后台运行中" : "队列空闲"}</span></header>
+    {loading ? <p className="task-queue-empty">正在读取任务队列…</p> : error ? <p className="form-error">任务队列读取失败：{error.message}</p> : !visibleTasks.length ? <p className="task-queue-empty">暂无空间处理任务。新上传的影像和点云会在这里显示进度。</p> : <div className="task-queue-list">{visibleTasks.map((task) => {
+      const progress = Math.max(0, Math.min(100, Number(task.progress || 0)));
+      const sourceBytes = Number(task.sourceBytes || 0);
+      const running = ["queued", "running"].includes(task.status);
+      const resumable = ["paused", "failed"].includes(task.status);
+      return <article className={`task-queue-item ${task.status}`} key={task.id}>
+        <div className="task-queue-status">{task.status === "completed" ? <CheckCircle2 /> : task.status === "failed" ? <AlertTriangle /> : resumable ? <CircleStop /> : <Database />}</div>
+        <div className="task-queue-main"><div className="task-queue-title"><strong>{task.name || task.kind}</strong><span>{labels[task.status] || task.status}</span></div><p>{task.message || "等待后台处理"}</p><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="task-queue-meta"><span>{progress}%</span><span>{task.sourceFileCount ? `${task.sourceFileCount} 个源文件` : ""}{sourceBytes ? ` · ${formatBytes(sourceBytes)}` : ""}</span>{sourceBytes >= 10 * 1024 ** 3 ? <em>超大任务 · 单任务顺序处理</em> : null}</div></div>
+        <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" onClick={() => onReview(task)}><MapPinned />确认覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" onClick={() => onArchive(task)}><Archive />归档</button> : null}</div>
+      </article>;
+    })}</div>}
+    <footer><span>点云转换默认使用 1 个后台工作槽；大任务主要消耗内存与磁盘 I/O，不再因服务重启自动从零重复。</span></footer>
+  </section>;
+}
+
+function SpatialAssetUploadForm({ onCancel, onQueued }: { onCancel: () => void; onQueued: (task: SpatialAssetTask) => void }) {
   const rasterFileRef = useRef<HTMLInputElement>(null);
   const pointCloudFilesRef = useRef<HTMLInputElement>(null);
   const [assetKind, setAssetKind] = useState<"raster" | "pointcloud" | "tileset">("raster");
   const [rasterType, setRasterType] = useState<"orthophoto" | "dsm" | "dtm">("orthophoto");
   const [sourceMode, setSourceMode] = useState<"upload" | "register">("upload");
   const [includeLegacyTiles, setIncludeLegacyTiles] = useState(false);
-  const [taskId, setTaskId] = useState(() => readSpatialTaskResume());
   const [uploadSessionId, setUploadSessionId] = useState("");
   const [transfer, setTransfer] = useState({ uploaded: 0, total: 0, label: "" });
-  const task = useQuery({
-    queryKey: ["spatial-asset-task", taskId],
-    queryFn: () => api.spatialAssetTask(taskId),
-    enabled: Boolean(taskId),
-    refetchInterval: (query) => TERMINAL_TASK_STATUSES.has(String(query.state.data?.status || "")) ? false : 2_000,
-    retry: 8,
-  });
-  const completedSceneId = task.data?.status === "completed" ? task.data.sceneId : "";
-  const completedAsset = useQuery({
-    queryKey: ["imagery-asset", completedSceneId],
-    queryFn: () => api.imageryAsset(completedSceneId),
-    enabled: Boolean(completedSceneId),
-    retry: 2,
-  });
-  useEffect(() => {
-    if (taskId) writeSpatialTaskResume(taskId);
-  }, [taskId]);
-  useEffect(() => {
-    if (completedAsset.data) clearSpatialTaskResume(taskId);
-  }, [completedAsset.data, taskId]);
-  const retryTask = useMutation({
-    mutationFn: (id: string) => api.retrySpatialAssetTask(id),
-    onSuccess: ({ task: retry }) => setTaskId(retry.id),
-  });
 
   const submitMutation = useMutation({
     mutationFn: async (form: HTMLFormElement) => {
@@ -220,20 +246,17 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
         clearPointCloudResume(session.id);
         setTransfer({ uploaded: session.totalBytes, total: session.totalBytes, label: "点云上传完成，等待后台转换" });
       }
-      setTaskId(result.task.id);
       return result.task;
     },
+    onSuccess: onQueued,
   });
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); submitMutation.mutate(event.currentTarget); };
-
-  if (completedAsset.data) return <CoverageConfirmation asset={completedAsset.data} onCancel={onCancel} onSaved={onSaved} />;
-  if (taskId) return <TaskProgress task={task.data} loading={task.isLoading || completedAsset.isLoading} error={task.error || completedAsset.error || retryTask.error} retrying={retryTask.isPending} onRetry={() => retryTask.mutate(taskId)} onCancel={onCancel} />;
 
   return <form className="entity-form spatial-upload-form" onSubmit={submit}>
     <fieldset className="form-section"><legend>成果类型</legend><div className="asset-kind-switch"><button type="button" className={assetKind === "raster" ? "active" : ""} onClick={() => { setAssetKind("raster"); setUploadSessionId(""); }}><FileImage aria-hidden="true" /><span><strong>GeoTIFF 影像</strong><small>正射、DSM、DTM 自动转 COG</small></span></button><button type="button" className={assetKind === "pointcloud" ? "active" : ""} onClick={() => setAssetKind("pointcloud")}><CloudUpload aria-hidden="true" /><span><strong>LAS/LAZ 点云</strong><small>批量续传，优先生成 COPC</small></span></button><button type="button" className={assetKind === "tileset" ? "active" : ""} onClick={() => { setAssetKind("tileset"); setSourceMode("register"); setUploadSessionId(""); }}><Layers aria-hidden="true" /><span><strong>DJI 3D Tiles</strong><small>直接登记 PNTS / B3DM，不重复转换</small></span></button></div></fieldset>
     <fieldset className="form-section"><legend>文件来源</legend><div className="source-mode-tabs"><button type="button" className={sourceMode === "upload" ? "active" : ""} disabled={assetKind === "tileset"} onClick={() => setSourceMode("upload")}>本机断点续传</button><button type="button" className={sourceMode === "register" ? "active" : ""} onClick={() => setSourceMode("register")}>服务器 / NAS 目录</button></div>{assetKind === "tileset" ? <p className="form-hint tileset-register-note">DJI Terra 已生成的目录直接留在服务器或 NAS；平台只校验引用、提取范围并建立目录索引。</p> : null}<div className="form-grid">
       {sourceMode === "upload" && assetKind === "raster" ? <label className="field-span"><span>GeoTIFF 文件<em>*</em></span><input ref={rasterFileRef} type="file" accept=".tif,.tiff,.geotiff,image/tiff" required /><small>上传完成后由后台转为 COG，并根据透明通道或 NoData 提取有效覆盖范围。</small></label> : null}
-      {sourceMode === "upload" && assetKind === "pointcloud" ? <label className="field-span"><span>同一航飞任务的 LAS/LAZ<em>*</em></span><input ref={pointCloudFilesRef} type="file" accept=".las,.laz" multiple required onChange={() => setUploadSessionId("")} /><small>可一次选择多个文件；系统按 16–128MB 分片续传，失败或刷新页面后重新选择同一批文件即可续传。不要选择 .temp 中间目录。</small></label> : null}
+      {sourceMode === "upload" && assetKind === "pointcloud" ? <label className="field-span"><span>同一航飞任务的 LAS/LAZ<em>*</em></span><input ref={pointCloudFilesRef} type="file" accept=".las,.laz" multiple required onChange={() => setUploadSessionId("")} /><small>可一次选择多个文件；系统按 16–128MB 分片续传。上传完成后任务会进入页面任务队列，可继续创建其他上传，不必停留等待转换。</small></label> : null}
       {sourceMode === "register" ? <label className="field-span"><span>服务器允许目录中的路径<em>*</em></span><input name="serverPath" required placeholder={assetKind === "tileset" ? "/app/data/remote-sensing/inbox/邵武S1地块/terra_pnts" : assetKind === "pointcloud" ? "/app/data/remote-sensing/inbox/邵武S1地块/terra_las_1_4" : "/app/data/remote-sensing/inbox/result.tif"} /><small>{assetKind === "tileset" ? "填写包含根 tileset.json 的目录，或直接填写该文件。系统递归校验 PNTS/B3DM 与子 tileset，原目录不会被复制、改写或删除。" : "路径必须位于 REMOTE_SENSING_IMPORT_DIRS；点云目录会递归扫描并自动排除 .temp 等隐藏目录。"}</small></label> : null}
       <label><span>成果名称<em>*</em></span><input name="name" required /></label>
       {assetKind === "raster" ? <label><span>成果类型<em>*</em></span><select value={rasterType} onChange={(event) => setRasterType(event.target.value as typeof rasterType)}><option value="orthophoto">正射影像</option><option value="dsm">DSM 地表模型</option><option value="dtm">DTM 地形模型</option></select></label> : <label><span>{assetKind === "tileset" ? "登记方式" : "转换产物"}</span><input readOnly value={assetKind === "tileset" ? "直接登记 PNTS / B3DM（不转换）" : includeLegacyTiles ? "COPC 动态流式 + PNTS 兼容瓦片" : "COPC 动态流式（推荐）"} /></label>}
@@ -244,13 +267,8 @@ function SpatialAssetUploadForm({ onCancel, onSaved }: { onCancel: () => void; o
     </div></fieldset>
     {transfer.total ? <TransferProgress uploaded={transfer.uploaded} total={transfer.total} label={transfer.label} /> : null}
     {submitMutation.error ? <p className="form-error">{submitMutation.error.message}</p> : null}
-    <div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>取消</button><button className="button primary" disabled={submitMutation.isPending}>{submitMutation.isPending ? uploadSessionId ? "继续上传中" : "正在提交" : uploadSessionId ? "继续断点上传" : assetKind === "tileset" ? "登记并自动分析" : "上传并自动分析"}</button></div>
+    <div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>取消</button><button className="button primary" disabled={submitMutation.isPending}>{submitMutation.isPending ? uploadSessionId ? "继续上传中" : "正在提交" : uploadSessionId ? "继续断点上传" : assetKind === "tileset" ? "登记并加入任务队列" : "上传并加入任务队列"}</button></div>
   </form>;
-}
-
-function TaskProgress({ task, loading, error, retrying, onRetry, onCancel }: { task?: SpatialAssetTask; loading: boolean; error: Error | null; retrying: boolean; onRetry: () => void; onCancel: () => void }) {
-  const progress = Math.max(0, Math.min(100, Number(task?.progress || 0)));
-  return <div className="spatial-task-progress"><div className="task-progress-icon">{task?.status === "failed" ? <AlertTriangle aria-hidden="true" /> : task?.status === "completed" ? <CheckCircle2 aria-hidden="true" /> : <Database aria-hidden="true" />}</div><span className="eyebrow">后台空间处理</span><h3>{task?.message || (loading ? "正在读取任务状态" : "任务已提交")}</h3><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="progress-meta"><strong>{progress}%</strong><small>{task?.status || "queued"}</small></div>{error ? <p className="form-error">连接短暂中断：{error.message}。任务编号已保存在本机，重新打开本页会继续跟踪，不会重新上传。</p> : null}{task?.status === "failed" ? <p className="form-hint">源文件和已上传分片均已保留，可直接继续后台处理，无需重新上传 LAS/LAZ。</p> : <p className="form-hint">可以关闭面板，后台任务不会中断；服务重启后会自动恢复点云转换。</p>}<div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>关闭</button>{task?.status === "failed" ? <button className="button primary" type="button" disabled={retrying} onClick={onRetry}>{retrying ? "正在恢复" : "继续后台处理"}</button> : null}</div></div>;
 }
 
 function CoverageConfirmation({ asset, onCancel, onSaved }: { asset: ImageryAsset; onCancel: () => void; onSaved: (record: ImageryAsset) => void }) {
@@ -329,9 +347,6 @@ function pointCloudUploadFingerprint(files: File[]) { return files.map((file) =>
 function readPointCloudResume(): { sessionId: string; fingerprint: string } | null { try { const parsed = JSON.parse(window.localStorage.getItem(POINT_CLOUD_RESUME_KEY) || "null"); return parsed?.sessionId && parsed?.fingerprint ? parsed : null; } catch { return null; } }
 function writePointCloudResume(value: { sessionId: string; fingerprint: string }) { try { window.localStorage.setItem(POINT_CLOUD_RESUME_KEY, JSON.stringify(value)); } catch { /* Private browsing or storage policy may disable persistence. */ } }
 function clearPointCloudResume(sessionId: string) { const current = readPointCloudResume(); if (!current || current.sessionId !== sessionId) return; try { window.localStorage.removeItem(POINT_CLOUD_RESUME_KEY); } catch { /* Ignore unavailable storage. */ } }
-function readSpatialTaskResume() { try { return window.localStorage.getItem(SPATIAL_TASK_RESUME_KEY) || ""; } catch { return ""; } }
-function writeSpatialTaskResume(taskId: string) { try { window.localStorage.setItem(SPATIAL_TASK_RESUME_KEY, taskId); } catch { /* Ignore unavailable storage. */ } }
-function clearSpatialTaskResume(taskId: string) { try { if (window.localStorage.getItem(SPATIAL_TASK_RESUME_KEY) === taskId) window.localStorage.removeItem(SPATIAL_TASK_RESUME_KEY); } catch { /* Ignore unavailable storage. */ } }
 function localTime(value?: string) { if (!value) return ""; const date = new Date(value); if (Number.isNaN(date.valueOf())) return value.slice(0, 16); const offset = date.getTimezoneOffset() * 60_000; return new Date(date.valueOf() - offset).toISOString().slice(0, 16); }
 function formatDate(value?: string) { if (!value) return "时间待补"; const date = new Date(value); return Number.isNaN(date.valueOf()) ? value : date.toLocaleString("zh-CN", { hour12: false }); }
 function formatBytes(value: number) { if (!value) return "0 B"; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`; return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`; }

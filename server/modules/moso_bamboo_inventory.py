@@ -12,7 +12,7 @@ from PIL import Image, ImageFilter
 from rasterio.enums import Resampling
 from rasterio.features import geometry_mask, geometry_window
 from rasterio.transform import Affine
-from rasterio.warp import transform_geom
+from rasterio.warp import transform as transform_coordinates, transform_geom
 from shapely.geometry import shape
 
 
@@ -323,9 +323,9 @@ def _crown_equivalent_peaks(
     pixel_size_x: float,
     pixel_size_y: float,
     threshold: float,
-) -> int:
+) -> tuple[int, list[tuple[int, int, float]]]:
     if not np.any(canopy_mask):
-        return 0
+        return 0, []
     finite_score = np.where(np.isfinite(score), score, threshold)
     low, high = np.percentile(finite_score[canopy_mask], [2, 98])
     scaled = np.zeros(score.shape, dtype=np.uint8)
@@ -351,11 +351,27 @@ def _crown_equivalent_peaks(
     candidates = canopy_mask & (blurred == local_maximum) & (blurred >= peak_floor)
     y, x = np.where(candidates)
     if not len(x):
-        return 0
+        return 0, []
     cell_x = max(1, int(round(expected_spacing_m / max(pixel_size_x, 0.01))))
     cell_y = max(1, int(round(expected_spacing_m / max(pixel_size_y, 0.01))))
     cell_ids = (y // cell_y).astype(np.int64) * (score.shape[1] // cell_x + 2) + (x // cell_x)
-    return int(np.unique(cell_ids).size)
+    _, representative_indices = np.unique(cell_ids, return_index=True)
+    total = int(len(representative_indices))
+    # A map does not need every peak at once. Keep an evenly distributed,
+    # deterministic sample while retaining the full count for inventory maths.
+    if total > 1_500:
+        representative_indices = representative_indices[
+            np.linspace(0, total - 1, 1_500, dtype=np.int64)
+        ]
+    locations = [
+        (
+            int(y[index]),
+            int(x[index]),
+            float(np.clip((float(blurred[y[index], x[index]]) - peak_floor) / max(1, 255 - peak_floor), 0, 1)),
+        )
+        for index in representative_indices
+    ]
+    return total, locations
 
 
 def analyze_rgb_orthophoto(
@@ -412,13 +428,37 @@ def analyze_rgb_orthophoto(
         closure = float(canopy.sum() / valid.sum())
         pixel_size_x = abs(float(output_transform.a))
         pixel_size_y = abs(float(output_transform.e))
-        crown_count = _crown_equivalent_peaks(
+        crown_count, crown_peak_pixels = _crown_equivalent_peaks(
             score,
             canopy,
             pixel_size_x=pixel_size_x,
             pixel_size_y=pixel_size_y,
             threshold=threshold,
         )
+        crown_locations: list[dict[str, float]] = []
+        if crown_peak_pixels:
+            rows = [row for row, _, _ in crown_peak_pixels]
+            columns = [column for _, column, _ in crown_peak_pixels]
+            projected_x, projected_y = rasterio.transform.xy(
+                output_transform,
+                rows,
+                columns,
+                offset="center",
+            )
+            longitude, latitude = transform_coordinates(
+                dataset.crs,
+                "EPSG:4326",
+                list(projected_x),
+                list(projected_y),
+            )
+            crown_locations = [
+                {
+                    "longitude": round(float(lon), 8),
+                    "latitude": round(float(lat), 8),
+                    "score": round(float(crown_peak_pixels[index][2]), 3),
+                }
+                for index, (lon, lat) in enumerate(zip(longitude, latitude, strict=True))
+            ]
         projected_area_m2 = float(shape(projected_geometry).area)
         analyzed_area_m2 = float(valid.sum()) * pixel_size_x * pixel_size_y
         image_coverage_pct = min(100.0, analyzed_area_m2 / max(projected_area_m2, 1e-9) * 100)
@@ -436,6 +476,8 @@ def analyze_rgb_orthophoto(
             "canopyClosurePct": round(closure * 100, 2),
             "canopyThreshold": round(threshold, 4),
             "crownEquivalentCount": crown_count,
+            "crownCandidateLocations": crown_locations,
+            "crownCandidateLocationCount": len(crown_locations),
         }
 
 
@@ -514,6 +556,8 @@ def estimate_from_rgb_metrics(
         "blockArea": {"value": round(area_mu, 2), "unit": "亩"},
         "canopyClosure": {"value": round(closure, 2), "unit": "%"},
         "crownEquivalentCount": {"value": crown_count, "raw": raw_crown_count, "unit": "个"},
+        "crownCandidateLocations": list(rgb_metrics.get("crownCandidateLocations") or []),
+        "crownCandidateLocationCount": int(rgb_metrics.get("crownCandidateLocationCount") or 0),
         "resourceStock": {
             "value": estimated_culms,
             "lower": lower_culms,

@@ -57,7 +57,7 @@ SMART_BAMBOO_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306
 REMOTE_SENSING_DATABASE_URL=mysql://smart_bamboo:${mysql_password}@db-primary:3306/smart_bamboo?charset=utf8mb4
 REMOTE_SENSING_API_TOKENS='{"${dashboard_token}":{"user":"dashboard","roles":["viewer"],"projects":["*"],"areas":["*"]},"${break_glass_token}":{"user":"break_glass","roles":["admin"],"projects":["*"],"areas":["*"]}}'
 REMOTE_SENSING_CORS_ORIGINS=http://36.140.138.117
-REMOTE_SENSING_TASK_WORKERS=4
+REMOTE_SENSING_TASK_WORKERS=1
 REMOTE_SENSING_TIANDITU_TK=${tianditu_tk}
 REMOTE_SENSING_TIANDITU_REFERER=http://36.140.138.117
 REMOTE_SENSING_BASEMAP_CACHE_MAX_BYTES=53687091200
