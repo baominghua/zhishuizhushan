@@ -45,7 +45,10 @@ services:
       REMOTE_SENSING_DATABASE_URL: "${REMOTE_SENSING_DATABASE_URL:?Set REMOTE_SENSING_DATABASE_URL}"
       REMOTE_SENSING_DATA_DIR: /app/data/remote-sensing
       REMOTE_SENSING_IMPORT_DIRS: /app/data/remote-sensing/inbox
-      REMOTE_SENSING_TASK_WORKERS: "${REMOTE_SENSING_TASK_WORKERS:-1}"
+      # Keep heavy PDAL/GDAL work sequential in each application worker. An
+      # existing primary.env may still contain an older value such as 4; the
+      # production safeguard intentionally takes precedence.
+      REMOTE_SENSING_TASK_WORKERS: "1"
       REMOTE_SENSING_TILE_CACHE: "1"
       REMOTE_SENSING_TILE_CACHE_MAX_BYTES: "${REMOTE_SENSING_TILE_CACHE_MAX_BYTES:-53687091200}"
       REMOTE_SENSING_TILE_CACHE_MAX_AGE_DAYS: "${REMOTE_SENSING_TILE_CACHE_MAX_AGE_DAYS:-30}"
