@@ -94,6 +94,7 @@ const MODULE_ORDER = [
 const MODULE_ORDER_INDEX = new globalThis.Map(MODULE_ORDER.map((key, index) => [key, index]));
 
 function pageTitle(pathname: string) {
+  if (pathname.includes("/ai/moso-inventory-sandbox")) return "毛竹资源 AI 估算沙盘";
   if (pathname.includes("/system/governance")) return "系统治理";
   if (pathname.includes("/resources/intelligence")) return "资源专题分析";
   if (pathname.includes("/operations/costs")) return "经营成本";

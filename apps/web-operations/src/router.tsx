@@ -46,6 +46,7 @@ const ImageryAssetsPage = lazy(async () => ({ default: (await import("./pages/Im
 const AiReviewPage = lazy(async () => ({ default: (await import("./pages/AiReviewPage")).AiReviewPage }));
 const AiModelsPage = lazy(async () => ({ default: (await import("./pages/AiModelsPage")).AiModelsPage }));
 const AiInferencePage = lazy(async () => ({ default: (await import("./pages/AiInferencePage")).AiInferencePage }));
+const MosoInventorySandboxPage = lazy(async () => ({ default: (await import("./pages/MosoInventorySandboxPage")).MosoInventorySandboxPage }));
 const OperationsCenterPage = lazy(async () => ({ default: (await import("./pages/OperationsCenterPage")).OperationsCenterPage }));
 const BasemapSettingsPage = lazy(async () => ({ default: (await import("./pages/BasemapSettingsPage")).BasemapSettingsPage }));
 const CarbonEstimatesPage = lazy(async () => ({ default: (await import("./pages/CarbonEstimatesPage")).CarbonEstimatesPage }));
@@ -82,6 +83,7 @@ const imageryAssetsRoute = createRoute({ getParentRoute: () => rootRoute, path: 
 const aiReviewRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ai/reviews", component: AiReviewPage });
 const aiModelsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ai/models", component: AiModelsPage });
 const aiInferenceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ai/inference-runs", component: AiInferencePage });
+const mosoInventorySandboxRoute = createRoute({ getParentRoute: () => rootRoute, path: "/ai/moso-inventory-sandbox", component: MosoInventorySandboxPage });
 const safetyEventsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/safety/events", component: SafetyEventsPage });
 const mobileOperationsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/operations/mobile-sync", component: MobileOperationsPage });
 const mobileFieldRoute = createRoute({ getParentRoute: () => rootRoute, path: "/field/mobile", component: MobileFieldPage });
@@ -103,7 +105,7 @@ const integrationHubRoute = createRoute({ getParentRoute: () => rootRoute, path:
 const workforceDevelopmentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workforce", component: WorkforceDevelopmentPage });
 const governanceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/governance", component: GovernancePage });
 
-const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, assetViewerRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, assetViewerRoute, mosoInventorySandboxRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
 
 export const router = createRouter({ routeTree, basepath: "/v2", defaultPreload: "intent" });
 

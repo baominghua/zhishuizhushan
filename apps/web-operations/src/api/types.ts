@@ -536,6 +536,7 @@ export interface MosoInventoryEstimate {
   modelVersion: string;
   status: "trial" | string;
   species: string;
+  scientificName?: string;
   estimatedAt: string;
   blockArea: { value: number; unit: string };
   canopyClosure: { value: number; unit: string };
@@ -547,6 +548,7 @@ export interface MosoInventoryEstimate {
   confidence: { score: number; level: string; reasons: string[] };
   imageryEvidence: Record<string, unknown>;
   pointCloudEvidence: Record<string, unknown> & { available?: boolean };
+  method?: { name?: string; assumption?: string; references?: Array<Record<string, unknown>> };
   disclaimer: string;
 }
 

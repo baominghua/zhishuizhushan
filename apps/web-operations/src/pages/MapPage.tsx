@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  BrainCircuit,
   Filter,
   ExternalLink,
   Globe2,
@@ -17,7 +18,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api/client";
-import type { ForestBlockOption, ForestBlockQuery, ImageryAsset, SituationAssetRecord } from "../api/types";
+import type { ForestBlockOption, ForestBlockQuery, ImageryAsset, MosoInventoryEstimate, SituationAssetRecord } from "../api/types";
 import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import { MapCanvas } from "../components/MapCanvas";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
@@ -99,6 +100,10 @@ function assetViewerHref(sceneId: string, mode: "2d" | "3d", blockId?: string) {
   const search = new URLSearchParams({ sceneId, mode });
   if (blockId) search.set("blockId", blockId);
   return `/v2/asset-viewer?${search.toString()}`;
+}
+
+function mosoSandboxHref(blockId: string) {
+  return `/v2/ai/moso-inventory-sandbox?${new URLSearchParams({ blockId }).toString()}`;
 }
 
 export function MapPage() {
@@ -240,6 +245,7 @@ export function MapPage() {
     enabled: Boolean(selected?.id && selected.hasGeometry),
     staleTime: 30_000,
   });
+  const selectedMosoInventory = selectedDetail.data?.yieldEstimate?.mosoInventory as MosoInventoryEstimate | undefined;
   const mapFeatures = useMemo(
     () => mergeSelectedForestBlock(mode === "3d" ? mapBlocks.data : undefined, selectedDetail.data),
     [mapBlocks.data, mode, selectedDetail.data],
@@ -931,6 +937,19 @@ export function MapPage() {
                 <div><dt>面积</dt><dd>{selected.areaMu == null ? "待补充" : `${selected.areaMu} 亩`}</dd></div>
                 <div><dt>空间边界</dt><dd>{selected.hasGeometry ? "已入库" : "待补图"}</dd></div>
               </dl>
+              {selectedMosoInventory && (
+                <section className="map-object-ai-summary">
+                  <header><div><BrainCircuit /><span><small>AI 科研试算</small><strong>毛竹资源估算</strong></span></div><em>{selectedMosoInventory.confidence.level}置信度</em></header>
+                  <div className="map-object-ai-metrics">
+                    <span><small>资源株数</small><strong>{selectedMosoInventory.resourceStock.value.toLocaleString("zh-CN")} 株</strong></span>
+                    <span><small>密度</small><strong>{selectedMosoInventory.stemDensity.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 株/亩</strong></span>
+                    <span><small>冠层覆盖</small><strong>{selectedMosoInventory.canopyClosure.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%</strong></span>
+                    <span><small>地上生物量</small><strong>{selectedMosoInventory.abovegroundBiomass.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} t</strong></span>
+                  </div>
+                  <a className="button primary map-object-ai-link" href={mosoSandboxHref(selected.id)} target="_blank" rel="noreferrer"><ScanSearch />打开 AI 估算沙盘<ExternalLink /></a>
+                  <p>代表性点位与计算过程可视化；科研试算值不替代正式森林资源调查。</p>
+                </section>
+              )}
               {selectedViewerLinks.length > 0 && (
                 <div className="map-object-viewer-links">
                   <strong>影像成果查看</strong>
