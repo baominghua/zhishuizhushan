@@ -9,6 +9,7 @@ import type { CopcViewerStatus } from "../components/CopcPointCloudViewer";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
 import { OpenLayersMap } from "../components/OpenLayersMap";
 import { QueryState } from "../components/QueryState";
+import { mergeSelectedForestBlock } from "../maps/forestBlocks";
 import type { MapAreaFocusRequest, MapLayerState, MapSceneModel, MapViewMetrics, MapViewport, MapZoomRequest } from "../maps/scene";
 
 const CesiumGlobe = lazy(async () => ({ default: (await import("../components/CesiumGlobe")).CesiumGlobe }));
@@ -66,7 +67,7 @@ export function AssetViewerPage() {
     return {
       sceneId: search.get("sceneId") || "",
       blockId: search.get("blockId") || "",
-      requestedEngine: search.get("engine") === "tiles" ? "tiles" as const : "copc" as const,
+      requestedEngine: search.get("engine") === "copc" ? "copc" as const : search.get("engine") === "tiles" ? "tiles" as const : null,
     };
   }, []);
   const { sceneId, blockId, requestedEngine } = viewerContext;
@@ -78,21 +79,35 @@ export function AssetViewerPage() {
   const [showBasemap, setShowBasemap] = useState(false);
   const [showForestBlocks, setShowForestBlocks] = useState(Boolean(blockId));
   const [metrics, setMetrics] = useState<MapViewMetrics | null>(null);
-  const [quality, setQuality] = useState<"smooth" | "standard" | "detail">("standard");
+  const [quality, setQuality] = useState<"smooth" | "standard" | "detail">("smooth");
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
   const [homeRequest, setHomeRequest] = useState(0);
   const [viewport, setViewport] = useState(DEFAULT_VIEWPORT);
   const [loadProgress, setLoadProgress] = useState({ pending: 0, processing: 0, ready: false });
   const [settings, setSettings] = useState<Spatial3dDisplaySettings>(DEFAULT_SETTINGS);
   const [pointInformationMode, setPointInformationMode] = useState<PointInformationMode>("rgb");
-  const [pointCloudEngine, setPointCloudEngine] = useState<"copc" | "tiles">(requestedEngine);
+  const [pointCloudEngine, setPointCloudEngine] = useState<"copc" | "tiles">(requestedEngine ?? "tiles");
   const [copcStatus, setCopcStatus] = useState<CopcViewerStatus>(DEFAULT_COPC_STATUS);
-  const forestBlocks = useQuery({
+  const selectedForestBlock = useQuery({
+    queryKey: ["asset-viewer-forest-block", blockId],
+    queryFn: () => api.forestBlockDetail(blockId),
+    enabled: Boolean(blockId),
+    staleTime: 5 * 60_000,
+  });
+  const viewportForestBlocks = useQuery({
     queryKey: ["asset-viewer-forest-blocks", viewport.bbox.join(","), Math.round(viewport.zoom)],
     queryFn: () => api.forestBlockMap({ bbox: viewport.bbox.join(","), zoom: Math.round(viewport.zoom), maxFeatures: 800 }),
-    enabled: showForestBlocks,
+    // OpenLayers already streams the complete ledger through vector tiles. A
+    // viewport GeoJSON query is only needed by a standalone 3D scene that was
+    // opened without a specific forest block.
+    enabled: showForestBlocks && mode === "3d" && !blockId,
     staleTime: 60_000,
   });
+  const boundaryFeatures = useMemo(
+    () => mergeSelectedForestBlock(blockId ? undefined : viewportForestBlocks.data, selectedForestBlock.data),
+    [blockId, selectedForestBlock.data, viewportForestBlocks.data],
+  );
+  const viewerAssets = useMemo(() => asset ? [asset] : [], [asset]);
   const scene = useMemo(() => sceneForAsset(asset), [asset]);
   const useCopcViewer = mode === "3d" && asset?.assetType === "pointcloud" && Boolean(asset.copcUrl) && pointCloudEngine === "copc";
   const focusRequest = useMemo<MapAreaFocusRequest>(() => ({
@@ -109,6 +124,10 @@ export function AssetViewerPage() {
 
   useEffect(() => {
     if (!asset) return;
+    // PNTS is the dependable low-latency path on the current cloud topology.
+    // Keep COPC for original point attributes, but only make it the default
+    // when the URL explicitly asks for it or no PNTS tileset exists.
+    setPointCloudEngine(requestedEngine ?? (asset.tilesetUrl ? "tiles" : "copc"));
     const assetSettings = {
       ...DEFAULT_SETTINGS,
       elevationMinimum: asset.nativeBounds?.[2],
@@ -123,7 +142,17 @@ export function AssetViewerPage() {
       setSettings(assetSettings);
     }
     setPointInformationMode("rgb");
-  }, [asset]);
+  }, [asset, requestedEngine]);
+
+  useEffect(() => {
+    if (pointCloudEngine !== "copc" || !asset?.tilesetUrl || copcStatus.ready) return;
+    const fallback = window.setTimeout(() => setPointCloudEngine("tiles"), 15_000);
+    return () => window.clearTimeout(fallback);
+  }, [asset?.tilesetUrl, copcStatus.ready, pointCloudEngine]);
+
+  useEffect(() => {
+    if (pointCloudEngine === "copc" && asset?.tilesetUrl && copcStatus.error) setPointCloudEngine("tiles");
+  }, [asset?.tilesetUrl, copcStatus.error, pointCloudEngine]);
 
   const pointAttributeModes = useMemo(() => new Set(asset?.pointCloudAttributeModes ?? []), [asset?.pointCloudAttributeModes]);
   const pointRenderableModes = useMemo(() => new Set(asset?.pointCloudRenderableModes ?? ["rgb", "elevation"]), [asset?.pointCloudRenderableModes]);
@@ -209,12 +238,12 @@ export function AssetViewerPage() {
                   homeRequest={homeRequest}
                   zoomRequest={zoomRequest}
                   areaFocusRequest={focusRequest}
-                  featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
+                  featureCollection={showForestBlocks ? boundaryFeatures : EMPTY_FEATURES}
                   selectedBlockId={blockId || null}
                   onSelectBlock={() => undefined}
                   onViewportChange={setViewport}
                   onViewMetricsChange={setMetrics}
-                  imageryAssets={[asset]}
+                  imageryAssets={viewerAssets}
                   forestBlockFilterQuery=""
                   situationAssets={[]}
                   detailMode
@@ -224,7 +253,7 @@ export function AssetViewerPage() {
                   <CopcPointCloudViewer
                     url={asset.copcUrl || ""}
                     bounds={asset.bounds}
-                    featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
+                    featureCollection={showForestBlocks ? boundaryFeatures : EMPTY_FEATURES}
                     settings={settings}
                     quality={quality}
                     homeRequest={homeRequest}
@@ -242,12 +271,12 @@ export function AssetViewerPage() {
                     homeRequest={homeRequest}
                     zoomRequest={zoomRequest}
                     areaFocusRequest={{ sequence: 0, bbox: viewport.bbox }}
-                    featureCollection={showForestBlocks ? forestBlocks.data ?? EMPTY_FEATURES : EMPTY_FEATURES}
+                    featureCollection={showForestBlocks ? boundaryFeatures : EMPTY_FEATURES}
                     selectedBlockId={blockId || null}
                     onSelectBlock={() => undefined}
                     onViewportChange={setViewport}
                     imageryAssets={[]}
-                    spatial3dAssets={[asset]}
+                    spatial3dAssets={viewerAssets}
                     targetSpatialAssetId={asset.id}
                     spatial3dDisplaySettings={{ [asset.id]: settings }}
                     situationAssets={[]}

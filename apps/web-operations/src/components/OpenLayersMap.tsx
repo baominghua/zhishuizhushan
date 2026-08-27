@@ -325,9 +325,13 @@ export function OpenLayersMap({
         source: new XYZ({
           url: asset.tileUrl,
           maxZoom: asset.maximumZoom ?? 22,
-          transition: 180,
-          cacheSize: 768,
+          // COG tiles already arrive at the requested level. Cross-fading each
+          // replacement made quick zoom gestures look like the raster was
+          // reloading twice and retained too many decoded tiles in memory.
+          transition: 0,
+          cacheSize: 384,
           interpolate: !detailMode,
+          wrapX: false,
         }),
         opacity: Number.isFinite(asset.opacity) ? asset.opacity : 0.9,
         visible: layers.droneImagery,

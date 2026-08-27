@@ -100,7 +100,7 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "const sphere = targetTileset.boundingSphere" in cesium
     assert "detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT" in cesium
     assert "asset.maximumZoom ?? 22" in open_layers
-    assert "cacheSize: 768" in open_layers
+    assert "cacheSize: 384" in open_layers
     assert "constrainResolution: true" in open_layers
     assert "maxDelta: 1" in open_layers
     assert "MAP_ANNOTATION_COLORS" in open_layers

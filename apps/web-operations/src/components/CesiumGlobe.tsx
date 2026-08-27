@@ -346,7 +346,7 @@ function styleForestBlocks(
     const base = Color.fromCssColorString(forestBlockColor(propertyText(properties, "riskLevel")));
     const selected = entity.id === selectedBlockId;
     entity.polygon.material = new ColorMaterialProperty(
-      selected ? Color.fromCssColorString("#ffe47b").withAlpha(0.07) : base.withAlpha(0.022),
+      selected ? Color.fromCssColorString("#ffe47b").withAlpha(0.035) : base.withAlpha(0.008),
     );
     entity.polygon.outline = new ConstantProperty(false);
     const hierarchy = entity.polygon.hierarchy?.getValue(JulianDate.now());
@@ -372,8 +372,14 @@ function styleForestBlocks(
       });
       entity.polyline = new PolylineGraphics({
         positions: new ConstantProperty([...hierarchy.positions, hierarchy.positions[0]]),
-        clampToGround: new ConstantProperty(true),
+        // A ground-clamped line is frequently hidden by PNTS/B3DM content.
+        // depthFailMaterial keeps the boundary visible through the model while
+        // the almost transparent polygon leaves the imagery itself unobscured.
+        clampToGround: new ConstantProperty(false),
         material: new ColorMaterialProperty(
+          selected ? Color.fromCssColorString("#ffe47b") : Color.fromCssColorString("#d9ffed").withAlpha(0.96),
+        ),
+        depthFailMaterial: new ColorMaterialProperty(
           selected ? Color.fromCssColorString("#ffe47b") : Color.fromCssColorString("#d9ffed").withAlpha(0.96),
         ),
         width: new ConstantProperty(selected ? 4 : 2.4),
@@ -806,7 +812,7 @@ export function CesiumGlobe({
 
     void GeoJsonDataSource.load(
       featureCollection as Parameters<typeof GeoJsonDataSource.load>[0],
-      { clampToGround: true },
+      { clampToGround: false },
     ).then((dataSource) => {
       if (cancelled || viewer.isDestroyed()) return;
       styleForestBlocks(

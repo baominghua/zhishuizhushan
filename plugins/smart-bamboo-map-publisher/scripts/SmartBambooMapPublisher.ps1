@@ -350,7 +350,7 @@ $script:historyByKey = @{}
 foreach ($record in $historyRecords) { $script:historyByKey[(Get-HistoryKey ([string]$record.SourcePath) ([string]$record.Kind) ([string]$record.SourceStamp))] = $record }
 $collection = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $ui.MaterialGrid.ItemsSource = $collection
-$script:lastResults = @($historyRecords | ForEach-Object { [pscustomobject]@{ source=$_.SourcePath; kind=$_.Kind; projectName=$_.ProjectName; platformPath=$_.PlatformPath } }); $script:process = $null; $script:resultPath = ""; $script:logPath = ""
+$script:lastResults = @($historyRecords | ForEach-Object { [pscustomobject]@{ source=$_.SourcePath; kind=$_.Kind; projectName=$_.ProjectName; platformPath=$_.PlatformPath } }); $script:process = $null; $script:resultPath = ""; $script:logPath = ""; $script:copyPathBusy = $false
 
 function Add-Material($item) {
     $history = $script:historyByKey[(Get-HistoryKey ([string]$item.SourcePath) ([string]$item.Kind) ([string]$item.SourceStamp))]
@@ -367,6 +367,21 @@ function Add-Material($item) {
 }
 function Show-Error([string]$Message) { [System.Windows.MessageBox]::Show($window, $Message, "地图发布助手", "OK", "Error") | Out-Null }
 function Select-Folder([string]$Initial) { $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = "选择地图成果文件夹"; if (Test-Path -LiteralPath $Initial -PathType Container) { $dialog.SelectedPath = $Initial }; if ($dialog.ShowDialog() -eq "OK") { return $dialog.SelectedPath }; return "" }
+function Set-SafeClipboardText([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    $lastError = $null
+    foreach ($attempt in 1..5) {
+        try {
+            [System.Windows.Clipboard]::SetText($Text)
+            return $true
+        } catch {
+            $lastError = $_.Exception
+            Start-Sleep -Milliseconds (40 * $attempt)
+        }
+    }
+    if ($lastError) { throw "剪贴板暂时被其他程序占用：$($lastError.Message)" }
+    return $false
+}
 
 foreach ($record in @($historyRecords | Sort-Object ProjectName, TypeLabel, SourcePath)) { $collection.Add((New-HistoryMapItem $record)) }
 if ($historyRecords.Count) { $ui.StatusText.Text = "已恢复 $($historyRecords.Count) 条发布记录；重新检索后会自动标记已发布成果。" }
@@ -377,19 +392,31 @@ $ui.ManualFileButton.Add_Click({ $dialog = New-Object Microsoft.Win32.OpenFileDi
 $ui.ManualFolderButton.Add_Click({ $path = Select-Folder $ui.SourceRootBox.Text; if ($path) { try { Add-Material (Get-SingleMaterial $path) } catch { Show-Error $_.Exception.Message } } })
 $ui.HelpButton.Add_Click({ $help = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\assets\发布说明.md") -Raw -Encoding UTF8; [System.Windows.MessageBox]::Show($window, $help, "发布说明", "OK", "Information") | Out-Null })
 $ui.OpenPlatformButton.Add_Click({ Start-Process "$($config.platformBaseUrl)/v2/drone/imagery-assets" })
-$ui.CopyButton.Add_Click({ if ($script:lastResults.Count) { Set-Clipboard -Value (($script:lastResults | ForEach-Object { $_.platformPath }) -join [Environment]::NewLine); $ui.StatusText.Text = "发布路径已复制。" } })
+$ui.CopyButton.Add_Click({ try { if ($script:lastResults.Count -and (Set-SafeClipboardText (($script:lastResults | ForEach-Object { $_.platformPath }) -join [Environment]::NewLine))) { $ui.StatusText.Text = "发布路径已复制。" } } catch { Show-Error $_.Exception.Message } })
 $ui.SelectAllButton.Add_Click({ foreach ($item in $collection) { $item.IsSelected = $true }; $ui.MaterialGrid.Items.Refresh(); $ui.StatusText.Text = "已全选 $($collection.Count) 个成果。" })
 $ui.ClearAllButton.Add_Click({ foreach ($item in $collection) { $item.IsSelected = $false }; $ui.MaterialGrid.Items.Refresh(); $ui.StatusText.Text = "已取消全部勾选。" })
 $ui.MaterialGrid.AddHandler([System.Windows.Controls.Button]::ClickEvent, [System.Windows.RoutedEventHandler]{
     param($sender, $eventArgs)
+    if ($script:copyPathBusy) { $eventArgs.Handled = $true; return }
     $button = if ($eventArgs.OriginalSource -is [System.Windows.Controls.Button]) { $eventArgs.OriginalSource } else { $eventArgs.Source }
     if ($button -is [System.Windows.Controls.Button] -and $button.Name -eq "CopyRowPathButton") {
-        $path = [string]$button.Tag
-        if (-not [string]::IsNullOrWhiteSpace($path)) {
-            Set-Clipboard -Value $path
-            $ui.StatusText.Text = "已复制发布路径：$path"
-            [System.Windows.MessageBox]::Show($window, "发布路径：`r`n$path`r`n`r`n已复制到剪贴板。", "发布路径", "OK", "Information") | Out-Null
-            $eventArgs.Handled = $true
+        $eventArgs.Handled = $true
+        $script:copyPathBusy = $true
+        $button.IsEnabled = $false
+        try {
+            $path = [string]$button.Tag
+            if (-not [string]::IsNullOrWhiteSpace($path) -and (Set-SafeClipboardText $path)) {
+                # Keep repeated row actions non-modal. Modal MessageBoxes allowed
+                # queued double-click events to re-enter the routed handler and
+                # an occasional busy clipboard exception terminated PowerShell.
+                $ui.StatusText.Text = "已查看并复制发布路径：$path"
+                $ui.LogBox.Text = "发布路径：`r`n$path`r`n`r`n已复制到剪贴板。"
+            }
+        } catch {
+            Show-Error $_.Exception.Message
+        } finally {
+            $button.IsEnabled = $true
+            $script:copyPathBusy = $false
         }
     }
 })

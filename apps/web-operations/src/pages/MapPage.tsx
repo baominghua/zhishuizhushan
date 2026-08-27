@@ -219,8 +219,10 @@ export function MapPage() {
     refetchInterval: 30_000,
   });
   const annotationAssets = useQuery({
-    queryKey: ["map-annotation-assets", viewport.bbox.join(",")],
-    queryFn: () => api.imageryAssets({ bbox: viewport.bbox.join(","), limit: 100 }),
+    queryKey: ["map-annotation-assets"],
+    // Asset tiles stay viewport-scoped, but relationship badges and map symbols must
+    // also include legacy assets whose spatial index has not yet been backfilled.
+    queryFn: () => api.imageryAssets({ limit: 1000 }),
     staleTime: 60_000,
     placeholderData: (previous) => previous,
   });
@@ -937,22 +939,9 @@ export function MapPage() {
                 <div><dt>面积</dt><dd>{selected.areaMu == null ? "待补充" : `${selected.areaMu} 亩`}</dd></div>
                 <div><dt>空间边界</dt><dd>{selected.hasGeometry ? "已入库" : "待补图"}</dd></div>
               </dl>
-              {selectedMosoInventory && (
-                <section className="map-object-ai-summary">
-                  <header><div><BrainCircuit /><span><small>AI 科研试算</small><strong>毛竹资源估算</strong></span></div><em>{selectedMosoInventory.confidence.level}置信度</em></header>
-                  <div className="map-object-ai-metrics">
-                    <span><small>资源株数</small><strong>{selectedMosoInventory.resourceStock.value.toLocaleString("zh-CN")} 株</strong></span>
-                    <span><small>密度</small><strong>{selectedMosoInventory.stemDensity.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 株/亩</strong></span>
-                    <span><small>冠层覆盖</small><strong>{selectedMosoInventory.canopyClosure.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%</strong></span>
-                    <span><small>地上生物量</small><strong>{selectedMosoInventory.abovegroundBiomass.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} t</strong></span>
-                  </div>
-                  <a className="button primary map-object-ai-link" href={mosoSandboxHref(selected.id)} target="_blank" rel="noreferrer"><ScanSearch />打开 AI 估算沙盘<ExternalLink /></a>
-                  <p>代表性点位与计算过程可视化；科研试算值不替代正式森林资源调查。</p>
-                </section>
-              )}
               {selectedViewerLinks.length > 0 && (
-                <div className="map-object-viewer-links">
-                  <strong>影像成果查看</strong>
+                <div className="map-object-viewer-links map-object-viewer-links-priority">
+                  <strong>关联影像成果</strong>
                   <small>在独立窗口查看，不改变当前 GIS 位置</small>
                   <div>
                     {selectedViewerLinks.map((item) => (
@@ -970,6 +959,19 @@ export function MapPage() {
                     ))}
                   </div>
                 </div>
+              )}
+              {selectedMosoInventory && (
+                <section className="map-object-ai-summary">
+                  <header><div><BrainCircuit /><span><small>AI 科研试算</small><strong>毛竹资源估算</strong></span></div><em>{selectedMosoInventory.confidence.level}置信度</em></header>
+                  <div className="map-object-ai-metrics">
+                    <span><small>模型估算株数</small><strong>{selectedMosoInventory.resourceStock.value.toLocaleString("zh-CN")} 株</strong></span>
+                    <span><small>密度</small><strong>{selectedMosoInventory.stemDensity.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} 株/亩</strong></span>
+                    <span><small>冠层覆盖</small><strong>{selectedMosoInventory.canopyClosure.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%</strong></span>
+                    <span><small>地上生物量</small><strong>{selectedMosoInventory.abovegroundBiomass.value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} t</strong></span>
+                  </div>
+                  <a className="button primary map-object-ai-link" href={mosoSandboxHref(selected.id)} target="_blank" rel="noreferrer"><ScanSearch />打开 AI 估算沙盘<ExternalLink /></a>
+                  <p>影像候选点与模型外推值分开呈现；科研试算值不替代逐株调查。</p>
+                </section>
               )}
             </div>
           </aside>

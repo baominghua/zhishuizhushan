@@ -55,7 +55,9 @@ def test_map_publisher_archive_contains_runnable_windows_assistant():
         assert 'Header="发布路径"' in assistant_script
         assert 'x:Name="CopyRowPathButton"' in assistant_script
         assert 'PlatformPath = ""' in assistant_script
-        assert "Set-Clipboard -Value $path" in assistant_script
+        assert "Set-SafeClipboardText" in assistant_script
+        assert "[System.Windows.Clipboard]::SetText($Text)" in assistant_script
+        assert "$script:copyPathBusy" in assistant_script
         assert "Read-PublisherHistory" in assistant_script
         assert 'Join-Path $StateRoot "history.json"' in assistant_script
         assert 'Header="发布时间"' in assistant_script

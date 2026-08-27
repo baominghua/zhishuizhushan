@@ -1480,6 +1480,30 @@ def archive_task_record(task_id: str, actor: str) -> dict[str, Any]:
     return annotate_task_event(archived, "archive", actor)
 
 
+def archive_completed_scene_tasks(scene_id: str, actor: str) -> list[str]:
+    """Close completed ingestion tasks once their spatial result is accepted."""
+    archived_ids: list[str] = []
+    candidates = [
+        str(task.get("id") or "")
+        for task in load_tasks()
+        if str(task.get("sceneId") or "") == scene_id
+        and task.get("status") == "completed"
+        and not task.get("archivedAt")
+    ]
+    for task_id in candidates:
+        if not task_id:
+            continue
+        try:
+            archive_task_record(task_id, actor)
+            archived_ids.append(task_id)
+        except HTTPException as exc:
+            # A concurrent confirmation or manual archive may win the race.
+            # Coverage confirmation itself must remain idempotent.
+            if exc.status_code != 409:
+                raise
+    return archived_ids
+
+
 def filter_tasks(
     tasks: list[dict[str, Any]],
     status: str = "",
@@ -6685,6 +6709,7 @@ def confirm_scene_coverage(
             for block in blocks
         ],
     )
+    archive_completed_scene_tasks(scene_id, str(context.get("user") or ""))
     return public_scene(updated, request)
 
 

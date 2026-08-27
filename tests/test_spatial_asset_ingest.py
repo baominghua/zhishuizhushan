@@ -224,9 +224,10 @@ def test_copc_conversion_recenters_large_projected_coordinates(tmp_path, monkeyp
 
     monkeypatch.setattr("server.modules.spatial_assets.shutil.which", lambda _value: "pdal")
 
-    def fake_converter(command, label):
+    def fake_converter(command, label, cancel_check=None):
         captured["command"] = command
         captured["label"] = label
+        captured["cancel_check"] = cancel_check
 
     monkeypatch.setattr("server.modules.spatial_assets._run_converter", fake_converter)
 
@@ -623,6 +624,21 @@ def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkey
         "allowedUsers": [],
     }
     app_module.save_scene(scene)
+    app_module.save_tasks(
+        [
+            {
+                "id": "task-scene-auto-cover",
+                "sceneId": scene["id"],
+                "type": "raster-conversion",
+                "status": "completed",
+                "progress": 100,
+                "message": "COG scene is ready",
+                "createdAt": "2026-08-27T16:00:00+08:00",
+                "updatedAt": "2026-08-27T16:01:00+08:00",
+                "events": [],
+            }
+        ]
+    )
     monkeypatch.setattr(scene_links_module, "require_catalog_scene", lambda _scene_id: scene)
     scene_links_module.save_scene_links(
         [
@@ -650,6 +666,9 @@ def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkey
     assert links.status_code == 200
     assert {item["relationType"] for item in links.json()["items"]} == {"coverage", "source-evidence"}
     assert {item["sceneId"] for item in links.json()["items"]} == {"scene-auto-cover"}
+    archived_task = app_module.find_task_record("task-scene-auto-cover")
+    assert archived_task["archivedAt"]
+    assert archived_task["archivedBy"] == "reviewer"
 
 
 def test_imagery_inventory_aggregates_full_catalog(app_client, monkeypatch):

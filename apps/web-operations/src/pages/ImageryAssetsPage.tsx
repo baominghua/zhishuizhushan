@@ -70,7 +70,7 @@ export function ImageryAssetsPage() {
   });
   const tasks = useQuery({
     queryKey: ["spatial-asset-tasks"],
-    queryFn: () => api.spatialAssetTasks({ limit: 20 }),
+    queryFn: () => api.spatialAssetTasks({ limit: 100 }),
     refetchInterval: (query) => (query.state.data?.tasks ?? []).some((task) => ["queued", "running"].includes(task.status)) ? 2_000 : 10_000,
   });
   const permissions = capabilities.data?.permissions ?? [];
@@ -152,11 +152,11 @@ function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onArchive,
   onArchive: (task: SpatialAssetTask) => void;
   onReview: (task: SpatialAssetTask) => void;
 }) {
-  const visibleTasks = tasks.filter((task) => !task.archivedAt).slice(0, 8);
+  const visibleTasks = tasks.filter((task) => !task.archivedAt);
   const activeCount = visibleTasks.filter((task) => ["queued", "running"].includes(task.status)).length;
   const labels: Record<string, string> = { queued: "排队中", running: "处理中", paused: "已暂停", failed: "失败", completed: "已完成", canceled: "已停止" };
   return <section className="spatial-task-queue" aria-label="空间处理任务队列">
-    <header><div><ListChecks aria-hidden="true" /><span><strong>空间处理任务</strong><small>{activeCount ? `${activeCount} 项正在顺序处理，页面可继续操作` : "后台任务不会占用当前页面"}</small></span></div><span className={activeCount ? "active" : ""}>{activeCount ? "后台运行中" : "队列空闲"}</span></header>
+    <header><div><ListChecks aria-hidden="true" /><span><strong>空间处理任务</strong><small>{activeCount ? `${activeCount} 项正在顺序处理，共 ${visibleTasks.length} 项可查看` : `后台任务不会占用当前页面，共 ${visibleTasks.length} 项可查看`}</small></span></div><span className={activeCount ? "active" : ""}>{activeCount ? "后台运行中" : "队列空闲"}</span></header>
     {loading ? <p className="task-queue-empty">正在读取任务队列…</p> : error ? <p className="form-error">任务队列读取失败：{error.message}</p> : !visibleTasks.length ? <p className="task-queue-empty">暂无空间处理任务。新上传的影像和点云会在这里显示进度。</p> : <div className="task-queue-list">{visibleTasks.map((task) => {
       const progress = Math.max(0, Math.min(100, Number(task.progress || 0)));
       const sourceBytes = Number(task.sourceBytes || 0);
@@ -165,7 +165,7 @@ function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onArchive,
       return <article className={`task-queue-item ${task.status}`} key={task.id}>
         <div className="task-queue-status">{task.status === "completed" ? <CheckCircle2 /> : task.status === "failed" ? <AlertTriangle /> : resumable ? <CircleStop /> : <Database />}</div>
         <div className="task-queue-main"><div className="task-queue-title"><strong>{task.name || task.kind}</strong><span>{labels[task.status] || task.status}</span></div><p>{task.message || "等待后台处理"}</p><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="task-queue-meta"><span>{progress}%</span><span>{task.sourceFileCount ? `${task.sourceFileCount} 个源文件` : ""}{sourceBytes ? ` · ${formatBytes(sourceBytes)}` : ""}</span>{sourceBytes >= 10 * 1024 ** 3 ? <em>超大任务 · 单任务顺序处理</em> : null}</div></div>
-        <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" onClick={() => onReview(task)}><MapPinned />确认覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" onClick={() => onArchive(task)}><Archive />归档</button> : null}</div>
+        <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" title="核对自动相交结果并写入正式林班关系" onClick={() => onReview(task)}><MapPinned />关联覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" onClick={() => onArchive(task)}><Archive />归档</button> : null}</div>
       </article>;
     })}</div>}
     <footer><span>点云转换默认使用 1 个后台工作槽；大任务主要消耗内存与磁盘 I/O，不再因服务重启自动从零重复。</span></footer>

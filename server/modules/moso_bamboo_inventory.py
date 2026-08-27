@@ -357,12 +357,9 @@ def _crown_equivalent_peaks(
     cell_ids = (y // cell_y).astype(np.int64) * (score.shape[1] // cell_x + 2) + (x // cell_x)
     _, representative_indices = np.unique(cell_ids, return_index=True)
     total = int(len(representative_indices))
-    # A map does not need every peak at once. Keep an evenly distributed,
-    # deterministic sample while retaining the full count for inventory maths.
-    if total > 1_500:
-        representative_indices = representative_indices[
-            np.linspace(0, total - 1, 1_500, dtype=np.int64)
-        ]
+    # Keep every detected peak. A forest-block estimate normally contains only a few
+    # thousand points and the evidence viewer can render them as a batched vector
+    # layer. Sampling here made the map disagree with the traceable detector total.
     locations = [
         (
             int(y[index]),
@@ -478,6 +475,7 @@ def analyze_rgb_orthophoto(
             "crownEquivalentCount": crown_count,
             "crownCandidateLocations": crown_locations,
             "crownCandidateLocationCount": len(crown_locations),
+            "crownCandidateLocationsComplete": len(crown_locations) == crown_count,
         }
 
 
@@ -558,12 +556,14 @@ def estimate_from_rgb_metrics(
         "crownEquivalentCount": {"value": crown_count, "raw": raw_crown_count, "unit": "个"},
         "crownCandidateLocations": list(rgb_metrics.get("crownCandidateLocations") or []),
         "crownCandidateLocationCount": int(rgb_metrics.get("crownCandidateLocationCount") or 0),
+        "crownCandidateLocationsComplete": bool(rgb_metrics.get("crownCandidateLocationsComplete", False)),
         "resourceStock": {
             "value": estimated_culms,
             "lower": lower_culms,
             "upper": upper_culms,
             "unit": "株",
-            "label": "毛竹资源株数试算",
+            "label": "毛竹资源株数模型估算",
+            "basis": "由正射影像竹冠等价峰值、有效覆盖率和林班面积推算；不是外业逐株清点",
         },
         "stemDensity": {
             "value": round(density_ha / 15, 1),

@@ -35,6 +35,7 @@ interface CopcPointCloudViewerProps {
 
 const EMPTY_GEOJSON = { type: "FeatureCollection" as const, features: [] };
 const POINT_BUDGETS = { smooth: 750_000, standard: 1_500_000, detail: 3_000_000 } as const;
+const FOREST_BLOCK_LAYER_IDS = ["forest-block-fill", "forest-block-casing", "forest-block-line"] as const;
 
 function initialCenter(bounds?: CopcPointCloudViewerProps["bounds"]): [number, number] {
   if (!bounds || bounds.length !== 4) return [117.7135, 27.5448];
@@ -142,6 +143,13 @@ export function CopcPointCloudViewer({
     const onBudgetReached = () => reportState(true);
     const onStateChange = () => reportState();
     const onMoveEnd = () => onViewportChange(viewportForMap(map));
+    const bringForestBoundaryToFront = () => {
+      const styleLayers = map.getStyle().layers ?? [];
+      if (styleLayers.at(-1)?.id === "forest-block-line") return;
+      FOREST_BLOCK_LAYER_IDS.forEach((layerId) => {
+        if (map.getLayer(layerId)) map.moveLayer(layerId);
+      });
+    };
 
     mapRef.current = map;
     controlRef.current = control;
@@ -162,6 +170,9 @@ export function CopcPointCloudViewer({
       void control.loadPointCloud(sourceUrl, { loadingMode: "dynamic" }).then((pointCloud) => {
         if (disposed) return;
         pointCloudRef.current = pointCloud;
+        // maplibre-gl-lidar appends its custom WebGL layer after the base style.
+        // Move the thin forest boundary back above it without covering points.
+        bringForestBoundaryToFront();
         reportState();
       }).catch((error: unknown) => {
         reportState(false, error instanceof Error ? error.message : "COPC 点云加载失败");
@@ -185,8 +196,14 @@ export function CopcPointCloudViewer({
   }, [bounds, onStatusChange, onViewportChange, url]);
 
   useEffect(() => {
-    const source = mapRef.current?.getSource("forest-blocks");
+    const map = mapRef.current;
+    const source = map?.getSource("forest-blocks");
     if (source instanceof GeoJSONSource) source.setData(featureCollection as never);
+    if (map) {
+      FOREST_BLOCK_LAYER_IDS.forEach((layerId) => {
+        if (map.getLayer(layerId)) map.moveLayer(layerId);
+      });
+    }
   }, [featureCollection]);
 
   useEffect(() => {

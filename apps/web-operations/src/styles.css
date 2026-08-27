@@ -5047,6 +5047,7 @@ svg {
 .image-clarity-status.overzoom { border-color: rgba(255,180,92,.72); }
 .image-clarity-status.overzoom > svg,.image-clarity-status.overzoom > small { color: #ffd18b; }
 .map-object-viewer-links { display: grid; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.map-object-viewer-links-priority { margin: 14px 0 2px; padding: 12px; border: 1px solid #b9dacf; border-radius: 7px; background: #f6fbf9; }
 .map-object-viewer-links > small { color: var(--muted); }
 .map-object-viewer-links > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
 .map-object-viewer-links .button { min-height: 50px; min-width: 0; padding: 7px 11px; justify-content: flex-start; text-align: left; text-decoration: none; }

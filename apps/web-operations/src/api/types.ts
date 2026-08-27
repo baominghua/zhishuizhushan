@@ -561,7 +561,7 @@ export interface MosoInventoryEstimate {
   blockArea: { value: number; unit: string };
   canopyClosure: { value: number; unit: string };
   crownEquivalentCount: { value: number; unit: string };
-  resourceStock: { value: number; lower: number; upper: number; unit: string; label: string };
+  resourceStock: { value: number; lower: number; upper: number; unit: string; label: string; basis?: string };
   stemDensity: { value: number; lower: number; upper: number; unit: string };
   abovegroundBiomass: { value: number; lower: number; upper: number; unit: string; dbhCm: number; dbhSource: string };
   standingVolume: { value: number | null; unit: string; status: string; reason: string };
@@ -569,6 +569,7 @@ export interface MosoInventoryEstimate {
   imageryEvidence: Record<string, unknown>;
   crownCandidateLocations?: Array<{ longitude: number; latitude: number; score: number }>;
   crownCandidateLocationCount?: number;
+  crownCandidateLocationsComplete?: boolean;
   pointCloudEvidence: Record<string, unknown> & { available?: boolean };
   method?: { name?: string; assumption?: string; references?: Array<Record<string, unknown>> };
   disclaimer: string;
