@@ -140,7 +140,7 @@ function loginUrl() {
 
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  if (pathname === "/display" || pathname === "/asset-viewer") return <Outlet />;
+  if (pathname === "/display" || pathname === "/asset-viewer" || pathname === "/field/mobile") return <Outlet />;
   return <AdministrativeShell pathname={pathname} />;
 }
 

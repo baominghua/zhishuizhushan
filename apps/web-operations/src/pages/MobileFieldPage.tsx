@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CloudDownload,
   CloudUpload,
+  ClipboardList,
   LocateFixed,
   MapPin,
   Navigation,
@@ -17,6 +18,7 @@ import {
   SignalZero,
   Smartphone,
   Square,
+  UserRound,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -60,6 +62,7 @@ export function MobileFieldPage() {
   );
   const pendingCount = state.operations.length + state.tracks.length + state.evidence.length;
   const overdue = tasks.filter((task) => task.overdue).length;
+  const principal = state.offlinePackage?.principal;
 
   const updateState = (next: (current: MobileFieldState) => MobileFieldState) => setState((current) => next(current));
 
@@ -189,21 +192,26 @@ export function MobileFieldPage() {
     });
   }
 
-  return <div className="field-mobile-page">
+  return <div className="field-mobile-page" id="field-mobile-top">
     <header className="field-mobile-header">
-      <div><Link to="/workspace" aria-label="返回工作台"><ArrowLeft /></Link><span><small>智慧竹山</small><strong>移动现场作业</strong></span></div>
-      <span className={online ? "online" : "offline"}>{online ? <Signal /> : <SignalZero />}{online ? "网络正常" : "离线作业"}</span>
+      <div><Link to="/workspace" aria-label="返回工作台"><ArrowLeft /></Link><span><small>智慧竹山 · 现场端</small><strong>今日现场</strong></span></div>
+      <div className="field-mobile-identity"><span><UserRound /><strong>{principal?.user || "现场人员"}</strong><small>{principal?.areas?.[0] || "离线作业空间"}</small></span><b className={online ? "online" : "offline"}>{online ? <Signal /> : <SignalZero />}{online ? "在线" : "离线"}</b></div>
     </header>
 
-    <section className="field-mobile-status">
-      <div><small>本机任务</small><strong>{tasks.length}</strong><span>{state.offlinePackage ? `更新于 ${formatTime(state.offlinePackage.generatedAt)}` : "尚未下载任务包"}</span></div>
-      <div className={pendingCount ? "warning" : ""}><small>待同步</small><strong>{pendingCount}</strong><span>{pendingCount ? "现场记录安全保存在本机" : "本机与服务端一致"}</span></div>
-      <div className={overdue ? "danger" : ""}><small>已逾期</small><strong>{overdue}</strong><span>请优先处理高风险任务</span></div>
+    <section className="field-mobile-overview" aria-label="今日现场概览">
+      <div className="field-mobile-overview-copy"><small>{online ? "现场任务已连接" : "弱网模式已启用"}</small><h1>{overdue ? `${overdue} 项任务需要优先处理` : tasks.length ? "今日任务已准备好" : "下载任务包后开始作业"}</h1><p>{pendingCount ? `${pendingCount} 条记录保存在本机，联网后可安全同步。` : state.offlinePackage ? `任务包更新于 ${formatTime(state.offlinePackage.generatedAt)}。` : "任务、地图和作业要求可保存到本机离线使用。"}</p></div>
+      <div className="field-mobile-overview-number"><strong>{tasks.length}</strong><span>本机任务</span></div>
     </section>
 
-    <section className="field-mobile-actions">
-      <button type="button" onClick={downloadPackage} disabled={Boolean(busy)}><CloudDownload />{busy === "download" ? "正在下载" : "下载离线任务"}</button>
-      <button className="primary" type="button" onClick={syncPending} disabled={Boolean(busy)}><CloudUpload />{busy === "sync" ? "正在同步" : pendingCount ? `立即同步 (${pendingCount})` : "检查更新"}</button>
+    <section className="field-mobile-status">
+      <div><small>待办任务</small><strong>{tasks.length}</strong><span>已下载到本机</span></div>
+      <div className={pendingCount ? "warning" : ""}><small>待同步记录</small><strong>{pendingCount}</strong><span>{pendingCount ? "本机安全暂存" : "数据已同步"}</span></div>
+      <div className={overdue ? "danger" : ""}><small>逾期任务</small><strong>{overdue}</strong><span>{overdue ? "建议优先处置" : "暂无逾期"}</span></div>
+    </section>
+
+    <section className="field-mobile-actions" aria-label="现场快捷操作">
+      <button type="button" onClick={downloadPackage} disabled={Boolean(busy)}><CloudDownload />{busy === "download" ? "正在更新" : "更新离线包"}</button>
+      <button className="primary" type="button" onClick={syncPending} disabled={Boolean(busy)}><CloudUpload />{busy === "sync" ? "正在同步" : pendingCount ? `同步 ${pendingCount} 条记录` : "检查更新"}</button>
     </section>
 
     {notice && <div className="field-mobile-notice" role="status"><AlertTriangle />{notice}</div>}
@@ -220,7 +228,12 @@ export function MobileFieldPage() {
       {!filteredTasks.length && <div className="field-task-empty"><Smartphone /><strong>{state.offlinePackage ? "当前筛选下没有任务" : "先下载离线任务包"}</strong><p>{state.offlinePackage ? "切换任务类型查看其他现场任务。" : "下载后即使进入林区无网络，也能查看任务和记录现场结果。"}</p></div>}
     </section>
 
-    <footer className="field-mobile-footer"><span><LocateFixed />定位数据仅在执行任务时采集</span><Link to="/operations/mobile-sync">查看同步台账</Link></footer>
+    <footer className="field-mobile-footer"><span><LocateFixed />定位仅在执行任务时采集</span><span>{state.lastSyncedAt ? `上次同步 ${formatTime(state.lastSyncedAt)}` : "尚未同步"}</span></footer>
+    <nav className="field-mobile-dock" aria-label="现场端快捷导航">
+      <button type="button" onClick={() => { setFilter("all"); document.getElementById("field-mobile-top")?.scrollIntoView({ behavior: "smooth" }); }}><ClipboardList /><span>任务</span></button>
+      <button className={pendingCount ? "primary" : ""} type="button" onClick={syncPending} disabled={Boolean(busy)}><CloudUpload /><span>{pendingCount ? `同步 ${pendingCount}` : "同步"}</span></button>
+      <Link to="/operations/mobile-sync"><RefreshCw /><span>同步记录</span></Link>
+    </nav>
     <SidePanel open={Boolean(selected)} eyebrow="现场任务" title={selected?.title || "任务详情"} onClose={() => setSelected(null)}>{selected && <TaskDetail task={selected} tracking={Boolean(state.activeTrack)} evidenceCount={state.evidence.filter((item) => item.taskId === selected.id).length} onQueue={queueOperation} onTrack={startTrack} onEvidence={queueEvidence} />}</SidePanel>
   </div>;
 }

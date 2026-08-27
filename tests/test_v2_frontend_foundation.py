@@ -196,11 +196,15 @@ def test_v2_mobile_operations_page_exposes_sync_tracks_and_evidence_ledgers():
 def test_v2_mobile_field_workspace_supports_offline_tasks_tracks_and_idempotent_sync():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     router = (web_root / "router.tsx").read_text(encoding="utf-8")
+    shell = (web_root / "components" / "AppShell.tsx").read_text(encoding="utf-8")
     page = (web_root / "pages" / "MobileFieldPage.tsx").read_text(encoding="utf-8")
     store = (web_root / "mobileFieldStore.ts").read_text(encoding="utf-8")
     client = (web_root / "api" / "client.ts").read_text(encoding="utf-8")
 
     assert 'path: "/field/mobile"' in router
+    assert 'pathname === "/field/mobile"' in shell
+    assert 'className="field-mobile-dock"' in page
+    assert "今日现场" in page
     assert "api.mobileOfflinePackage" in page
     assert "api.syncMobileOperations" in page
     assert "api.uploadMobileTrack" in page
