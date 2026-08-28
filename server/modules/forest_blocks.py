@@ -177,6 +177,18 @@ def mysql_select_sql_for_filters(*, has_bbox: bool = False) -> str:
         "    STRAIGHT_JOIN forest_blocks b ON b.id = g.forest_block_id",
     )
 
+
+def mysql_from_sql_for_filters(*, has_bbox: bool = False) -> str:
+    if has_bbox:
+        return (
+            "FROM forest_block_geometries g FORCE INDEX (idx_forest_block_geometry) "
+            "STRAIGHT_JOIN forest_blocks b ON b.id = g.forest_block_id"
+        )
+    return (
+        "FROM forest_blocks b "
+        "LEFT JOIN forest_block_geometries g ON g.forest_block_id = b.id"
+    )
+
 DB_TO_API_FIELD = {
     "id": "id",
     "block_code": "blockCode",
@@ -968,17 +980,45 @@ def fetch_blocks_mysql(
         block_code=block_code,
     )
     has_bbox = bool(filters and parse_bbox(filters.bbox))
-    select_sql = mysql_select_sql_for_filters(has_bbox=has_bbox)
-    sql = f"{select_sql}{where_sql}"
-    if order_by:
-        sql += " ORDER BY b.updated_at DESC, b.block_code"
-    if limit is not None:
-        sql += " LIMIT %s OFFSET %s"
-        params.extend([limit, offset])
     with mysql_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, tuple(params))
-            blocks = [normalize_mysql_row(row) for row in cur.fetchall()]
+            # Sorting rows that already contain ST_AsGeoJSON(geometry) makes MySQL
+            # copy very large geometry payloads into its per-connection sort
+            # buffer.  Once the forest ledger grows, even LIMIT 1 can fail with
+            # error 1038.  Page over lightweight IDs first, then fetch geometry
+            # only for the selected page and restore the requested order in
+            # Python.
+            if order_by and limit is not None:
+                id_sql = (
+                    f"SELECT b.id {mysql_from_sql_for_filters(has_bbox=has_bbox)}"
+                    f"{where_sql} ORDER BY b.updated_at DESC, b.block_code"
+                    " LIMIT %s OFFSET %s"
+                )
+                cur.execute(id_sql, tuple([*params, limit, offset]))
+                ordered_ids = [str(row[0]) for row in cur.fetchall()]
+                if not ordered_ids:
+                    return []
+                placeholders = ", ".join(["%s"] * len(ordered_ids))
+                sql = (
+                    f"{mysql_select_sql_for_filters()}"
+                    f" WHERE b.id IN ({placeholders})"
+                )
+                cur.execute(sql, tuple(ordered_ids))
+                by_id = {
+                    str(block.get("id")): block
+                    for block in (normalize_mysql_row(row) for row in cur.fetchall())
+                }
+                blocks = [by_id[block_id] for block_id in ordered_ids if block_id in by_id]
+            else:
+                select_sql = mysql_select_sql_for_filters(has_bbox=has_bbox)
+                sql = f"{select_sql}{where_sql}"
+                if order_by:
+                    sql += " ORDER BY b.updated_at DESC, b.block_code"
+                if limit is not None:
+                    sql += " LIMIT %s OFFSET %s"
+                    params.extend([limit, offset])
+                cur.execute(sql, tuple(params))
+                blocks = [normalize_mysql_row(row) for row in cur.fetchall()]
     if geometry_tolerance > 0:
         for block in blocks:
             block["geometry"] = simplify_forest_geometry(block.get("geometry"), geometry_tolerance)
@@ -1619,7 +1659,7 @@ def load_all_blocks() -> list[dict[str, Any]]:
 
 def load_blocks() -> list[dict[str, Any]]:
     if use_mysql():
-        return fetch_blocks_mysql()
+        return fetch_blocks_mysql(order_by=False)
     if use_postgis():
         return fetch_blocks_postgis()
     return [

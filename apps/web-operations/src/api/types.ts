@@ -321,6 +321,11 @@ export interface ImageryInventoryResponse {
   areaMethod: string;
   asOf: string;
   items: Array<{ assetType: string; count: number; areaMu: number; sizeBytes: number }>;
+  bambooResources: {
+    formal: { available: boolean; stock: number | null; unit: string; blockCount: number; source: string };
+    estimated: { available: boolean; stock: number | null; unit: string; biomassTons: number | null; blockCount: number; source: string; estimatedAt: string };
+    policy: string;
+  };
 }
 
 export interface ImageryCoverageConfirmationPayload {

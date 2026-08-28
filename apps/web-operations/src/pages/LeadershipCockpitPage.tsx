@@ -46,7 +46,27 @@ export function LeadershipCockpitPage() {
 
 function ImageryInventoryScene({ inventory }: { inventory: ImageryInventoryResponse }) {
   const labels: Record<string, string> = { orthophoto: "正射影像", dsm: "DSM 地表", dtm: "DTM 地形", pointcloud: "彩色点云", oblique3d: "实景三维", "flight-photos": "航飞原片" };
-  return <div className="cockpit-scene cockpit-topic-scene"><section className="cockpit-topic-heading"><span><Images /><small>空间资产盘点</small><h2>影像资源</h2></span><Link to="/drone/imagery-assets">进入影像台账</Link></section><section className="cockpit-kpis"><article className="cockpit-metric"><div><Images /><span>成果总数</span></div><strong>{inventory.total.toLocaleString("zh-CN")}</strong><small>正式影像与点云资产</small></article><article className="cockpit-metric"><div><Activity /><span>资料类型</span></div><strong>{inventory.typeCount}</strong><small>已入库成果分类</small></article><article className="cockpit-metric"><div><Trees /><span>覆盖面积</span></div><strong>{Math.round(inventory.totalAreaMu).toLocaleString("zh-CN")}</strong><small>亩 · 已完成范围分析</small></article><article className="cockpit-metric"><div><WalletCards /><span>数据容量</span></div><strong>{formatStorage(inventory.totalSizeBytes)}</strong><small>当前资产原始容量</small></article></section><section className="cockpit-imagery-inventory">{inventory.items.map((item) => <article key={item.assetType}><span><strong>{labels[item.assetType] || item.assetType}</strong><small>{item.count} 个成果</small></span><b>{Math.round(item.areaMu).toLocaleString("zh-CN")} 亩</b><em>{formatStorage(item.sizeBytes)}</em></article>)}</section><footer className="cockpit-footer"><span>面积单位：{inventory.areaUnit || "亩"} · {inventory.areaMethod || "按有效覆盖范围汇总"}</span><span>数据源：影像与点云成果台账 · {new Date(inventory.asOf).toLocaleString("zh-CN", { hour12: false })}</span></footer></div>;
+  const resources = inventory.bambooResources;
+  return <div className="cockpit-scene cockpit-topic-scene">
+    <section className="cockpit-topic-heading"><span><Images /><small>空间资产盘点</small><h2>影像资源</h2></span><Link to="/drone/imagery-assets">进入影像台账</Link></section>
+    <section className="cockpit-kpis"><article className="cockpit-metric"><div><Images /><span>成果总数</span></div><strong>{inventory.total.toLocaleString("zh-CN")}</strong><small>正式影像与点云资产</small></article><article className="cockpit-metric"><div><Activity /><span>资料类型</span></div><strong>{inventory.typeCount}</strong><small>已入库成果分类</small></article><article className="cockpit-metric"><div><Trees /><span>覆盖面积</span></div><strong>{Math.round(inventory.totalAreaMu).toLocaleString("zh-CN")}</strong><small>亩 · 已完成范围分析</small></article><article className="cockpit-metric"><div><WalletCards /><span>数据容量</span></div><strong>{formatStorage(inventory.totalSizeBytes)}</strong><small>当前资产原始容量</small></article></section>
+    <section className="cockpit-imagery-inventory">{inventory.items.map((item) => <article key={item.assetType}><span><strong>{labels[item.assetType] || item.assetType}</strong><small>{item.count} 个成果</small></span><b>{Math.round(item.areaMu).toLocaleString("zh-CN")} 亩</b><em>{formatStorage(item.sizeBytes)}</em></article>)}</section>
+    <section className="cockpit-bamboo-dashboard">
+      <header><span><Trees /><small>林班资源盘点</small><h2>竹材资源统计</h2></span><Link to="/resources/intelligence">进入资源专题分析</Link></header>
+      <div className="cockpit-bamboo-metrics">
+        <BambooMetric label="正式调查资源株数" value={resources.formal.stock} unit={resources.formal.unit} detail={resources.formal.available ? `${resources.formal.blockCount} 个林班 · ${resources.formal.source}` : "暂无正式调查数据"} tone="formal" />
+        <BambooMetric label="AI 估算毛竹株数" value={resources.estimated.stock} unit={resources.estimated.unit} detail={resources.estimated.available ? `${resources.estimated.blockCount} 个已试算林班` : "暂无 AI 试算数据"} tone="estimated" />
+        <BambooMetric label="AI 估算地上生物量" value={resources.estimated.biomassTons} unit="t" detail={resources.estimated.available ? resources.estimated.source : "暂无 AI 试算数据"} tone="estimated" digits={1} />
+        <BambooMetric label="AI 已试算林班" value={resources.estimated.available ? resources.estimated.blockCount : null} unit="个" detail={resources.estimated.estimatedAt ? `最近试算 ${new Date(resources.estimated.estimatedAt).toLocaleString("zh-CN", { hour12: false })}` : "尚未形成估算结果"} tone="estimated" />
+      </div>
+      <p>{resources.policy}</p>
+    </section>
+    <footer className="cockpit-footer"><span>面积单位：{inventory.areaUnit || "亩"} · {inventory.areaMethod || "按有效覆盖范围汇总"}</span><span>数据源：影像与点云成果台账 · {new Date(inventory.asOf).toLocaleString("zh-CN", { hour12: false })}</span></footer>
+  </div>;
+}
+
+function BambooMetric({ label, value, unit, detail, tone, digits = 0 }: { label: string; value: number | null; unit: string; detail: string; tone: "formal" | "estimated"; digits?: number }) {
+  return <article className={tone}><span>{label}</span>{value === null ? <strong className="unavailable">暂无</strong> : <strong>{value.toLocaleString("zh-CN", { maximumFractionDigits: digits })}<small>{unit}</small></strong>}<p>{detail}</p></article>;
 }
 
 function formatStorage(bytes: number) { if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(2)} TB`; if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`; return `${(bytes / 1024 ** 2).toFixed(1)} MB`; }

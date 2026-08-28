@@ -679,19 +679,55 @@ def test_imagery_inventory_aggregates_full_catalog(app_client, monkeypatch):
         {"id": "inventory-2", "assetType": "orthophoto", "status": "active", "size": 500, "coverageAnalysis": {"effectiveAreaHa": 1}},
         {"id": "inventory-3", "assetType": "pointcloud", "status": "active", "originalSize": 2_000},
         {"id": "inventory-4", "assetType": "dsm", "status": "archived", "originalSize": 9_999},
+        {"id": "inventory-5", "assetType": "orthophoto", "fileName": "dsm.tif", "status": "active", "originalSize": 250, "coverageAnalysis": {"effectiveAreaHa": 2}},
     ]
     monkeypatch.setattr(app_module, "load_catalog", lambda **_kwargs: scenes)
     monkeypatch.setattr(app_module, "filter_scenes", lambda records, _context, **_kwargs: records)
+    monkeypatch.setattr(app_module, "bamboo_resource_inventory", lambda _context: {"formal": {"available": False}, "estimated": {"available": False}, "policy": "test"})
 
     response = app_client.get("/api/scenes/inventory", headers={"X-RS-Roles": "admin"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total"] == 3
-    assert payload["typeCount"] == 2
-    assert payload["totalAreaMu"] == 45
-    assert payload["totalSizeBytes"] == 3_500
+    assert payload["total"] == 4
+    assert payload["typeCount"] == 3
+    assert payload["totalAreaMu"] == 75
+    assert payload["totalSizeBytes"] == 3_750
     assert payload["items"][0] == {"assetType": "orthophoto", "count": 2, "areaMu": 45.0, "sizeBytes": 1_500}
+    assert {item["assetType"]: item for item in payload["items"]}["dsm"] == {"assetType": "dsm", "count": 1, "areaMu": 30.0, "sizeBytes": 250}
+
+
+def test_bamboo_resource_inventory_separates_formal_and_ai_estimates(monkeypatch):
+    import server.app as app_module
+
+    blocks = [
+        {
+            "id": "block-formal",
+            "properties": {"bambooResourceSurvey": {"resourceStock": 800}},
+            "yieldEstimate": {},
+        },
+        {
+            "id": "block-estimated",
+            "properties": {},
+            "yieldEstimate": {
+                "mosoInventory": {
+                    "resourceStock": {"value": 1_200},
+                    "abovegroundBiomass": {"value": 18.5},
+                    "estimatedAt": "2026-08-28T10:00:00+08:00",
+                },
+                "mosoInventoryHistory": [{"resourceStock": {"value": 999_999}}],
+            },
+        },
+    ]
+    monkeypatch.setattr(app_module, "filtered_forest_blocks", lambda *_args, **_kwargs: blocks)
+
+    payload = app_module.bamboo_resource_inventory(app_module.AuthContext("tester", {"admin"}, {"*"}, {"*"}))
+
+    assert payload["formal"]["stock"] == 800
+    assert payload["formal"]["blockCount"] == 1
+    assert payload["estimated"]["stock"] == 1_200
+    assert payload["estimated"]["biomassTons"] == 18.5
+    assert payload["estimated"]["blockCount"] == 1
 
 
 def test_confirm_coverage_allows_independent_facility_point(app_client):

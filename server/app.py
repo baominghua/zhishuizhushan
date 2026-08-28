@@ -693,6 +693,39 @@ def scene_allowed(scene: dict[str, Any], context: dict[str, Any]) -> bool:
     return True
 
 
+def effective_scene_asset_type(scene: dict[str, Any]) -> str:
+    """Return the business asset type, repairing legacy raster defaults.
+
+    Early directory imports defaulted every GeoTIFF to ``orthophoto`` even when
+    DJI's canonical filename was ``dsm.tif`` or ``dtm.tif``.  The filename is
+    authoritative for those well-known raster products so existing catalog
+    rows are corrected at read time and new rows are stored correctly without
+    requiring a destructive catalog migration.
+    """
+    declared = str(scene.get("assetType") or "").strip().lower()
+    if declared not in {"", "orthophoto", "dsm", "dtm"}:
+        return declared
+    candidates = [
+        scene.get("fileName"),
+        scene.get("originalName"),
+        scene.get("originalPath"),
+        scene.get("sourcePath"),
+        scene.get("cogPath"),
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        stem = Path(value.replace("\\", "/")).stem.lower()
+        if stem == "dsm":
+            return "dsm"
+        if stem in {"dtm", "dem"}:
+            return "dtm"
+        if stem in {"orthophoto", "dom"}:
+            return "orthophoto"
+    return declared or "orthophoto"
+
+
 def filter_scenes(
     scenes: list[dict[str, Any]],
     context: dict[str, Any],
@@ -719,7 +752,7 @@ def filter_scenes(
             continue
         if delivery_status_filter and str(scene.get("deliveryStatus") or "pending") != delivery_status_filter:
             continue
-        if asset_type_filter and str(scene.get("assetType") or "").lower() != asset_type_filter:
+        if asset_type_filter and effective_scene_asset_type(scene) != asset_type_filter:
             continue
         if resource_format_filter and resource_format_filter not in scene_resource_formats(scene):
             continue
@@ -1865,7 +1898,7 @@ def build_scene_record(
         "areaCode": str(metadata.get("areaCode") or "").strip(),
         "allowedRoles": split_tokens(metadata.get("allowedRoles")),
         "allowedUsers": split_tokens(metadata.get("allowedUsers")),
-        "assetType": str(metadata.get("assetType") or "orthophoto").strip(),
+        "assetType": effective_scene_asset_type({**metadata, "fileName": file_name, "originalPath": str(source_path)}),
         "missionId": str(metadata.get("missionId") or "").strip(),
         "linkedBlockCodes": split_tokens(metadata.get("linkedBlockCodes")),
         "processingStage": str(metadata.get("processingStage") or "ready").strip(),
@@ -2102,7 +2135,7 @@ def scene_maximum_zoom(scene: dict[str, Any]) -> int:
 
 def scene_resource_formats(scene: dict[str, Any]) -> list[str]:
     formats: set[str] = set()
-    asset_type = str(scene.get("assetType") or "").lower()
+    asset_type = effective_scene_asset_type(scene)
     original_path = str(scene.get("originalPath") or "").lower()
     source_paths = [str(value).lower() for value in scene.get("pointCloudSourcePaths") or []]
     tile_formats = {str(key).lower() for key in dict(scene.get("tileFormats") or {}).keys()}
@@ -2126,14 +2159,15 @@ def scene_temporal_series_key(scene: dict[str, Any]) -> str:
     relation = scene.get("spatialRelation") if isinstance(scene.get("spatialRelation"), dict) else {}
     relation_key = "|".join(split_tokens(scene.get("linkedBlockCodes"))) or str(relation.get("pointName") or "")
     name = re.sub(r"\s+", "", str(scene.get("name") or "").lower())
-    return hashlib.sha256(f"{scene.get('assetType')}|{relation_key}|{name}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(f"{effective_scene_asset_type(scene)}|{relation_key}|{name}".encode("utf-8")).hexdigest()[:16]
 
 
 def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
     scene_id = scene["id"]
     token_query = public_service_token_query(request)
     public_record = dict(scene)
-    if str(scene.get("assetType") or "") == "pointcloud":
+    public_record["assetType"] = effective_scene_asset_type(scene)
+    if public_record["assetType"] == "pointcloud":
         tileset_value = str(scene.get("tilesetPath") or "").strip()
         if tileset_value and not scene.get("pointCloudRenderableModes"):
             try:
@@ -2150,7 +2184,7 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
                     public_record.update(source_metadata)
             except (OSError, ValueError, HTTPException):
                 pass
-    if str(scene.get("assetType") or "") == "pointcloud" and not scene.get("trajectoryAvailable"):
+    if public_record["assetType"] == "pointcloud" and not scene.get("trajectoryAvailable"):
         source_paths = [
             Path(str(scene.get(key)))
             for key in ("originalPath", "copcPath", "tilesetPath")
@@ -2167,7 +2201,7 @@ def public_scene(scene: dict[str, Any], request: Request) -> dict[str, Any]:
                 "trajectoryFiles": trajectory["files"],
             })
     tile_url = f"/api/scenes/{scene_id}/tiles/{{z}}/{{x}}/{{y}}.webp{token_query}"
-    is_3d_asset = str(scene.get("assetType") or "") == "pointcloud" or bool(
+    is_3d_asset = public_record["assetType"] == "pointcloud" or bool(
         str(scene.get("tilesetPath") or "").strip()
     )
     return {
@@ -3523,7 +3557,7 @@ def schedule_scene_tile_prewarm(scene: dict[str, Any]) -> None:
     if (
         RASTER_TILE_PREWARM_ENABLED
         and RASTER_TILE_PREWARM_MAX_TILES > 0
-        and str(scene.get("assetType") or "orthophoto") == "orthophoto"
+        and effective_scene_asset_type(scene) == "orthophoto"
     ):
         TASK_EXECUTOR.submit(prewarm_scene_tiles, str(scene["id"]))
 
@@ -5988,7 +6022,7 @@ def moso_scene_candidates(
     block_bounds = moso_block_bounds(block)
     candidates: list[tuple[tuple[int, int, str, str], dict[str, Any]]] = []
     for scene in scenes:
-        if str(scene.get("assetType") or "orthophoto").strip().lower() != asset_type:
+        if effective_scene_asset_type(scene) != asset_type:
             continue
         if str(scene.get("status") or "active") in {"archived", "deleted"}:
             continue
@@ -6284,17 +6318,109 @@ def list_scenes(
     }
 
 
+def inventory_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def formal_bamboo_survey(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Return an explicitly recorded formal survey, never an AI-derived proxy."""
+    properties = block.get("properties") if isinstance(block.get("properties"), dict) else {}
+    yield_estimate = block.get("yieldEstimate") if isinstance(block.get("yieldEstimate"), dict) else {}
+    candidates = [
+        properties.get("bambooResourceSurvey"),
+        properties.get("formalBambooResource"),
+        yield_estimate.get("formalBambooResource"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        stock_value = candidate.get("resourceStock", candidate.get("stock", candidate.get("value")))
+        if isinstance(stock_value, dict):
+            stock_value = stock_value.get("value")
+        stock = inventory_number(stock_value)
+        if stock is not None and stock >= 0:
+            return {**candidate, "stock": stock}
+    return None
+
+
+def bamboo_resource_inventory(context: AuthContext) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = filtered_forest_blocks(
+            ForestBlockFilters(limit=1000, offset=offset),
+            context,
+            limit=1000,
+        )
+        blocks.extend(page)
+        if len(page) < 1000:
+            break
+        offset += len(page)
+
+    formal_stock = 0.0
+    formal_blocks = 0
+    estimated_stock = 0.0
+    estimated_biomass_tons = 0.0
+    estimated_blocks = 0
+    latest_estimate_at = ""
+    for block in blocks:
+        formal = formal_bamboo_survey(block)
+        if formal:
+            formal_stock += float(formal["stock"])
+            formal_blocks += 1
+
+        yield_estimate = block.get("yieldEstimate") if isinstance(block.get("yieldEstimate"), dict) else {}
+        estimate = yield_estimate.get("mosoInventory")
+        if not isinstance(estimate, dict):
+            continue
+        resource_stock = estimate.get("resourceStock") if isinstance(estimate.get("resourceStock"), dict) else {}
+        biomass = estimate.get("abovegroundBiomass") if isinstance(estimate.get("abovegroundBiomass"), dict) else {}
+        stock = inventory_number(resource_stock.get("value"))
+        biomass_tons = inventory_number(biomass.get("value"))
+        if stock is None:
+            continue
+        estimated_stock += max(0.0, stock)
+        estimated_biomass_tons += max(0.0, biomass_tons or 0.0)
+        estimated_blocks += 1
+        latest_estimate_at = max(latest_estimate_at, str(estimate.get("estimatedAt") or ""))
+
+    return {
+        "formal": {
+            "available": formal_blocks > 0,
+            "stock": round(formal_stock) if formal_blocks else None,
+            "unit": "株",
+            "blockCount": formal_blocks,
+            "source": "正式竹材资源调查台账",
+        },
+        "estimated": {
+            "available": estimated_blocks > 0,
+            "stock": round(estimated_stock) if estimated_blocks else None,
+            "unit": "株",
+            "biomassTons": round(estimated_biomass_tons, 2) if estimated_blocks else None,
+            "blockCount": estimated_blocks,
+            "source": "毛竹资源 AI 科研试算",
+            "estimatedAt": latest_estimate_at,
+        },
+        "policy": "正式调查与 AI 估算分开展示；AI 结果按每个林班当前最新试算汇总，不替代外业调查。",
+    }
+
+
 @app.get("/api/scenes/inventory")
 def imagery_scene_inventory(request: Request) -> dict[str, Any]:
     require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
-    scenes = filter_scenes(load_catalog(), request_context(request))
+    imagery_context = request_context(request)
+    scenes = filter_scenes(load_catalog(), imagery_context)
     scenes = [scene for scene in scenes if str(scene.get("status") or "active") not in {"archived", "deleted"}]
     groups: dict[str, dict[str, Any]] = {}
     total_size_bytes = 0
     all_footprints: list[dict[str, Any]] = []
     legacy_area_hectares = 0.0
     for scene in scenes:
-        asset_type = str(scene.get("assetType") or "other")
+        asset_type = effective_scene_asset_type(scene)
         coverage = scene.get("coverageAnalysis") if isinstance(scene.get("coverageAnalysis"), dict) else {}
         footprint = coverage.get("footprint") if isinstance(coverage.get("footprint"), dict) else None
         size_bytes = int(scene.get("originalSize") or scene.get("size") or 0)
@@ -6320,6 +6446,7 @@ def imagery_scene_inventory(request: Request) -> dict[str, Any]:
         "areaMethod": "有效覆盖几何并集（重叠区域只计算一次）",
         "totalSizeBytes": total_size_bytes,
         "items": sorted(groups.values(), key=lambda item: (-int(item["count"]), str(item["assetType"]))),
+        "bambooResources": bamboo_resource_inventory(platform_auth_context(imagery_context)),
         "asOf": now_iso(),
     }
 
