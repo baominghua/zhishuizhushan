@@ -958,6 +958,7 @@ def fetch_blocks_mysql(
     block_id: str | None = None,
     block_code: str | None = None,
     geometry_tolerance: float = 0,
+    order_by: bool = True,
 ) -> list[dict[str, Any]]:
     where_sql, params = mysql_where(
         filters=filters,
@@ -968,7 +969,9 @@ def fetch_blocks_mysql(
     )
     has_bbox = bool(filters and parse_bbox(filters.bbox))
     select_sql = mysql_select_sql_for_filters(has_bbox=has_bbox)
-    sql = f"{select_sql}{where_sql} ORDER BY b.updated_at DESC, b.block_code"
+    sql = f"{select_sql}{where_sql}"
+    if order_by:
+        sql += " ORDER BY b.updated_at DESC, b.block_code"
     if limit is not None:
         sql += " LIMIT %s OFFSET %s"
         params.extend([limit, offset])
@@ -1605,7 +1608,10 @@ def block_by_code(block_code: str, *, include_deleted: bool = False) -> dict[str
 
 def load_all_blocks() -> list[dict[str, Any]]:
     if use_mysql():
-        return fetch_blocks_mysql(include_deleted=True)
+        # Startup dictionary repair only needs a complete scan. Sorting rows that
+        # include large GeoJSON geometries can exhaust MySQL's sort buffer and
+        # incorrectly block an otherwise healthy deployment.
+        return fetch_blocks_mysql(include_deleted=True, order_by=False)
     if use_postgis():
         return fetch_blocks_postgis(include_deleted=True)
     return load_json_records(forest_blocks_json_path())

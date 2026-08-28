@@ -803,6 +803,23 @@ def test_forest_block_listing_uses_mysql_repository(monkeypatch):
     assert result == {"items": [expected | {"properties": {}}], "total": 1, "limit": 20, "offset": 0}
 
 
+def test_mysql_full_block_scan_skips_large_geometry_sort(monkeypatch):
+    from server.modules import forest_blocks
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(forest_blocks, "use_mysql", lambda: True)
+    monkeypatch.setattr(forest_blocks, "use_postgis", lambda: False)
+
+    def fake_fetch_blocks_mysql(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(forest_blocks, "fetch_blocks_mysql", fake_fetch_blocks_mysql)
+
+    assert forest_blocks.load_all_blocks() == []
+    assert captured == {"include_deleted": True, "order_by": False}
+
+
 def test_mysql_summary_and_aggregates_stay_in_database(monkeypatch):
     from server.modules import forest_blocks
     from server.modules.auth import AuthContext
