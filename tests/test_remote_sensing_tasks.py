@@ -1639,6 +1639,39 @@ def test_terminal_imagery_task_can_be_archived_and_hidden_from_default_list(isol
     assert archived_list.json()["tasks"][0]["archivedAt"]
 
 
+def test_active_imagery_task_can_be_stopped_and_removed_without_deleting_sources(isolated_env):
+    app_module = reload_app_module()
+    source_path = isolated_env / "large-flight.las"
+    source_path.write_bytes(b"preserved-source")
+    running_task = sample_task("task-remove-running") | {
+        "status": "running",
+        "progress": 31,
+        "sourcePaths": [str(source_path)],
+    }
+    app_module.save_tasks([running_task])
+    client = TestClient(app_module.app)
+
+    denied = client.post(
+        "/api/tasks/task-remove-running/remove",
+        headers={"X-RS-Roles": "imagery.tasks.archive"},
+    )
+    removed = client.post(
+        "/api/tasks/task-remove-running/remove",
+        headers={"X-RS-Roles": "admin", "X-RS-User": "operator-c"},
+    )
+    default_list = client.get("/api/tasks", headers={"X-RS-Roles": "admin"})
+
+    assert denied.status_code == 403
+    assert "imagery.tasks.cancel" in denied.json()["detail"]
+    assert removed.status_code == 200
+    assert removed.json()["removed"] == "task-remove-running"
+    assert removed.json()["task"]["status"] == "canceled"
+    assert removed.json()["task"]["archivedAt"]
+    assert [item["action"] for item in removed.json()["task"]["events"][-2:]] == ["cancel", "archive"]
+    assert default_list.json()["tasks"] == []
+    assert source_path.read_bytes() == b"preserved-source"
+
+
 def test_archived_imagery_task_listing_requires_archive_permission(isolated_env):
     app_module = reload_app_module()
     archived_task = sample_task("task-archived-permission") | {

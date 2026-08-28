@@ -1480,6 +1480,16 @@ def archive_task_record(task_id: str, actor: str) -> dict[str, Any]:
     return annotate_task_event(archived, "archive", actor)
 
 
+def remove_task_record(task_id: str, actor: str) -> dict[str, Any]:
+    """Remove a task from the active queue without deleting source or result data."""
+    original = find_task_record(task_id)
+    if original.get("archivedAt"):
+        return original
+    if original.get("status") in {"queued", "running", "paused"}:
+        cancel_task_record(task_id, actor)
+    return archive_task_record(task_id, actor)
+
+
 def archive_completed_scene_tasks(scene_id: str, actor: str) -> list[str]:
     """Close completed ingestion tasks once their spatial result is accepted."""
     archived_ids: list[str] = []
@@ -7113,6 +7123,16 @@ def archive_task(task_id: str, request: Request) -> dict[str, Any]:
     context = require_imagery_permission(request, IMAGERY_TASK_ARCHIVE_PERMISSION)
     task = archive_task_record(task_id, str(context.get("user") or ""))
     return {"ok": True, "archived": task_id, "task": task_public(task, request)}
+
+
+@app.post("/api/tasks/{task_id}/remove")
+def remove_task(task_id: str, request: Request) -> dict[str, Any]:
+    context = require_imagery_permission(request, IMAGERY_TASK_ARCHIVE_PERMISSION)
+    original = find_task_record(task_id)
+    if original.get("status") in {"queued", "running", "paused"}:
+        require_imagery_permission(request, IMAGERY_TASK_CANCEL_PERMISSION)
+    task = remove_task_record(task_id, str(context.get("user") or ""))
+    return {"ok": True, "removed": task_id, "task": task_public(task, request)}
 
 
 @app.get("/api/scenes/{scene_id}/point-cloud/copc")

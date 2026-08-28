@@ -109,6 +109,16 @@ export function AssetViewerPage() {
   );
   const viewerAssets = useMemo(() => asset ? [asset] : [], [asset]);
   const scene = useMemo(() => sceneForAsset(asset), [asset]);
+  const forestBlockOverlayHeight = useMemo(() => {
+    // A footprint drawn at the minimum terrain elevation appears detached from
+    // a tall canopy/mesh when the camera is tilted.  Keep the authoritative
+    // longitude/latitude geometry, but lift the display-only outline onto the
+    // top of the current spatial result so it stays visually attached while
+    // orbiting the standalone scene.
+    const maximum = Number(asset?.nativeBounds?.[5]);
+    if (!Number.isFinite(maximum) || maximum < -500 || maximum > 10_000) return undefined;
+    return maximum + Number(settings.heightOffset || 0) + 1.5;
+  }, [asset?.nativeBounds, settings.heightOffset]);
   const useCopcViewer = mode === "3d" && asset?.assetType === "pointcloud" && Boolean(asset.copcUrl) && pointCloudEngine === "copc";
   const focusRequest = useMemo<MapAreaFocusRequest>(() => ({
     sequence: asset?.bounds?.length === 4 ? 1 : 0,
@@ -278,6 +288,8 @@ export function AssetViewerPage() {
                     imageryAssets={[]}
                     spatial3dAssets={viewerAssets}
                     targetSpatialAssetId={asset.id}
+                    forestBlockOverlayHeight={forestBlockOverlayHeight}
+                    minimumZoomDistance={2}
                     spatial3dDisplaySettings={{ [asset.id]: settings }}
                     situationAssets={[]}
                     detailMode={quality === "detail"}
@@ -291,6 +303,7 @@ export function AssetViewerPage() {
               ) : (
                 <div className={`asset-load-status ${loadProgress.ready ? "ready" : ""}`}><Layers3 /><span>{loadProgress.ready ? "当前视野已精细化" : `正在加载：${loadProgress.pending} 个请求，${loadProgress.processing} 个瓦片处理中`}</span></div>
               )}
+              {mode === "3d" ? <div className="asset-viewer-interaction-help">左键拖拽环绕旋转 · 右键拖拽俯仰/平移 · 滚轮缩放 · “回到成果”复位</div> : null}
             </section>
 
             <aside className="asset-viewer-panel">

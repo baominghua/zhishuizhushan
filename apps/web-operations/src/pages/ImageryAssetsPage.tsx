@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Archive,
   CheckCircle2,
   CircleStop,
   CloudUpload,
@@ -96,10 +95,25 @@ export function ImageryAssetsPage() {
     onError: (error) => window.alert(error instanceof Error ? error.message : "发布助手下载失败"),
   });
   const refreshTasks = async () => { await client.invalidateQueries({ queryKey: ["spatial-asset-tasks"] }); };
-  const retryTask = useMutation({ mutationFn: api.retrySpatialAssetTask, onSuccess: refreshTasks });
-  const cancelTask = useMutation({ mutationFn: api.cancelSpatialAssetTask, onSuccess: refreshTasks });
-  const archiveTask = useMutation({ mutationFn: api.archiveSpatialAssetTask, onSuccess: refreshTasks });
-  const reviewTask = useMutation({ mutationFn: (task: SpatialAssetTask) => api.imageryAsset(task.sceneId), onSuccess: setReviewing });
+  const taskError = (error: unknown) => window.alert(error instanceof Error ? error.message : "任务操作失败，请刷新后重试。");
+  const retryTask = useMutation({ mutationFn: api.retrySpatialAssetTask, onSuccess: refreshTasks, onError: taskError });
+  const cancelTask = useMutation({ mutationFn: api.cancelSpatialAssetTask, onSuccess: refreshTasks, onError: taskError });
+  const removeTask = useMutation({ mutationFn: api.removeSpatialAssetTask, onSuccess: refreshTasks, onError: taskError });
+  const reviewTask = useMutation({
+    mutationFn: async (task: SpatialAssetTask) => {
+      const asset = await api.imageryAsset(task.sceneId);
+      const suggested = asset.coverageAnalysis?.suggestedBlockCodes ?? [];
+      if (!suggested.length) return { asset, needsReview: true };
+      if (!window.confirm(`系统已匹配 ${suggested.length} 个林班。确认采用建议覆盖关系吗？`)) return { asset, needsReview: true };
+      return { asset: await api.confirmImageryCoverage(asset.id, { blockCodes: suggested, relationType: "forest-block" }), needsReview: false };
+    },
+    onSuccess: async ({ asset, needsReview }) => {
+      if (needsReview) setReviewing(asset);
+      else setSelected(asset);
+      await Promise.all([refresh(), refreshTasks()]);
+    },
+    onError: taskError,
+  });
 
   return <div className="standard-page ledger-page imagery-assets-page">
     <section className="page-heading ledger-heading">
@@ -118,7 +132,11 @@ export function ImageryAssetsPage() {
       error={tasks.error}
       onRetry={(task) => retryTask.mutate(task.id)}
       onCancel={(task) => cancelTask.mutate(task.id)}
-      onArchive={(task) => archiveTask.mutate(task.id)}
+      onRemove={(task) => {
+        const active = ["queued", "running", "paused"].includes(task.status);
+        const action = active ? "停止并移出" : "移出";
+        if (window.confirm(`${action}任务“${task.name || task.kind}”？\n\n仅从任务列表移除，不删除源文件或已生成成果。`)) removeTask.mutate(task.id);
+      }}
       onReview={(task) => reviewTask.mutate(task)}
     />
     <section className="ledger-shell">
@@ -143,13 +161,13 @@ export function ImageryAssetsPage() {
   </div>;
 }
 
-function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onArchive, onReview }: {
+function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onRemove, onReview }: {
   tasks: SpatialAssetTask[];
   loading: boolean;
   error: Error | null;
   onRetry: (task: SpatialAssetTask) => void;
   onCancel: (task: SpatialAssetTask) => void;
-  onArchive: (task: SpatialAssetTask) => void;
+  onRemove: (task: SpatialAssetTask) => void;
   onReview: (task: SpatialAssetTask) => void;
 }) {
   const visibleTasks = tasks.filter((task) => !task.archivedAt);
@@ -165,7 +183,7 @@ function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onArchive,
       return <article className={`task-queue-item ${task.status}`} key={task.id}>
         <div className="task-queue-status">{task.status === "completed" ? <CheckCircle2 /> : task.status === "failed" ? <AlertTriangle /> : resumable ? <CircleStop /> : <Database />}</div>
         <div className="task-queue-main"><div className="task-queue-title"><strong>{task.name || task.kind}</strong><span>{labels[task.status] || task.status}</span></div><p>{task.message || "等待后台处理"}</p><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><div className="task-queue-meta"><span>{progress}%</span><span>{task.sourceFileCount ? `${task.sourceFileCount} 个源文件` : ""}{sourceBytes ? ` · ${formatBytes(sourceBytes)}` : ""}</span>{sourceBytes >= 10 * 1024 ** 3 ? <em>超大任务 · 单任务顺序处理</em> : null}</div></div>
-        <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" title="核对自动相交结果并写入正式林班关系" onClick={() => onReview(task)}><MapPinned />关联覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" onClick={() => onArchive(task)}><Archive />归档</button> : null}</div>
+        <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" title="采用自动匹配结果；没有建议时进入人工核对" onClick={() => onReview(task)}><MapPinned />确认覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" title="从当前任务列表移除；不会删除源文件或成果" onClick={() => onRemove(task)}><Trash2 />移出列表</button> : null}{running || task.status === "paused" ? <button type="button" title="停止任务并从当前列表移除；不会删除源文件" onClick={() => onRemove(task)}><Trash2 />停止并移出</button> : null}</div>
       </article>;
     })}</div>}
     <footer><span>点云转换默认使用 1 个后台工作槽；大任务主要消耗内存与磁盘 I/O，不再因服务重启自动从零重复。</span></footer>
@@ -264,6 +282,7 @@ function SpatialAssetUploadForm({ onCancel, onQueued }: { onCancel: () => void; 
       <label><span>无人机任务</span><input name="missionId" placeholder="例如 DJI-S1-20260813" /></label>
       <label><span>采集时间</span><input name="capturedAt" type="datetime-local" /></label>
       {assetKind === "raster" ? <label><span>标称分辨率</span><input name="resolution" placeholder="留空则从 GeoTIFF 自动识别" /></label> : null}
+      {assetKind !== "raster" ? <p className="form-hint field-span">DJI 的 POS / SBET / CSV 飞行轨迹不是独立影像成果，无需在这里另选类型。请将 <code>terra_trajectory</code> 与同一项目的 LAS/LAZ、PNTS 或 B3DM 放在相邻目录；平台会登记为侧车资料，并按无人机任务编号关联，不单独进入林班覆盖确认。</p> : null}
     </div></fieldset>
     {transfer.total ? <TransferProgress uploaded={transfer.uploaded} total={transfer.total} label={transfer.label} /> : null}
     {submitMutation.error ? <p className="form-error">{submitMutation.error.message}</p> : null}

@@ -712,6 +712,8 @@ export const api = {
     request<{ ok: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   archiveSpatialAssetTask: (id: string) =>
     request<{ ok: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/archive`, { method: "POST" }),
+  removeSpatialAssetTask: (id: string) =>
+    request<{ ok: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/remove`, { method: "POST" }),
   confirmImageryCoverage: (id: string, confirmation: string[] | import("./types").ImageryCoverageConfirmationPayload) =>
     request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}/coverage/confirm`, {
       method: "POST",

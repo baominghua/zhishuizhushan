@@ -5211,6 +5211,7 @@ svg {
 .cockpit-imagery-inventory article { display: grid; min-height: 92px; align-items: center; gap: 8px; padding: 15px 17px; border: 1px solid rgba(85,209,165,.24); border-radius: 7px; background: rgba(7,45,35,.72); grid-template-columns: minmax(0,1fr) auto; }
 .cockpit-imagery-inventory span { display: grid; gap: 4px; }.cockpit-imagery-inventory strong { color: #edfff8; font-size: 14px; }.cockpit-imagery-inventory small { color: #82aa9b; font-size: 10px; }.cockpit-imagery-inventory b { color: #70e0b8; font-size: 14px; }.cockpit-imagery-inventory em { grid-column: 1 / -1; color: #a3c5b8; font-size: 11px; font-style: normal; }
 .asset-viewer-hint { margin: 0; color: #708b82; font-size: 11px; line-height: 1.55; }
+.asset-viewer-interaction-help { position: absolute; left: 18px; bottom: 18px; z-index: 8; padding: 8px 12px; border: 1px solid rgba(116, 224, 184, 0.32); border-radius: 10px; background: rgba(3, 39, 32, 0.82); color: #d7f7ea; font-size: 12px; line-height: 1; pointer-events: none; backdrop-filter: blur(8px); }
 .asset-range { display: grid; gap: 7px; }
 .asset-range span { display: flex; justify-content: space-between; }
 .calibration-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }

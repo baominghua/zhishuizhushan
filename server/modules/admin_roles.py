@@ -589,7 +589,7 @@ PERMISSION_API_SCOPES = {
     ],
     "imagery.tasks.retry": ["/api/tasks/{task_id}/retry"],
     "imagery.tasks.cancel": ["/api/tasks/{task_id}/cancel"],
-    "imagery.tasks.archive": ["/api/tasks/{task_id}/archive"],
+    "imagery.tasks.archive": ["/api/tasks/{task_id}/archive", "/api/tasks/{task_id}/remove"],
     "imagery.layers.publish": ["/api/scenes/{scene_id}/publish-layer"],
     "map.layers.view": [
         "/api/map-layers",

@@ -60,6 +60,8 @@ interface CesiumGlobeProps {
   imageryAssets: ImageryAsset[];
   spatial3dAssets: ImageryAsset[];
   targetSpatialAssetId?: string;
+  forestBlockOverlayHeight?: number;
+  minimumZoomDistance?: number;
   spatial3dDisplaySettings: Record<string, Spatial3dDisplaySettings>;
   situationAssets: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
@@ -268,7 +270,11 @@ function forestBlockLabelText(properties: ForestBlockLabelProperties, cameraHeig
 function polygonLabelPosition(positions: Cartesian3[]) {
   const center = BoundingSphere.fromPoints(positions).center;
   const cartographic = Cartographic.fromCartesian(center);
-  return Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, 12);
+  const displayHeight = positions.reduce((sum, position) => {
+    const height = Cartographic.fromCartesian(position).height;
+    return sum + (Number.isFinite(height) ? height : 0);
+  }, 0) / Math.max(positions.length, 1);
+  return Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, displayHeight + 2);
 }
 
 interface LabelRectangle {
@@ -339,6 +345,7 @@ function styleForestBlocks(
   dataSource: GeoJsonDataSource,
   selectedBlockId: string | null,
   cameraHeight: number,
+  overlayHeight?: number,
 ) {
   dataSource.entities.values.forEach((entity) => {
     if (!entity.polygon) return;
@@ -349,9 +356,18 @@ function styleForestBlocks(
       selected ? Color.fromCssColorString("#ffe47b").withAlpha(0.035) : base.withAlpha(0.008),
     );
     entity.polygon.outline = new ConstantProperty(false);
+    if (Number.isFinite(overlayHeight)) {
+      entity.polygon.height = new ConstantProperty(Number(overlayHeight));
+    }
     const hierarchy = entity.polygon.hierarchy?.getValue(JulianDate.now());
     if (hierarchy?.positions?.length) {
-      entity.position = new ConstantPositionProperty(polygonLabelPosition(hierarchy.positions));
+      const positions = Number.isFinite(overlayHeight)
+        ? hierarchy.positions.map((position: Cartesian3) => {
+            const cartographic = Cartographic.fromCartesian(position);
+            return Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, Number(overlayHeight));
+          })
+        : hierarchy.positions;
+      entity.position = new ConstantPositionProperty(polygonLabelPosition(positions));
       const labelText = forestBlockLabelText(properties, cameraHeight);
       entity.label = new LabelGraphics({
         text: labelText,
@@ -366,12 +382,12 @@ function styleForestBlocks(
         backgroundPadding: new Cartesian2(8, 5),
         horizontalOrigin: HorizontalOrigin.CENTER,
         verticalOrigin: VerticalOrigin.CENTER,
-        heightReference: HeightReference.CLAMP_TO_GROUND,
+        heightReference: Number.isFinite(overlayHeight) ? HeightReference.NONE : HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         scaleByDistance: new NearFarScalar(800, 1.05, BLOCK_LABEL_MAX_HEIGHT, 0.72),
       });
       entity.polyline = new PolylineGraphics({
-        positions: new ConstantProperty([...hierarchy.positions, hierarchy.positions[0]]),
+        positions: new ConstantProperty([...positions, positions[0]]),
         // A ground-clamped line is frequently hidden by PNTS/B3DM content.
         // depthFailMaterial keeps the boundary visible through the model while
         // the almost transparent polygon leaves the imagery itself unobscured.
@@ -402,6 +418,8 @@ export function CesiumGlobe({
   imageryAssets,
   spatial3dAssets,
   targetSpatialAssetId,
+  forestBlockOverlayHeight,
+  minimumZoomDistance,
   spatial3dDisplaySettings,
   situationAssets,
   onSelectSituationAsset,
@@ -487,8 +505,15 @@ export function CesiumGlobe({
     viewer.scene.fog.enabled = true;
     // Tianditu imagery currently ends at level 18. This limit allows forestry
     // parcel inspection while preventing meaningless over-zoom beyond it.
-    viewer.scene.screenSpaceCameraController.minimumZoomDistance = MINIMUM_SHARP_CAMERA_HEIGHT;
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = minimumZoomDistance ?? MINIMUM_SHARP_CAMERA_HEIGHT;
     viewer.scene.screenSpaceCameraController.maximumZoomDistance = 28_000_000;
+    viewer.scene.screenSpaceCameraController.enableRotate = true;
+    viewer.scene.screenSpaceCameraController.enableTilt = true;
+    viewer.scene.screenSpaceCameraController.enableTranslate = true;
+    viewer.scene.screenSpaceCameraController.enableZoom = true;
+    viewer.scene.screenSpaceCameraController.enableLook = true;
+    viewer.scene.screenSpaceCameraController.inertiaSpin = 0.82;
+    viewer.scene.screenSpaceCameraController.inertiaTranslate = 0.82;
     viewer.scene.screenSpaceCameraController.inertiaZoom = 0.65;
     viewer.scene.screenSpaceCameraController.maximumMovementRatio = 0.08;
 
@@ -593,7 +618,7 @@ export function CesiumGlobe({
       spatial3dBaseMatricesRef.current.clear();
       if (!viewer.isDestroyed()) viewer.destroy();
     };
-  }, [config, scene.home.height3d, scene.home.latitude, scene.home.longitude]);
+  }, [config, minimumZoomDistance, scene.home.height3d, scene.home.latitude, scene.home.longitude]);
 
   useEffect(() => {
     if (imageryLayerRef.current) imageryLayerRef.current.show = layers.imagery;
@@ -609,14 +634,14 @@ export function CesiumGlobe({
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    viewer.scene.screenSpaceCameraController.minimumZoomDistance = detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT;
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = minimumZoomDistance ?? (detailMode ? 10 : MINIMUM_SHARP_CAMERA_HEIGHT);
     spatial3dTilesetsRef.current.forEach((tileset, assetId) => {
       const tuning = tilesetTuning(spatial3dAssetTypesRef.current.get(assetId), qualityMode, detailMode);
       tileset.maximumScreenSpaceError = tuning.error;
       tileset.cacheBytes = tuning.cacheBytes;
     });
     viewer.scene.requestRender();
-  }, [detailMode, qualityMode]);
+  }, [detailMode, minimumZoomDistance, qualityMode]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -819,6 +844,7 @@ export function CesiumGlobe({
         dataSource,
         selectedBlockIdRef.current,
         viewer.camera.positionCartographic.height,
+        forestBlockOverlayHeight,
       );
       dataSource.show = forestBlocksVisibleRef.current;
       viewer.dataSources.add(dataSource);
@@ -837,14 +863,14 @@ export function CesiumGlobe({
     return () => {
       cancelled = true;
     };
-  }, [featureCollection]);
+  }, [featureCollection, forestBlockOverlayHeight]);
 
   useEffect(() => {
     selectedBlockIdRef.current = selectedBlockId;
     const dataSource = blockDataSourceRef.current;
     const viewer = viewerRef.current;
     if (!dataSource || !viewer) return;
-    styleForestBlocks(dataSource, selectedBlockId, viewer.camera.positionCartographic.height);
+    styleForestBlocks(dataSource, selectedBlockId, viewer.camera.positionCartographic.height, forestBlockOverlayHeight);
     updateForestBlockLabels(viewer, dataSource, selectedBlockId);
     viewer.scene.requestRender();
     if (!selectedBlockId) {
@@ -855,7 +881,7 @@ export function CesiumGlobe({
     if (!entity || lastFocusedBlockRef.current === selectedBlockId) return;
     lastFocusedBlockRef.current = selectedBlockId;
     void viewer.flyTo(entity, { duration: 1.2 });
-  }, [featureCollection, selectedBlockId]);
+  }, [featureCollection, forestBlockOverlayHeight, selectedBlockId]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
