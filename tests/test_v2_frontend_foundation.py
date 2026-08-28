@@ -51,8 +51,11 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     )
 
     assert "/api/map/forest-blocks.geojson" in client
-    assert "bbox: viewport.bbox.join" in page
+    assert "bbox: bufferedViewportBbox.join" in page
     assert "maxFeatures: 2000" in page
+    assert "expandViewportBbox" in page
+    assert "mergeForestBlockCollections" in page
+    assert "forestBlockAggregates" in page
     assert "enabled: layers.forestBlocks" in page
     assert "buildMapAnnotations" in page
     assert "mergeSelectedForestBlock" in page
@@ -121,7 +124,8 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "const [resultsOpen, setResultsOpen] = useState(false)" in map_page
     assert "{resultsOpen && (" in map_page
     assert 'aria-label="关闭林班检索结果"' in map_page
-    assert 'className={activeTown === area.name ? "active" : ""}' in map_page
+    assert 'activeTown === town.name ? "active" : ""' in map_page
+    assert 'aria-label="正式林班乡镇快速定位"' in map_page
     assert 'aria-label="林班详情浮动窗口"' in map_page
     assert 'aria-label={detailMaximized ? "还原详情窗口" : "放大详情窗口"}' in map_page
     assert "startDetailDrag" in map_page

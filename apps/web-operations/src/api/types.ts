@@ -658,6 +658,25 @@ export interface ForestBlockFilterFacets {
   operationTypes: string[];
 }
 
+export interface ForestBlockAggregateItem {
+  code: string;
+  name: string;
+  blockCount: number;
+  areaMu: number;
+  centroid: [number, number] | null;
+  riskLevel: string;
+  riskCounts: Record<string, number>;
+  qualityCounts: Record<string, number>;
+}
+
+export interface ForestBlockAggregateResponse {
+  level: "county" | "town" | "village";
+  totalGroups: number;
+  totalBlocks: number;
+  totalAreaMu: number;
+  items: ForestBlockAggregateItem[];
+}
+
 export interface AdministrativeDivisionItem {
   code: string;
   name: string;

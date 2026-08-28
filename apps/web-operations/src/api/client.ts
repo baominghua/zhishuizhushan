@@ -18,6 +18,7 @@ import type {
   DroneMissionActionPayload,
   DroneMissionPayload,
   ForestBlockPayload,
+  ForestBlockAggregateResponse,
   ForestBlockFilterFacets,
   ForestBlockFeatureCollection,
   ForestBlockQuery,
@@ -356,6 +357,10 @@ export const api = {
     ),
   forestBlockFacets: () =>
     request<ForestBlockFilterFacets>("/api/v2/resources/forest-blocks-facets"),
+  forestBlockAggregates: (level: "county" | "town" | "village") =>
+    request<ForestBlockAggregateResponse>(
+      `/api/map/forest-blocks/aggregates?${queryString({ level })}`,
+    ),
   forestBlockDetail: (id: string) =>
     request<ForestBlockRecord>(`/api/v2/resources/forest-blocks/${encodeURIComponent(id)}`),
   createForestBlock: (payload: ForestBlockPayload) =>

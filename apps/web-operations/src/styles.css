@@ -1881,6 +1881,9 @@ svg {
   border: 1px solid rgba(165, 212, 191, 0.4);
   border-radius: 6px;
   backdrop-filter: blur(8px);
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .map-town-shortcuts button {
@@ -1893,6 +1896,17 @@ svg {
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.map-town-loading {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  color: rgba(231, 244, 237, 0.72);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .map-town-shortcuts button:hover,

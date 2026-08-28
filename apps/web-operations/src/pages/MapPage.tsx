@@ -24,7 +24,9 @@ import { MapCanvas } from "../components/MapCanvas";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
 import { QueryState } from "../components/QueryState";
 import {
+  EMPTY_FOREST_BLOCK_COLLECTION,
   featureToOption,
+  mergeForestBlockCollections,
   mergeSelectedForestBlock,
   recordToOption,
 } from "../maps/forestBlocks";
@@ -51,11 +53,6 @@ import {
 
 const MAP_MODE_STORAGE_KEY = "smart-bamboo-v2-map-mode";
 
-const MAPPED_TOWN_AREAS = [
-  { name: "黄坑镇", bbox: [117.68, 27.54, 117.73, 27.59] as MapViewport["bbox"] },
-  { name: "麻沙镇", bbox: [117.675, 27.495, 117.75, 27.575] as MapViewport["bbox"] },
-];
-
 type MapFilterValues = Pick<
   ForestBlockQuery,
   "countyCode" | "townCode" | "qualityGrade" | "healthStatus" | "riskLevel"
@@ -81,6 +78,23 @@ function initialMapMode(): MapViewMode {
   const requestedMode = new URLSearchParams(window.location.search).get("mode");
   if (requestedMode === "2d" || requestedMode === "3d") return requestedMode;
   return window.localStorage.getItem(MAP_MODE_STORAGE_KEY) === "3d" ? "3d" : "2d";
+}
+
+function expandViewportBbox(bbox: MapViewport["bbox"], ratio = 0.32): MapViewport["bbox"] {
+  const [west, south, east, north] = bbox;
+  const longitudePadding = Math.max(0.003, (east - west) * ratio);
+  const latitudePadding = Math.max(0.003, (north - south) * ratio);
+  return [
+    Math.max(-180, west - longitudePadding),
+    Math.max(-90, south - latitudePadding),
+    Math.min(180, east + longitudePadding),
+    Math.min(90, north + latitudePadding),
+  ];
+}
+
+function townFocusBbox(centroid: [number, number]): MapViewport["bbox"] {
+  const [longitude, latitude] = centroid;
+  return [longitude - 0.038, latitude - 0.032, longitude + 0.038, latitude + 0.032];
 }
 
 function spatialAssetFormat(asset: ImageryAsset) {
@@ -114,7 +128,7 @@ export function MapPage() {
   const [query, setQuery] = useState("");
   const [draftFilters, setDraftFilters] = useState<MapFilterValues>(EMPTY_MAP_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<MapFilterValues>(EMPTY_MAP_FILTERS);
-  const [activeTown, setActiveTown] = useState<string | null>("黄坑镇");
+  const [activeTown, setActiveTown] = useState<string | null>(null);
   const [selected, setSelected] = useState<ForestBlockOption | null>(null);
   const [selectedMapAnnotationId, setSelectedMapAnnotationId] = useState<string | null>(null);
   const [detailPosition, setDetailPosition] = useState<{ x: number; y: number } | null>(null);
@@ -142,6 +156,7 @@ export function MapPage() {
   const [viewport, setViewport] = useState<MapViewport>(DEFAULT_MAP_VIEWPORT);
   const [viewMetrics, setViewMetrics] = useState<MapViewMetrics | null>(null);
   const scene = useMemo(() => createMapScene(selected), [selected]);
+  const bufferedViewportBbox = useMemo(() => expandViewportBbox(viewport.bbox), [viewport.bbox]);
 
   const appliedFilterQuery = useMemo(() => filterQueryString(appliedFilters), [appliedFilters]);
   const appliedFilterCount = Object.values(appliedFilters).filter(Boolean).length;
@@ -150,6 +165,11 @@ export function MapPage() {
     queryFn: api.forestBlockFacets,
     enabled: filtersOpen,
     staleTime: 60_000,
+  });
+  const townAggregates = useQuery({
+    queryKey: ["forest-block-town-aggregates"],
+    queryFn: () => api.forestBlockAggregates("town"),
+    staleTime: 5 * 60_000,
   });
   const blocks = useQuery({
     queryKey: ["map-blocks", query, appliedFilters],
@@ -169,17 +189,20 @@ export function MapPage() {
     staleTime: 60_000,
   });
   const mapBlocks = useQuery({
-    queryKey: ["forest-block-map", viewport.bbox.join(","), viewport.zoom, appliedFilters],
+    queryKey: ["forest-block-map", bufferedViewportBbox.join(","), viewport.zoom, appliedFilters],
     queryFn: () => api.forestBlockMap({
-      bbox: viewport.bbox.join(","),
+      bbox: bufferedViewportBbox.join(","),
       zoom: viewport.zoom,
       maxFeatures: 2000,
       ...appliedFilters,
     }),
     enabled: layers.forestBlocks,
     staleTime: 30_000,
+    gcTime: 15 * 60_000,
     placeholderData: (previous) => previous,
   });
+  const [cachedMapBlocks, setCachedMapBlocks] = useState(EMPTY_FOREST_BLOCK_COLLECTION);
+  const boundaryCacheFilterRef = useRef(appliedFilterQuery);
   const imageryAssets = useQuery({
     queryKey: ["published-imagery-assets", viewport.bbox.join(",")],
     queryFn: () => api.imageryAssets({ published: true, bbox: viewport.bbox.join(","), limit: 30 }),
@@ -249,8 +272,8 @@ export function MapPage() {
   });
   const selectedMosoInventory = selectedDetail.data?.yieldEstimate?.mosoInventory as MosoInventoryEstimate | undefined;
   const mapFeatures = useMemo(
-    () => mergeSelectedForestBlock(mode === "3d" ? mapBlocks.data : undefined, selectedDetail.data),
-    [mapBlocks.data, mode, selectedDetail.data],
+    () => mergeSelectedForestBlock(mode === "3d" ? cachedMapBlocks : undefined, selectedDetail.data),
+    [cachedMapBlocks, mode, selectedDetail.data],
   );
   const allMapAnnotations = useMemo(() => buildMapAnnotations({
     blocks: mapBlocks.data,
@@ -303,6 +326,34 @@ export function MapPage() {
   useEffect(() => {
     window.localStorage.setItem(MAP_MODE_STORAGE_KEY, mode);
   }, [mode]);
+
+  useEffect(() => {
+    const filterChanged = boundaryCacheFilterRef.current !== appliedFilterQuery;
+    if (filterChanged) {
+      boundaryCacheFilterRef.current = appliedFilterQuery;
+      setCachedMapBlocks(EMPTY_FOREST_BLOCK_COLLECTION);
+    }
+    if (!mapBlocks.data || (filterChanged && mapBlocks.isPlaceholderData)) return;
+    setCachedMapBlocks((current) => mergeForestBlockCollections(
+      filterChanged ? EMPTY_FOREST_BLOCK_COLLECTION : current,
+      mapBlocks.data,
+    ));
+  }, [appliedFilterQuery, mapBlocks.data, mapBlocks.isPlaceholderData]);
+
+  useEffect(() => {
+    const selectedTownName = selectedDetail.data?.townName?.trim();
+    if (selectedTownName) {
+      setActiveTown(selectedTownName);
+      return;
+    }
+    const counts = new Map<string, number>();
+    mapBlocks.data?.features.forEach((feature) => {
+      const townName = feature.properties.townName?.trim();
+      if (townName) counts.set(townName, (counts.get(townName) ?? 0) + 1);
+    });
+    const currentTownName = [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
+    if (currentTownName) setActiveTown(currentTownName);
+  }, [mapBlocks.data, selectedDetail.data?.townName]);
 
   useEffect(() => {
     const blockId = new URLSearchParams(window.location.search).get("blockId");
@@ -438,14 +489,14 @@ export function MapPage() {
     (town) => !draftFilters.countyCode || town.countyCode === draftFilters.countyCode,
   );
 
-  function focusMappedTown(name: string, bbox: MapViewport["bbox"]) {
+  function focusMappedTown(name: string, centroid: [number, number]) {
     setQuery(name);
     setActiveTown(name);
     setSelected(null);
     setResultsOpen(false);
     setFiltersOpen(false);
     setLayersOpen(false);
-    setAreaFocusRequest((current) => ({ sequence: current.sequence + 1, bbox }));
+    setAreaFocusRequest((current) => ({ sequence: current.sequence + 1, bbox: townFocusBbox(centroid) }));
   }
 
   function openPendingTown(name: string) {
@@ -636,26 +687,20 @@ export function MapPage() {
         </div>
       </div>
       <div className="map-stage" ref={mapStageRef}>
-        <nav className="map-town-shortcuts" aria-label="林班乡镇快速定位">
-          {MAPPED_TOWN_AREAS.map((area) => (
+        <nav className="map-town-shortcuts" aria-label="正式林班乡镇快速定位">
+          {(townAggregates.data?.items ?? []).map((town) => (
             <button
               type="button"
-              key={area.name}
-              className={activeTown === area.name ? "active" : ""}
-              onClick={() => focusMappedTown(area.name, area.bbox)}
-              aria-pressed={activeTown === area.name}
+              key={town.code}
+              className={`${town.centroid ? "" : "pending"} ${activeTown === town.name ? "active" : ""}`.trim()}
+              onClick={() => town.centroid ? focusMappedTown(town.name, town.centroid) : openPendingTown(town.name)}
+              aria-pressed={activeTown === town.name}
+              title={`${town.name} · ${town.blockCount} 个正式林班${town.centroid ? "" : " · 边界待补"}`}
             >
-              {area.name}
+              {town.name}{!town.centroid && <small>待补图</small>}
             </button>
           ))}
-          <button
-            type="button"
-            className={`pending ${activeTown === "小桥镇" ? "active" : ""}`}
-            onClick={() => openPendingTown("小桥镇")}
-            aria-pressed={activeTown === "小桥镇"}
-          >
-            小桥镇 <small>待补图</small>
-          </button>
+          {townAggregates.isLoading && <span className="map-town-loading">正在读取乡镇</span>}
         </nav>
         <MapCanvas
           config={mapConfig.data}

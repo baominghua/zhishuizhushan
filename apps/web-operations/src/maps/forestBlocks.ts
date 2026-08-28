@@ -76,3 +76,21 @@ export function mergeSelectedForestBlock(
     ],
   };
 }
+
+export function mergeForestBlockCollections(
+  previous: ForestBlockFeatureCollection,
+  incoming: ForestBlockFeatureCollection,
+): ForestBlockFeatureCollection {
+  const features = new Map(previous.features.map((feature) => [feature.id, feature]));
+  incoming.features.forEach((feature) => features.set(feature.id, feature));
+  const mergedFeatures = [...features.values()];
+  return {
+    ...incoming,
+    meta: {
+      ...incoming.meta,
+      total: Math.max(incoming.meta.total, mergedFeatures.length),
+      returned: mergedFeatures.length,
+    },
+    features: mergedFeatures,
+  };
+}
