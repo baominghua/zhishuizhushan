@@ -5231,7 +5231,7 @@ svg {
 .cockpit-bamboo-dashboard > header small { color: #70cfac; font-size: 10px; }
 .cockpit-bamboo-dashboard > header h2 { margin: 2px 0 0; color: #effff9; font-size: 20px; }
 .cockpit-bamboo-dashboard > header a { color: #b8e8d7; font-size: 12px; text-decoration: none; }
-.cockpit-bamboo-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.cockpit-bamboo-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .cockpit-bamboo-metrics article { display: grid; gap: 8px; min-height: 106px; padding: 14px 16px; border: 1px solid rgba(99, 204, 166, .2); border-radius: 7px; background: rgba(4, 39, 31, .7); }
 .cockpit-bamboo-metrics article.estimated { border-top-color: #67dfb5; }.cockpit-bamboo-metrics article.formal { border-top-color: #d9b25b; }
 .cockpit-bamboo-metrics article > span { color: #9dc3b5; font-size: 11px; }

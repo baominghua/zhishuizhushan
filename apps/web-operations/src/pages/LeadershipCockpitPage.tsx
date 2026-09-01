@@ -54,7 +54,9 @@ function ImageryInventoryScene({ inventory }: { inventory: ImageryInventoryRespo
     <section className="cockpit-bamboo-dashboard">
       <header><span><Trees /><small>林班资源盘点</small><h2>竹材资源统计</h2></span><Link to="/resources/intelligence">进入资源专题分析</Link></header>
       <div className="cockpit-bamboo-metrics">
-        <BambooMetric label="正式调查资源株数" value={resources.formal.stock} unit={resources.formal.unit} detail={resources.formal.available ? `${resources.formal.blockCount} 个林班 · ${resources.formal.source}` : "暂无正式调查数据"} tone="formal" />
+        <BambooMetric label="正式调查资源株数" value={resources.formal.stock} unit={resources.formal.unit} detail={resources.formal.stock !== null ? `${resources.formal.blockCount} 个林班 · ${resources.formal.snapshotCount} 个最新小班快照` : "暂无正式株数数据"} tone="formal" />
+        <BambooMetric label="正式调查蓄积量" value={resources.formal.standingVolumeM3} unit="m³" detail={resources.formal.standingVolumeM3 !== null ? resources.formal.source : "暂无正式蓄积量数据"} tone="formal" digits={1} />
+        <BambooMetric label="正式调查生物量" value={resources.formal.biomassTons} unit="t" detail={resources.formal.biomassTons !== null ? resources.formal.source : "暂无正式生物量数据"} tone="formal" digits={1} />
         <BambooMetric label="AI 估算毛竹株数" value={resources.estimated.stock} unit={resources.estimated.unit} detail={resources.estimated.available ? `${resources.estimated.blockCount} 个已试算林班` : "暂无 AI 试算数据"} tone="estimated" />
         <BambooMetric label="AI 估算地上生物量" value={resources.estimated.biomassTons} unit="t" detail={resources.estimated.available ? resources.estimated.source : "暂无 AI 试算数据"} tone="estimated" digits={1} />
         <BambooMetric label="AI 已试算林班" value={resources.estimated.available ? resources.estimated.blockCount : null} unit="个" detail={resources.estimated.estimatedAt ? `最近试算 ${new Date(resources.estimated.estimatedAt).toLocaleString("zh-CN", { hour12: false })}` : "尚未形成估算结果"} tone="estimated" />

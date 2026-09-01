@@ -720,6 +720,21 @@ def test_bamboo_resource_inventory_separates_formal_and_ai_estimates(monkeypatch
         },
     ]
     monkeypatch.setattr(app_module, "filtered_forest_blocks", lambda *_args, **_kwargs: blocks)
+    monkeypatch.setattr(
+        app_module,
+        "formal_resource_snapshot_inventory",
+        lambda _context: {
+            "available": False,
+            "stock": None,
+            "stockAvailable": False,
+            "standingVolumeM3": None,
+            "biomassTons": None,
+            "surveyedAreaMu": None,
+            "blockIds": set(),
+            "blockCount": 0,
+            "snapshotCount": 0,
+        },
+    )
 
     payload = app_module.bamboo_resource_inventory(app_module.AuthContext("tester", {"admin"}, {"*"}, {"*"}))
 
@@ -728,6 +743,76 @@ def test_bamboo_resource_inventory_separates_formal_and_ai_estimates(monkeypatch
     assert payload["estimated"]["stock"] == 1_200
     assert payload["estimated"]["biomassTons"] == 18.5
     assert payload["estimated"]["blockCount"] == 1
+
+
+def test_formal_resource_snapshot_inventory_uses_latest_subcompartment_rows(monkeypatch):
+    import server.app as app_module
+
+    records = [
+        {
+            "id": "snapshot-old",
+            "forestSubcompartmentId": "sub-1",
+            "forestBlockId": "block-1",
+            "sampledAt": "2026-01-01T00:00:00+08:00",
+            "areaMu": 10,
+            "bambooDensityPerMu": 10,
+            "standingVolumeM3": 5,
+            "biomassT": 1,
+        },
+        {
+            "id": "snapshot-new",
+            "forestSubcompartmentId": "sub-1",
+            "forestBlockId": "block-1",
+            "sampledAt": "2026-08-01T00:00:00+08:00",
+            "areaMu": 10,
+            "bambooDensityPerMu": 20,
+            "standingVolumeM3": 12,
+            "biomassT": 2.5,
+        },
+        {
+            "id": "snapshot-2",
+            "forestSubcompartmentId": "sub-2",
+            "forestBlockId": "block-2",
+            "sampledAt": "2026-07-01T00:00:00+08:00",
+            "areaMu": 5,
+            "bambooDensityPerMu": None,
+            "standingVolumeM3": 8,
+            "biomassT": 1.5,
+        },
+    ]
+    monkeypatch.setattr(
+        app_module,
+        "list_resource_snapshots",
+        lambda **kwargs: {"items": records if kwargs["offset"] == 0 else [], "total": len(records)},
+    )
+
+    payload = app_module.formal_resource_snapshot_inventory(
+        app_module.AuthContext("tester", {"admin"}, {"*"}, {"*"})
+    )
+
+    assert payload["available"] is True
+    assert payload["stock"] == 200
+    assert payload["standingVolumeM3"] == 20
+    assert payload["biomassTons"] == 4
+    assert payload["surveyedAreaMu"] == 15
+    assert payload["blockCount"] == 2
+    assert payload["snapshotCount"] == 2
+
+
+def test_normalize_scene_asset_record_repairs_legacy_dji_dsm():
+    import server.app as app_module
+
+    legacy = {
+        "id": "legacy-dsm",
+        "assetType": "orthophoto",
+        "fileName": "dsm.tif",
+        "originalPath": "inbox/flight/geotiff/dsm.tif",
+    }
+
+    normalized = app_module.normalize_scene_asset_record(legacy)
+
+    assert normalized["assetType"] == "dsm"
+    assert legacy["assetType"] == "orthophoto"
 
 
 def test_confirm_coverage_allows_independent_facility_point(app_client):

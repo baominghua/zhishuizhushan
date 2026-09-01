@@ -322,7 +322,17 @@ export interface ImageryInventoryResponse {
   asOf: string;
   items: Array<{ assetType: string; count: number; areaMu: number; sizeBytes: number }>;
   bambooResources: {
-    formal: { available: boolean; stock: number | null; unit: string; blockCount: number; source: string };
+    formal: {
+      available: boolean;
+      stock: number | null;
+      unit: string;
+      blockCount: number;
+      snapshotCount: number;
+      surveyedAreaMu: number | null;
+      standingVolumeM3: number | null;
+      biomassTons: number | null;
+      source: string;
+    };
     estimated: { available: boolean; stock: number | null; unit: string; biomassTons: number | null; blockCount: number; source: string; estimatedAt: string };
     policy: string;
   };

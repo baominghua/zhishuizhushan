@@ -116,6 +116,7 @@ from server.modules.moso_bamboo_inventory import (
     merge_moso_estimate,
     update_moso_inference_run,
 )
+from server.modules.resource_surveys import list_resource_snapshots
 from server.modules.settings import enforce_production_configuration, get_settings
 from server.modules.spatial_assets import (
     ConversionCanceledError,
@@ -724,6 +725,20 @@ def effective_scene_asset_type(scene: dict[str, Any]) -> str:
         if stem in {"orthophoto", "dom"}:
             return "orthophoto"
     return declared or "orthophoto"
+
+
+def normalize_scene_asset_record(scene: dict[str, Any]) -> dict[str, Any]:
+    """Expose one canonical asset type to every catalog consumer.
+
+    This deliberately returns a copy instead of mutating the persisted JSON
+    document.  It repairs legacy DJI imports consistently for ledgers,
+    filters, dashboards and detail views while preserving the original record
+    until an explicit data migration is performed.
+    """
+    asset_type = effective_scene_asset_type(scene)
+    if str(scene.get("assetType") or "").strip().lower() == asset_type:
+        return scene
+    return {**scene, "assetType": asset_type}
 
 
 def filter_scenes(
@@ -1347,7 +1362,7 @@ def load_catalog(
 ) -> list[dict[str, Any]]:
     ensure_dirs()
     if use_mysql_catalog():
-        return mysql_load_scenes(
+        scenes = mysql_load_scenes(
             q=q,
             status=status,
             project_id=project_id,
@@ -1355,17 +1370,18 @@ def load_catalog(
             bbox=bbox,
             include_deleted=include_deleted,
         )
-    if use_postgis_catalog():
-        return postgis_load_scenes(q=q, status=status, project_id=project_id, area_code=area_code, bbox=bbox, include_deleted=include_deleted)
-    with CATALOG_LOCK:
-        try:
-            data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            data = {"scenes": []}
-        scenes = list(data.get("scenes", []))
-        if include_deleted:
-            return scenes
-        return [scene for scene in scenes if not scene.get("deletedAt") and scene.get("status") != "deleted"]
+    elif use_postgis_catalog():
+        scenes = postgis_load_scenes(q=q, status=status, project_id=project_id, area_code=area_code, bbox=bbox, include_deleted=include_deleted)
+    else:
+        with CATALOG_LOCK:
+            try:
+                data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                data = {"scenes": []}
+            scenes = list(data.get("scenes", []))
+            if not include_deleted:
+                scenes = [scene for scene in scenes if not scene.get("deletedAt") and scene.get("status") != "deleted"]
+    return [normalize_scene_asset_record(scene) for scene in scenes]
 
 
 def save_catalog(scenes: list[dict[str, Any]]) -> None:
@@ -6347,6 +6363,104 @@ def formal_bamboo_survey(block: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def formal_resource_snapshot_inventory(context: AuthContext) -> dict[str, Any]:
+    """Aggregate the latest formal resource snapshot per subcompartment.
+
+    Resource surveys are temporal ledgers.  Summing every row would count the
+    same subcompartment once per survey period, so the cockpit deliberately
+    keeps only the latest non-deleted snapshot for each subcompartment.
+    """
+    latest_by_subcompartment: dict[str, dict[str, Any]] = {}
+    offset = 0
+    try:
+        while True:
+            page = list_resource_snapshots(
+                survey_id="",
+                subcompartment_id="",
+                q="",
+                include_deleted=False,
+                limit=1000,
+                offset=offset,
+                context=context,
+            )
+            items = list(page.get("items") or [])
+            for item in items:
+                subcompartment_id = str(item.get("forestSubcompartmentId") or item.get("subcompartmentCode") or "").strip()
+                if not subcompartment_id:
+                    continue
+                timestamp = str(item.get("sampledAt") or item.get("surveyDate") or item.get("createdAt") or "")
+                previous = latest_by_subcompartment.get(subcompartment_id)
+                previous_timestamp = str(
+                    (previous or {}).get("sampledAt")
+                    or (previous or {}).get("surveyDate")
+                    or (previous or {}).get("createdAt")
+                    or ""
+                )
+                if previous is None or timestamp > previous_timestamp:
+                    latest_by_subcompartment[subcompartment_id] = item
+            if len(items) < 1000:
+                break
+            offset += len(items)
+    except HTTPException as exc:
+        # Imagery-only roles may legitimately lack survey-ledger permission.
+        # The inventory remains available and labels formal data as unavailable.
+        if exc.status_code in {401, 403, 404}:
+            return {
+                "available": False,
+                "stock": None,
+                "stockAvailable": False,
+                "standingVolumeM3": None,
+                "biomassTons": None,
+                "surveyedAreaMu": None,
+                "blockIds": set(),
+                "blockCount": 0,
+                "snapshotCount": 0,
+            }
+        raise
+
+    stock = 0.0
+    stock_available = False
+    standing_volume = 0.0
+    volume_available = False
+    biomass_tons = 0.0
+    biomass_available = False
+    surveyed_area = 0.0
+    area_available = False
+    block_ids: set[str] = set()
+    for item in latest_by_subcompartment.values():
+        block_id = str(item.get("forestBlockId") or item.get("forestBlockCode") or "").strip()
+        if block_id:
+            block_ids.add(block_id)
+        area_mu = inventory_number(item.get("areaMu"))
+        density = inventory_number(item.get("bambooDensityPerMu"))
+        standing = inventory_number(item.get("standingVolumeM3"))
+        biomass = inventory_number(item.get("biomassT"))
+        if area_mu is not None:
+            surveyed_area += max(0.0, area_mu)
+            area_available = True
+        if area_mu is not None and density is not None:
+            stock += max(0.0, area_mu) * max(0.0, density)
+            stock_available = True
+        if standing is not None:
+            standing_volume += max(0.0, standing)
+            volume_available = True
+        if biomass is not None:
+            biomass_tons += max(0.0, biomass)
+            biomass_available = True
+
+    return {
+        "available": stock_available or volume_available or biomass_available,
+        "stock": round(stock) if stock_available else None,
+        "stockAvailable": stock_available,
+        "standingVolumeM3": round(standing_volume, 2) if volume_available else None,
+        "biomassTons": round(biomass_tons, 2) if biomass_available else None,
+        "surveyedAreaMu": round(surveyed_area, 2) if area_available else None,
+        "blockIds": block_ids,
+        "blockCount": len(block_ids),
+        "snapshotCount": len(latest_by_subcompartment),
+    }
+
+
 def bamboo_resource_inventory(context: AuthContext) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
     offset = 0
@@ -6361,17 +6475,24 @@ def bamboo_resource_inventory(context: AuthContext) -> dict[str, Any]:
             break
         offset += len(page)
 
-    formal_stock = 0.0
-    formal_blocks = 0
+    formal_snapshot = formal_resource_snapshot_inventory(context)
+    formal_stock = float(formal_snapshot.get("stock") or 0)
+    formal_stock_available = bool(formal_snapshot.get("stockAvailable"))
+    formal_block_ids = set(formal_snapshot.get("blockIds") or set())
+    formal_blocks = int(formal_snapshot.get("blockCount") or 0)
     estimated_stock = 0.0
     estimated_biomass_tons = 0.0
     estimated_blocks = 0
     latest_estimate_at = ""
     for block in blocks:
         formal = formal_bamboo_survey(block)
-        if formal:
+        block_id = str(block.get("id") or block.get("forestBlockCode") or block.get("code") or "").strip()
+        if formal and block_id not in formal_block_ids:
             formal_stock += float(formal["stock"])
             formal_blocks += 1
+            formal_stock_available = True
+            if block_id:
+                formal_block_ids.add(block_id)
 
         yield_estimate = block.get("yieldEstimate") if isinstance(block.get("yieldEstimate"), dict) else {}
         estimate = yield_estimate.get("mosoInventory")
@@ -6390,11 +6511,15 @@ def bamboo_resource_inventory(context: AuthContext) -> dict[str, Any]:
 
     return {
         "formal": {
-            "available": formal_blocks > 0,
-            "stock": round(formal_stock) if formal_blocks else None,
+            "available": bool(formal_snapshot.get("available")) or formal_stock_available,
+            "stock": round(formal_stock) if formal_stock_available else None,
             "unit": "株",
             "blockCount": formal_blocks,
-            "source": "正式竹材资源调查台账",
+            "snapshotCount": int(formal_snapshot.get("snapshotCount") or 0),
+            "surveyedAreaMu": formal_snapshot.get("surveyedAreaMu"),
+            "standingVolumeM3": formal_snapshot.get("standingVolumeM3"),
+            "biomassTons": formal_snapshot.get("biomassTons"),
+            "source": "正式资源调查小班快照",
         },
         "estimated": {
             "available": estimated_blocks > 0,
