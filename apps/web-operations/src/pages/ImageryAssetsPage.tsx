@@ -40,6 +40,7 @@ import { SidePanel } from "../components/SidePanel";
 import { hasPermission, useCapabilities } from "../hooks/useCapabilities";
 
 const PAGE_SIZE = 30;
+const SPATIAL_TASK_TYPES = "upload,register,pointcloud-upload,pointcloud-register,3dtiles-register";
 const POINT_CLOUD_RESUME_KEY = "smart-bamboo.point-cloud-upload-session.v1";
 const TYPE_LABELS: Record<ImageryAssetType, string> = {
   orthophoto: "正射影像",
@@ -57,6 +58,7 @@ export function ImageryAssetsPage() {
   const [assetTypeFilter, setAssetTypeFilter] = useState("");
   const [resourceFormat, setResourceFormat] = useState("");
   const [offset, setOffset] = useState(0);
+  const [taskOffset, setTaskOffset] = useState(0);
   const [includeDeleted, setIncludeDeleted] = useState(false);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<ImageryAsset | null>(null);
@@ -68,8 +70,8 @@ export function ImageryAssetsPage() {
     queryFn: () => api.imageryAssets({ q: deferredQ, published: published ? true : undefined, assetType: assetTypeFilter || undefined, resourceFormat: resourceFormat || undefined, includeDeleted, limit: PAGE_SIZE, offset }),
   });
   const tasks = useQuery({
-    queryKey: ["spatial-asset-tasks"],
-    queryFn: () => api.spatialAssetTasks({ limit: 100 }),
+    queryKey: ["spatial-asset-tasks", taskOffset],
+    queryFn: () => api.spatialAssetTasks({ taskType: SPATIAL_TASK_TYPES, limit: PAGE_SIZE, offset: taskOffset }),
     refetchInterval: (query) => (query.state.data?.tasks ?? []).some((task) => ["queued", "running"].includes(task.status)) ? 2_000 : 10_000,
   });
   const permissions = capabilities.data?.permissions ?? [];
@@ -133,6 +135,9 @@ export function ImageryAssetsPage() {
     </section>
     <SpatialTaskQueue
       tasks={tasks.data?.tasks ?? []}
+      total={tasks.data?.total ?? 0}
+      limit={tasks.data?.limit ?? PAGE_SIZE}
+      offset={tasks.data?.offset ?? taskOffset}
       loading={tasks.isLoading}
       error={tasks.error}
       onRetry={(task) => retryTask.mutate(task.id)}
@@ -143,6 +148,7 @@ export function ImageryAssetsPage() {
         if (window.confirm(`${action}任务“${task.name || task.kind}”？\n\n仅从任务列表移除，不删除源文件或已生成成果。`)) removeTask.mutate(task.id);
       }}
       onReview={(task) => reviewTask.mutate(task)}
+      onPage={setTaskOffset}
     />
     <section className="ledger-shell">
       <div className="ledger-toolbar domain-ledger-toolbar"><label className="search-field"><FileImage aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索成果名称、文件名、任务或林班" /></label><label className="compact-filter"><span>成果类型</span><select value={assetTypeFilter} onChange={(event) => { setAssetTypeFilter(event.target.value); setOffset(0); }}><option value="">全部类型</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="compact-filter"><span>资源格式</span><select value={resourceFormat} onChange={(event) => { setResourceFormat(event.target.value); setOffset(0); }}><option value="">全部格式</option>{["GEOTIFF", "COG", "LAS/LAZ", "COPC", "PNTS", "B3DM"].map((format) => <option key={format}>{format}</option>)}</select></label><label className="compact-filter"><span>发布状态</span><select value={published} onChange={(event) => { setPublished(event.target.value); setOffset(0); }}><option value="">全部成果</option><option value="published">已发布上图</option></select></label><label className="deleted-toggle"><input type="checkbox" checked={includeDeleted} onChange={(event) => { setIncludeDeleted(event.target.checked); setOffset(0); }} /><span>显示回收站</span></label></div>
@@ -166,20 +172,24 @@ export function ImageryAssetsPage() {
   </div>;
 }
 
-function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onRemove, onReview }: {
+function SpatialTaskQueue({ tasks, total, limit, offset, loading, error, onRetry, onCancel, onRemove, onReview, onPage }: {
   tasks: SpatialAssetTask[];
+  total: number;
+  limit: number;
+  offset: number;
   loading: boolean;
   error: Error | null;
   onRetry: (task: SpatialAssetTask) => void;
   onCancel: (task: SpatialAssetTask) => void;
   onRemove: (task: SpatialAssetTask) => void;
   onReview: (task: SpatialAssetTask) => void;
+  onPage: (offset: number) => void;
 }) {
   const visibleTasks = tasks.filter((task) => !task.archivedAt);
   const activeCount = visibleTasks.filter((task) => ["queued", "running"].includes(task.status)).length;
   const labels: Record<string, string> = { queued: "排队中", running: "处理中", paused: "已暂停", failed: "失败", completed: "已完成", canceled: "已停止" };
   return <section className="spatial-task-queue" aria-label="空间处理任务队列">
-    <header><div><ListChecks aria-hidden="true" /><span><strong>空间处理任务</strong><small>{activeCount ? `${activeCount} 项正在顺序处理，共 ${visibleTasks.length} 项可查看` : `后台任务不会占用当前页面，共 ${visibleTasks.length} 项可查看`}</small></span></div><span className={activeCount ? "active" : ""}>{activeCount ? "后台运行中" : "队列空闲"}</span></header>
+    <header><div><ListChecks aria-hidden="true" /><span><strong>空间处理任务</strong><small>{activeCount ? `${activeCount} 项正在顺序处理，共 ${total} 项空间任务可查看` : `后台任务不会占用当前页面，共 ${total} 项空间任务可查看`}</small></span></div><span className={activeCount ? "active" : ""}>{activeCount ? "后台运行中" : "队列空闲"}</span></header>
     {loading ? <p className="task-queue-empty">正在读取任务队列…</p> : error ? <p className="form-error">任务队列读取失败：{error.message}</p> : !visibleTasks.length ? <p className="task-queue-empty">暂无空间处理任务。新上传的影像和点云会在这里显示进度。</p> : <div className="task-queue-list">{visibleTasks.map((task) => {
       const progress = Math.max(0, Math.min(100, Number(task.progress || 0)));
       const sourceBytes = Number(task.sourceBytes || 0);
@@ -191,6 +201,7 @@ function SpatialTaskQueue({ tasks, loading, error, onRetry, onCancel, onRemove, 
         <div className="task-queue-actions">{resumable ? <button type="button" onClick={() => onRetry(task)}><Play />继续</button> : null}{running || task.status === "paused" ? <button type="button" onClick={() => onCancel(task)}><CircleStop />停止</button> : null}{task.status === "completed" && task.sceneId ? <button type="button" title="采用自动匹配结果；没有建议时进入人工核对" onClick={() => onReview(task)}><MapPinned />确认覆盖</button> : null}{["completed", "failed", "canceled"].includes(task.status) ? <button type="button" title="从当前任务列表移除；不会删除源文件或成果" onClick={() => onRemove(task)}><Trash2 />移出列表</button> : null}{running || task.status === "paused" ? <button type="button" title="停止任务并从当前列表移除；不会删除源文件" onClick={() => onRemove(task)}><Trash2 />停止并移出</button> : null}</div>
       </article>;
     })}</div>}
+    <LedgerPagination total={total} limit={limit} offset={offset} onPage={onPage} />
     <footer><span>点云转换默认使用 1 个后台工作槽；大任务主要消耗内存与磁盘 I/O，不再因服务重启自动从零重复。</span></footer>
   </section>;
 }

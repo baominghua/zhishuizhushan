@@ -540,6 +540,34 @@ def test_dashboard_satellite_track_summary_is_available_without_imagery_admin_pe
     assert {"label": "影像后台", "href": "admin-imagery.html"} in body["adminLinks"]
 
 
+def test_task_ledger_filters_task_types_before_pagination(isolated_env):
+    app_module = reload_app_module()
+    app_module.save_tasks(
+        [
+            sample_task("task-spatial-1") | {"type": "upload"},
+            sample_task("task-cache-1") | {"type": "basemap-prewarm"},
+            sample_task("task-ai-1") | {"type": "moso-bamboo-inventory"},
+            sample_task("task-spatial-2") | {"type": "pointcloud-register"},
+        ]
+    )
+    client = TestClient(app_module.app)
+
+    first = client.get(
+        "/api/tasks?taskType=upload,pointcloud-register&limit=1&offset=0",
+        headers={"X-RS-Roles": "admin"},
+    )
+    second = client.get(
+        "/api/tasks?taskType=upload,pointcloud-register&limit=1&offset=1",
+        headers={"X-RS-Roles": "admin"},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["total"] == 2
+    assert len(first.json()["tasks"]) == 1
+    assert len(second.json()["tasks"]) == 1
+    assert {first.json()["tasks"][0]["type"], second.json()["tasks"][0]["type"]} == {"upload", "pointcloud-register"}
+
+
 def test_dashboard_workflow_status_is_public_without_opening_admin_endpoints(isolated_env):
     app_module = reload_app_module()
     client = TestClient(app_module.app)

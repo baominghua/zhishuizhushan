@@ -188,6 +188,9 @@ def test_spatial_coverage_shortcut_never_bulk_links_ambiguous_candidates():
     assert "系统唯一匹配林班 ${suggested[0]}" in page
     assert "suggestedMatches.length === 1 ? suggestedMatches.map(matchToBlock) : []" in page
     assert "系统未自动全选" in page
+    assert 'const SPATIAL_TASK_TYPES = "upload,register,pointcloud-upload,pointcloud-register,3dtiles-register"' in page
+    assert "taskType: SPATIAL_TASK_TYPES" in page
+    assert "<LedgerPagination total={total} limit={limit} offset={offset} onPage={onPage} />" in page
 
 
 def test_v2_basemap_settings_are_managed_server_side():

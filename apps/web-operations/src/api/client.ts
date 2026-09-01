@@ -771,7 +771,7 @@ export const api = {
   imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
   sceneTrajectory: (id: string) => request<import("./types").SceneTrajectoryFeatureCollection>(`/api/scenes/${encodeURIComponent(id)}/trajectory.geojson`),
   spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
-  spatialAssetTasks: (query: { status?: string; includeArchived?: boolean; limit?: number; offset?: number } = {}) =>
+  spatialAssetTasks: (query: { status?: string; taskType?: string; includeArchived?: boolean; limit?: number; offset?: number } = {}) =>
     request<SpatialAssetTaskResponse>(`/api/tasks?${queryString(query)}`),
   retrySpatialAssetTask: (id: string) =>
     request<{ accepted: true; task: SpatialAssetTask }>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" }),

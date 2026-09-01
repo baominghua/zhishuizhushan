@@ -1588,6 +1588,7 @@ def filter_tasks(
     tasks: list[dict[str, Any]],
     status: str = "",
     include_archived: bool = False,
+    task_types: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     status_filter = status.strip()
     filtered: list[dict[str, Any]] = []
@@ -1595,6 +1596,8 @@ def filter_tasks(
         if task.get("archivedAt") and not include_archived:
             continue
         if status_filter and str(task.get("status") or "") != status_filter:
+            continue
+        if task_types and str(task.get("type") or task.get("kind") or "") not in task_types:
             continue
         filtered.append(task)
     return filtered
@@ -7830,6 +7833,7 @@ def publish_scene_layer(scene_id: str, payload: SceneLayerPublishRequest, reques
 def list_tasks(
     request: Request,
     status: str = Query(default=""),
+    taskType: str = Query(default=""),
     includeArchived: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -7837,7 +7841,8 @@ def list_tasks(
     require_imagery_permission(request, IMAGERY_SCENE_VIEW_PERMISSION)
     if includeArchived:
         require_imagery_permission(request, IMAGERY_TASK_ARCHIVE_PERMISSION)
-    tasks = filter_tasks(load_tasks(), status=status, include_archived=includeArchived)
+    task_types = set(split_tokens(taskType))
+    tasks = filter_tasks(load_tasks(), status=status, include_archived=includeArchived, task_types=task_types)
     page = tasks[offset : offset + limit]
     return {
         "total": len(tasks),
