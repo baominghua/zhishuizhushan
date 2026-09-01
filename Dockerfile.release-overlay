@@ -1,0 +1,15 @@
+ARG BASE_IMAGE=smart-bamboo-app:missing-base-image
+FROM ${BASE_IMAGE}
+
+ARG SMART_BAMBOO_BUILD_COMMIT=unknown
+
+# Code-only releases reuse the dependency-complete, currently healthy
+# production image. Replace the application tree while preserving /app/data,
+# which is mounted from the host in production.
+WORKDIR /app
+RUN find /app -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf -- {} +
+COPY . /app
+
+LABEL org.opencontainers.image.title="Smart Bamboo V2" \
+      org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}" \
+      com.smart-bamboo.release.mode="code-overlay"

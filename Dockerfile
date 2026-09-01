@@ -27,11 +27,7 @@ RUN pnpm run build
 # the multi-architecture image digest so production builds remain reproducible.
 FROM pdal/pdal:latest@sha256:8e1c89edd76a2d574b7a25675d122aa5eb3a1bfd6a2c50ab124a46769ed05271
 
-ARG SMART_BAMBOO_BUILD_COMMIT=unknown
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-
-LABEL org.opencontainers.image.title="Smart Bamboo V2" \
-      org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"
 
 # The PDAL image exposes its base Conda interpreter before the dedicated PDAL
 # environment. Application packages are installed into the PDAL environment,
@@ -58,6 +54,12 @@ ENV PIP_NO_CACHE_DIR=1
 
 COPY . /app
 COPY --from=v2-web-builder /build/dist/web-operations /app/dist/web-operations
+
+# Keep the release identity after the expensive, stable dependency layers.
+# A new commit must not invalidate the PDAL/Python environment on every build.
+ARG SMART_BAMBOO_BUILD_COMMIT=unknown
+LABEL org.opencontainers.image.title="Smart Bamboo V2" \
+      org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"
 
 EXPOSE 8010
 

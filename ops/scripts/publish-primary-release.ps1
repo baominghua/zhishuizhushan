@@ -13,6 +13,7 @@ param(
     [string]$ImageCacheDirectory = "D:\SmartBambooReleaseCache",
     [switch]$InstallKey,
     [switch]$IncludeImage,
+    [switch]$ReuseProductionImage,
     [switch]$Force,
     [switch]$KeepBundle,
     [switch]$KeepImageArchive,
@@ -117,6 +118,11 @@ $ssh = Require-Command -Name "ssh"
 $scp = Require-Command -Name "scp"
 $sshKeygen = Require-Command -Name "ssh-keygen"
 $wsl = if ($IncludeImage) { Require-Command -Name "wsl" } else { "" }
+$tar = if ($ReuseProductionImage) { Require-Command -Name "tar" } else { "" }
+
+if ($IncludeImage -and $ReuseProductionImage) {
+    throw "IncludeImage 与 ReuseProductionImage 不能同时使用。"
+}
 
 if (-not $Repository) {
     $configPath = Join-Path $env:LOCALAPPDATA "SmartBamboo\Tools\release-publisher.json"
@@ -164,7 +170,9 @@ $cacheDirectory = Join-Path $env:LOCALAPPDATA "SmartBamboo\ReleaseCache"
 New-Item -ItemType Directory -Path $cacheDirectory -Force | Out-Null
 $bundlePath = Join-Path $cacheDirectory "$ReleaseTag.bundle"
 $sourceArchivePath = Join-Path $cacheDirectory "$ReleaseTag.source.tar"
+$webArchivePath = Join-Path $cacheDirectory "$ReleaseTag.web.tar.gz"
 $remoteBundle = "$RemoteBundleDirectory/$ReleaseTag.bundle"
+$remoteWebArchive = "$RemoteBundleDirectory/$ReleaseTag.web.tar.gz"
 $imageName = "smart-bamboo-app:$ReleaseTag"
 $imageArchivePath = Join-Path $ImageCacheDirectory "$ReleaseTag.image.tar.gz"
 $remoteImageArchive = "$RemoteBundleDirectory/$ReleaseTag.image.tar.gz"
@@ -182,6 +190,10 @@ if ($IncludeImage) {
     Write-Host "  传输方式：本机构建镜像 + Git Bundle → SSH"
     Write-Host "  Docker：WSL $WslDistribution / $imageName"
     Write-Host "  说明：服务器无需访问 GitHub 或 Docker Hub，也不会在服务器重新构建。"
+} elseif ($ReuseProductionImage) {
+    Write-Host "  传输方式：Git Bundle + 本机前端产物 → SSH 代码快速发布"
+    Write-Host "  Docker：复用服务器当前健康生产镜像的依赖层，不访问外网。"
+    Write-Host "  说明：仅适用于未修改运行时依赖与基础镜像的代码版本。"
 } else {
     Write-Host "  传输方式：Git Bundle → SSH（服务器无需访问 GitHub）"
     Write-Host "  说明：服务器使用本地缓存的 Docker 基础镜像完成构建。"
@@ -203,6 +215,23 @@ Invoke-Native -FilePath $git -Arguments @("-C", $repositoryRoot, "bundle", "veri
 $bundleHash = Get-Sha256Hex -Path $bundlePath
 $bundleSize = [Math]::Round((Get-Item -LiteralPath $bundlePath).Length / 1MB, 2)
 Write-Host "  Bundle：$bundleSize MB / SHA256 $bundleHash"
+
+$webArchiveHash = ""
+$webArchiveSize = 0
+if ($ReuseProductionImage) {
+    $webDistDirectory = Join-Path $repositoryRoot "dist\web-operations"
+    $webEntryPoint = Join-Path $webDistDirectory "index.html"
+    if (-not (Test-Path -LiteralPath $webEntryPoint -PathType Leaf)) {
+        throw "代码快速发布需要先完成前端生产构建：$webEntryPoint"
+    }
+    if (Test-Path -LiteralPath $webArchivePath -PathType Leaf) {
+        Remove-Item -LiteralPath $webArchivePath -Force
+    }
+    Invoke-Native -FilePath $tar -Arguments @("-czf", $webArchivePath, "-C", $webDistDirectory, ".") -FailureMessage "打包前端生产产物失败"
+    $webArchiveHash = Get-Sha256Hex -Path $webArchivePath
+    $webArchiveSize = [Math]::Round((Get-Item -LiteralPath $webArchivePath).Length / 1MB, 2)
+    Write-Host "  前端产物：$webArchiveSize MB / SHA256 $webArchiveHash"
+}
 
 if ($DryRun) {
     Write-Host "DryRun 完成，未构建镜像、未连接服务器。Bundle 保留在：$bundlePath" -ForegroundColor Yellow
@@ -295,6 +324,11 @@ Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @($target, "mkdir -p '$Re
 Write-Host "[$(if ($IncludeImage) { '5/7' } else { '3/4' })] 从本机上传 Git Bundle……" -ForegroundColor Cyan
 Invoke-Native -FilePath $scp -Arguments @($scpCommon + @($bundlePath, "${target}:$remoteBundle")) -FailureMessage "上传 Git Bundle 失败"
 
+if ($ReuseProductionImage) {
+    Write-Host "[快速发布] 从本机上传前端生产产物……" -ForegroundColor Cyan
+    Invoke-Native -FilePath $scp -Arguments @($scpCommon + @($webArchivePath, "${target}:$remoteWebArchive")) -FailureMessage "上传前端生产产物失败"
+}
+
 if ($IncludeImage) {
     Write-Host "[6/7] 从本机上传生产镜像包……" -ForegroundColor Cyan
     Invoke-Native -FilePath $scp -Arguments @($scpCommon + @($imageArchivePath, "${target}:$remoteImageArchive")) -FailureMessage "上传生产镜像包失败"
@@ -319,6 +353,43 @@ test "`$loaded_revision" = '$TargetCommit'
 "@
     $prebuiltEnvironment = 'PREBUILT_IMAGE="$image_name" '
     $remoteImageCleanup = 'rm -f "$image_archive"'
+} elseif ($ReuseProductionImage) {
+    $remoteImageSetup = @"
+web_archive='$remoteWebArchive'
+expected_web_hash='$webArchiveHash'
+image_name='$imageName'
+test -f "`$web_archive"
+actual_web_hash=`$(sha256sum "`$web_archive" | awk '{print `$1}')
+test "`$actual_web_hash" = "`$expected_web_hash"
+git diff --quiet "`$base_commit" "`$target_commit" -- server/requirements.txt || {
+  echo '代码快速发布拒绝运行：Python 生产依赖已变化，请使用完整镜像发布。' >&2
+  exit 1
+}
+current_container=`$(docker ps --filter label=com.docker.compose.project=smart-bamboo-primary --filter label=com.docker.compose.service=app --format '{{.ID}}' | head -n 1)
+test -n "`$current_container"
+base_image=`$(docker inspect --format='{{.Config.Image}}' "`$current_container")
+case "`$base_image" in smart-bamboo-app:*) ;; *) exit 1 ;; esac
+build_context=`$(mktemp -d /var/tmp/smart-bamboo-overlay.XXXXXX)
+test -n "`$build_context"
+cleanup_overlay_context() { rm -rf -- "`$build_context"; }
+trap cleanup_overlay_context EXIT
+git archive "`$target_commit" | tar -x -C "`$build_context"
+mkdir -p "`$build_context/dist/web-operations"
+tar -xzf "`$web_archive" -C "`$build_context/dist/web-operations"
+sed -i '/^dist\/$/d' "`$build_context/.dockerignore"
+DOCKER_BUILDKIT=1 docker build --progress plain \
+  --build-arg "BASE_IMAGE=`$base_image" \
+  --build-arg "SMART_BAMBOO_BUILD_COMMIT=`$target_commit" \
+  -t "`$image_name" \
+  -f "`$build_context/Dockerfile.release-overlay" \
+  "`$build_context"
+overlay_revision=`$(docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "`$image_name")
+test "`$overlay_revision" = "`$target_commit"
+cleanup_overlay_context
+trap - EXIT
+"@
+    $prebuiltEnvironment = 'PREBUILT_IMAGE="$image_name" '
+    $remoteImageCleanup = 'rm -f "$web_archive"'
 }
 $remoteScript = @"
 set -Eeuo pipefail
@@ -332,6 +403,7 @@ actual_hash=`$(sha256sum "`$bundle" | awk '{print `$1}')
 test "`$actual_hash" = "`$expected_hash"
 cd "`$repository"
 test -z "`$(git status --porcelain)"
+base_commit=`$(git rev-parse HEAD)
 git bundle verify "`$bundle" >/dev/null
 git fetch --no-tags "`$bundle" "`$target_commit"
 test "`$(git rev-parse FETCH_HEAD)" = "`$target_commit"
@@ -363,6 +435,15 @@ if ($IncludeImage -and -not $KeepImageArchive) {
         throw "拒绝删除缓存目录之外的镜像包：$resolvedImageArchive"
     }
     Remove-Item -LiteralPath $resolvedImageArchive -Force
+}
+
+if ($ReuseProductionImage -and (Test-Path -LiteralPath $webArchivePath -PathType Leaf)) {
+    $resolvedWebArchive = (Resolve-Path -LiteralPath $webArchivePath).Path
+    $resolvedCache = (Resolve-Path -LiteralPath $cacheDirectory).Path
+    if (-not $resolvedWebArchive.StartsWith($resolvedCache + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝删除缓存目录之外的前端包：$resolvedWebArchive"
+    }
+    Remove-Item -LiteralPath $resolvedWebArchive -Force
 }
 
 Write-Host "`n本地直发完成：$ReleaseTag" -ForegroundColor Green

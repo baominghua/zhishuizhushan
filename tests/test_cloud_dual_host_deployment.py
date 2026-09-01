@@ -1323,9 +1323,13 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert "docker save $(ConvertTo-BashSingleQuoted -Value $imageName)" in publisher
     assert "gzip -dc \"`$image_archive\" | docker load" in publisher
     assert 'PREBUILT_IMAGE="$image_name"' in publisher
+    assert "[switch]$ReuseProductionImage" in publisher
+    assert "Dockerfile.release-overlay" in publisher
+    assert "expected_web_hash" in publisher
+    assert "代码快速发布拒绝运行" in publisher
     assert 'Join-Path $env:LOCALAPPDATA "SmartBamboo\\Tools"' in installer
     assert "[Text.Encoding]::ASCII" in installer
-    assert "-IncludeImage" in installer
+    assert "-ReuseProductionImage" in installer
     assert '$shortcut.TargetPath = $env:ComSpec' in installer
     assert '$shortcut.Arguments = "/d /c' in installer
     assert 'RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"' in deploy_script
@@ -1335,6 +1339,14 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'echo "=== VERIFY PREBUILT APPLICATION IMAGE ==="' in deploy_script
     assert 'prebuilt_image_verified=${PREBUILT_IMAGE}' in deploy_script
     assert 'org.opencontainers.image.revision="${SMART_BAMBOO_BUILD_COMMIT}"' in dockerfile
+    assert dockerfile.index("python -m pip install") < dockerfile.index(
+        'LABEL org.opencontainers.image.title="Smart Bamboo V2"'
+    )
+    release_overlay = read_text("Dockerfile.release-overlay")
+    assert "ARG BASE_IMAGE" in release_overlay
+    assert "FROM ${BASE_IMAGE}" in release_overlay
+    assert "! -name data" in release_overlay
+    assert 'com.smart-bamboo.release.mode="code-overlay"' in release_overlay
     assert "NPM_CONFIG_FETCH_TIMEOUT=600000" in dockerfile
     assert "COREPACK_NPM_REGISTRY=${NPM_REGISTRY}" in dockerfile
     assert 'pnpm config set registry "${NPM_REGISTRY}"' in dockerfile
