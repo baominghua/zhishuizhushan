@@ -64,6 +64,8 @@ def test_v2_map_uses_vector_tiles_in_2d_and_viewport_geojson_in_3d():
     assert "new VectorLayer" in open_layers
     assert "new VectorTileLayer" in open_layers
     assert "new VectorTileSource" in open_layers
+    assert "updateWhileAnimating: true" in open_layers
+    assert "updateWhileInteracting: true" in open_layers
     assert "/api/map/forest-blocks/tiles/{z}/{x}/{y}.pbf?maxFeatures=5000" in open_layers
     assert 'idProperty: "id"' in open_layers
     assert "BLOCK_LABEL_MIN_ZOOM = 12" in open_layers
@@ -744,6 +746,9 @@ def test_imagery_assets_have_independent_2d_and_3d_inspection_workspaces():
     assert 'pathname === "/asset-viewer"' in shell
     assert "ImageClarityStatus" in page
     assert "showBasemap" in page
+    assert "const [showForestBlocks, setShowForestBlocks] = useState(true)" in page
+    assert "mergeForestBlockCollections" in page
+    assert "placeholderData: (previous) => previous" in page
     assert "qualityMode={quality}" in page
     assert "onSpatialLoadProgress" in page
     assert "eastOffset" in page and "northOffset" in page and "heightOffset" in page

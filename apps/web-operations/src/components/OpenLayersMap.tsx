@@ -214,6 +214,12 @@ export function OpenLayersMap({
       }),
       declutter: "forest-block-labels",
       zIndex: 30,
+      // Keep already decoded boundary tiles on screen while adjacent tiles are
+      // fetched during pan/zoom. Boundaries are foundational map context and
+      // must not disappear simply because the camera is still moving.
+      preload: 1,
+      updateWhileAnimating: true,
+      updateWhileInteracting: true,
       style: (feature, resolution) => createBlockStyle(feature, selectedBlockIdRef.current, resolution),
     });
     const selectedLayer = new VectorLayer({

@@ -9,7 +9,7 @@ import type { CopcViewerStatus } from "../components/CopcPointCloudViewer";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
 import { OpenLayersMap } from "../components/OpenLayersMap";
 import { QueryState } from "../components/QueryState";
-import { mergeSelectedForestBlock } from "../maps/forestBlocks";
+import { mergeForestBlockCollections, mergeSelectedForestBlock } from "../maps/forestBlocks";
 import type { MapAreaFocusRequest, MapLayerState, MapSceneModel, MapViewMetrics, MapViewport, MapZoomRequest } from "../maps/scene";
 
 const CesiumGlobe = lazy(async () => ({ default: (await import("../components/CesiumGlobe")).CesiumGlobe }));
@@ -77,7 +77,9 @@ export function AssetViewerPage() {
   const asset = assetQuery.data;
   const mode = viewerMode(asset);
   const [showBasemap, setShowBasemap] = useState(false);
-  const [showForestBlocks, setShowForestBlocks] = useState(Boolean(blockId));
+  // Forest-block boundaries are foundational spatial context. Keep them on by
+  // default even when the viewer is opened directly from the imagery ledger.
+  const [showForestBlocks, setShowForestBlocks] = useState(true);
   const [metrics, setMetrics] = useState<MapViewMetrics | null>(null);
   const [quality, setQuality] = useState<"smooth" | "standard" | "detail">("smooth");
   const [zoomRequest, setZoomRequest] = useState<MapZoomRequest>({ sequence: 0, direction: "in" });
@@ -109,10 +111,20 @@ export function AssetViewerPage() {
     // opened without a specific forest block.
     enabled: showForestBlocks && mode === "3d" && !blockId,
     staleTime: 60_000,
+    gcTime: 15 * 60_000,
+    placeholderData: (previous) => previous,
   });
+  const [cachedBoundaryFeatures, setCachedBoundaryFeatures] = useState(EMPTY_FEATURES);
+  useEffect(() => {
+    if (!viewportForestBlocks.data || viewportForestBlocks.isPlaceholderData) return;
+    // Preserve the last successful outline while the next viewport is loading.
+    // The new collection is merged atomically, so a slow request cannot make
+    // the foundational boundary layer flash off and back on.
+    setCachedBoundaryFeatures((current) => mergeForestBlockCollections(current, viewportForestBlocks.data));
+  }, [viewportForestBlocks.data, viewportForestBlocks.isPlaceholderData]);
   const boundaryFeatures = useMemo(
-    () => mergeSelectedForestBlock(blockId ? undefined : viewportForestBlocks.data, selectedForestBlock.data),
-    [blockId, selectedForestBlock.data, viewportForestBlocks.data],
+    () => mergeSelectedForestBlock(blockId ? undefined : cachedBoundaryFeatures, selectedForestBlock.data),
+    [blockId, cachedBoundaryFeatures, selectedForestBlock.data],
   );
   const viewerAssets = useMemo(() => asset ? [asset] : [], [asset]);
   const scene = useMemo(() => sceneForAsset(asset), [asset]);
