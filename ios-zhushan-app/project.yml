@@ -1,0 +1,20 @@
+name: SmartBambooField
+options:
+  bundleIdPrefix: com.zhushan
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  SmartBambooField:
+    type: application
+    platform: iOS
+    sources:
+      - SmartBambooField
+    info:
+      path: SmartBambooField/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zhushan.smartbamboo.field
+        PRODUCT_NAME: 智慧竹山
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_STYLE: Automatic
+

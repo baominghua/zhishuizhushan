@@ -39,7 +39,7 @@
 
 ## iOS 计划
 
-当前状态（2026-09-01）：共享桥接事件和浏览器降级协议已由 Android/Web 首先落地；iOS 工程、签名与真机验证尚未开始。
+当前状态（2026-09-01）：I1 源码原型已建立，使用 SwiftUI + WKWebView 复用现场 Web，并接入同源导航约束、系统 TLS、协议缓存、Core Location、NWPathMonitor、Keychain、离线页和返回手势；与 Android 共用 `smart-bamboo-native:*` 网络/定位事件。源码契约测试已通过。当前 Windows 环境无法执行 Xcode 编译，正式域名、签名、相机/照片选择、离线恢复与真机全流程仍需在 macOS/Xcode 环境验收，因此不能标记为 TestFlight 可用。
 
 ### I1 同协议原型
 
