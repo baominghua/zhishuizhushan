@@ -945,6 +945,27 @@ def test_sbet_trajectory_reads_standard_seventeen_double_records(tmp_path):
     assert points[0] == pytest.approx([117.1, 27.2, 800])
 
 
+def test_large_sbet_trajectory_is_sampled_without_losing_endpoints(tmp_path):
+    import struct
+    import server.app as app_module
+
+    path = tmp_path / "large_sbet.out"
+    records = []
+    for index in range(100):
+        values = [0.0] * 17
+        values[1] = app_module.math.radians(27.2 + index * 0.00001)
+        values[2] = app_module.math.radians(117.1 + index * 0.00001)
+        values[3] = 800 + index
+        records.append(struct.pack("<17d", *values))
+    path.write_bytes(b"".join(records))
+
+    points = app_module.parse_sbet_trajectory(path, limit=10)
+
+    assert len(points) <= 11
+    assert points[0] == pytest.approx([117.1, 27.2, 800])
+    assert points[-1] == pytest.approx([117.10099, 27.20099, 899])
+
+
 def test_dji_sbet_text_trajectory_converts_radians_to_degrees(tmp_path):
     import server.app as app_module
 

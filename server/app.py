@@ -4337,6 +4337,7 @@ def resolve_point_cloud_import_sources(path_value: str, *, recursive: bool) -> l
 DJI_TRAJECTORY_SUFFIXES = {".csv", ".out", ".txt"}
 DJI_TRAJECTORY_MAX_POINTS = 2_500
 DJI_TRAJECTORY_MAX_TEXT_BYTES = 64 * 1024 * 1024
+DJI_TRAJECTORY_PARSE_POINTS_PER_FILE = 5_000
 
 
 def discover_dji_trajectory_metadata(source_paths: list[Path]) -> dict[str, Any]:
@@ -4516,15 +4517,24 @@ def parse_text_trajectory(path: Path, crs: str) -> list[list[float]]:
     return _transform_trajectory_coordinates(raw_points, crs)
 
 
-def parse_sbet_trajectory(path: Path) -> list[list[float]]:
+def parse_sbet_trajectory(path: Path, limit: int = DJI_TRAJECTORY_PARSE_POINTS_PER_FILE) -> list[list[float]]:
     """Read the standard 17-double SBET record (lat/lon are radians)."""
     record_size = struct.calcsize("<17d")
     size = path.stat().st_size
     if not size or size % record_size:
         return []
+    record_count = size // record_size
+    step = max(1, math.ceil(record_count / max(2, limit)))
+    indexes = list(range(0, record_count, step))
+    if indexes[-1] != record_count - 1:
+        indexes.append(record_count - 1)
     points: list[list[float]] = []
     with path.open("rb") as source:
-        while record := source.read(record_size):
+        for index in indexes:
+            source.seek(index * record_size)
+            record = source.read(record_size)
+            if len(record) != record_size:
+                continue
             values = struct.unpack("<17d", record)
             latitude = math.degrees(values[1])
             longitude = math.degrees(values[2])
@@ -4624,7 +4634,10 @@ def scene_trajectory_geojson(scene: dict[str, Any]) -> dict[str, Any]:
         except (OSError, ValueError):
             continue
         if len(candidate) >= 2:
-            source_point_count += len(candidate)
+            if "_sbet" in path.name.lower() and path.suffix.lower() == ".out":
+                source_point_count += path.stat().st_size // struct.calcsize("<17d")
+            else:
+                source_point_count += len(candidate)
             total_distance_km += trajectory_distance_km(candidate)
             segments.append(candidate)
     segment_limit = max(2, DJI_TRAJECTORY_MAX_POINTS // len(segments)) if segments else DJI_TRAJECTORY_MAX_POINTS
