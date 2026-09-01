@@ -9,7 +9,7 @@ import MouseWheelZoom from "ol/interaction/MouseWheelZoom";
 import { fromLonLat, transformExtent } from "ol/proj";
 import VectorSource from "ol/source/Vector";
 import XYZ from "ol/source/XYZ";
-import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
+import { Circle as CircleStyle, Fill, RegularShape, Stroke, Style } from "ol/style";
 import View from "ol/View";
 import { useEffect, useRef } from "react";
 import "ol/ol.css";
@@ -35,14 +35,14 @@ export function MosoInventoryEvidenceMap({ asset, geometry, candidates, blockNam
       const [boundary] = new GeoJSON().readFeatures({ type: "FeatureCollection", features: [{ type: "Feature", properties: { name: blockName }, geometry }] }, { dataProjection: "EPSG:4326", featureProjection: "EPSG:3857" });
       if (boundary) { boundary.setId("selected-forest-block"); boundarySource.addFeature(boundary); }
     }
-    const boundaryCasing = new VectorLayer({ source: boundarySource, style: new Style({ fill: new Fill({ color: "rgba(11, 49, 39, 0.025)" }), stroke: new Stroke({ color: "rgba(1, 28, 22, 0.94)", width: 5 }) }), zIndex: 10 });
-    const boundaryLine = new VectorLayer({ source: boundarySource, style: new Style({ stroke: new Stroke({ color: "#b8ffe1", width: 2.2 }) }), zIndex: 11 });
+    const boundaryCasing = new VectorLayer({ source: boundarySource, style: new Style({ fill: new Fill({ color: "rgba(11, 49, 39, 0.015)" }), stroke: new Stroke({ color: "rgba(1, 18, 24, 0.96)", width: 6.4 }) }), zIndex: 10 });
+    const boundaryLine = new VectorLayer({ source: boundarySource, style: new Style({ stroke: new Stroke({ color: "#35d6ff", width: 2.6 }) }), zIndex: 11 });
     const pointSource = new VectorSource({ features: candidates.map((candidate, index) => new Feature({ geometry: new Point(fromLonLat([candidate.longitude, candidate.latitude])), score: candidate.score, index })) });
-    const pointLayer = new VectorLayer({ source: pointSource, declutter: true, zIndex: 12, style: (feature) => {
+    const pointLayer = new VectorLayer({ source: pointSource, declutter: false, zIndex: 12, style: (feature) => {
       const score = Number(feature.get("score") || 0.5);
       return [
-        new Style({ image: new CircleStyle({ radius: 6.5, fill: new Fill({ color: "rgba(3, 40, 31, .7)" }) }) }),
-        new Style({ image: new CircleStyle({ radius: 2.2 + Math.max(0, Math.min(1, score)) * 1.8, fill: new Fill({ color: "#b8ff86" }), stroke: new Stroke({ color: "rgba(255,255,255,.92)", width: 0.8 }) }) }),
+        new Style({ image: new CircleStyle({ radius: 7.6, fill: new Fill({ color: "rgba(2, 13, 20, .88)" }), stroke: new Stroke({ color: "rgba(255, 255, 255, .96)", width: 1.35 }) }) }),
+        new Style({ image: new RegularShape({ points: 4, radius: 3.4 + Math.max(0, Math.min(1, score)) * 1.4, angle: Math.PI / 4, fill: new Fill({ color: "#ffb000" }), stroke: new Stroke({ color: "#3b2100", width: 1.15 }) }) }),
       ];
     } });
     const view = new View({ center: fromLonLat([(asset.bounds[0] + asset.bounds[2]) / 2, (asset.bounds[1] + asset.bounds[3]) / 2]), zoom: 17, minZoom: 12, maxZoom: asset.maximumZoom || 24, constrainResolution: true, smoothResolutionConstraint: true });

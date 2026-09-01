@@ -147,6 +147,20 @@ def test_v2_workspace_forest_block_locator_opens_the_selected_block_in_gis():
     assert "geometryBounds(record.geometry)" in map_page
 
 
+def test_v2_workspace_routes_and_moso_markers_remain_distinct_from_green_canopy():
+    web_root = ROOT_DIR / "apps" / "web-operations" / "src"
+    workspace = (web_root / "pages" / "WorkspacePage.tsx").read_text(encoding="utf-8")
+    evidence_map = (web_root / "components" / "MosoInventoryEvidenceMap.tsx").read_text(encoding="utf-8")
+
+    assert 'to: "/resources/imports", label: "成果接入"' in workspace
+    assert 'to: "/operations/patrol", label: "巡护办理"' in workspace
+    assert 'to: "/imports"' not in workspace
+    assert 'to: "/patrol"' not in workspace
+    assert 'color: "#ffb000"' in evidence_map
+    assert "new RegularShape" in evidence_map
+    assert "declutter: false" in evidence_map
+
+
 def test_v2_basemap_settings_are_managed_server_side():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     router = (web_root / "router.tsx").read_text(encoding="utf-8")

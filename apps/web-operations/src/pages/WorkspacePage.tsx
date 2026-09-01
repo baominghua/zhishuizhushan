@@ -26,8 +26,8 @@ import { QueryState } from "../components/QueryState";
 
 const quickActions: Array<{ to: string; label: string; hint: string; icon: LucideIcon }> = [
   { to: "/map", label: "GIS 一张图", hint: "查看林班空间态势", icon: MapPinned },
-  { to: "/imports", label: "成果接入", hint: "导入 KMZ 与调查成果", icon: Upload },
-  { to: "/patrol", label: "巡护办理", hint: "处理巡护任务与记录", icon: ShieldCheck },
+  { to: "/resources/imports", label: "成果接入", hint: "导入 KMZ 与调查成果", icon: Upload },
+  { to: "/operations/patrol", label: "巡护办理", hint: "处理巡护任务与记录", icon: ShieldCheck },
   { to: "/carbon/estimates", label: "碳汇项目", hint: "核算碳储量与收益", icon: Sprout },
 ];
 
