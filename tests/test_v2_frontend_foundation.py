@@ -842,6 +842,22 @@ def test_gis_annotation_selection_keeps_point_details_separate_from_forest_block
     assert "setSelectedMapAnnotationId(null)" in page
 
 
+def test_gis_boundaries_remain_visible_during_viewport_and_filter_refreshes():
+    web_root = ROOT_DIR / "apps" / "web-operations" / "src"
+    page = (web_root / "pages" / "MapPage.tsx").read_text(encoding="utf-8")
+    canvas = (web_root / "components" / "MapCanvas.tsx").read_text(encoding="utf-8")
+    client = (web_root / "api" / "client.ts").read_text(encoding="utf-8")
+
+    assert "placeholderData: (previous) => previous" in page
+    assert "filterChanged && mapBlocks.isPlaceholderData" in page
+    assert "setCachedMapBlocks(EMPTY_FOREST_BLOCK_COLLECTION)" not in page
+    assert "forestBlockLoading={mapBlocks.isFetching}" in page
+    assert "forestBlockError={Boolean(mapBlocks.error)}" in page
+    assert "更新中 · 已保留当前边界" in canvas
+    assert "更新失败 · 已保留上次边界" in canvas
+    assert "requestDurationMs: Math.max(0, performance.now() - startedAt)" in client
+
+
 def test_forest_road_ledger_and_spatial_layer_are_wired_into_both_map_engines():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     page = (web_root / "pages" / "MapPage.tsx").read_text(encoding="utf-8")

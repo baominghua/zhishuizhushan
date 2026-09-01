@@ -988,6 +988,12 @@ def test_map_geojson_can_limit_features_and_report_truncation(app_client):
         "geometryMode": "simplified",
         "simplificationTolerance": 0.00001,
     }
+    assert response.headers["cache-control"] == "private, max-age=30, stale-while-revalidate=120"
+    assert response.headers["server-timing"].startswith("forest-blocks;dur=")
+    assert response.headers["x-gis-feature-count"] == "2"
+    assert response.headers["x-gis-total-count"] == "3"
+    assert response.headers["x-gis-truncated"] == "true"
+    assert response.headers["x-gis-geometry-mode"] == "simplified"
 
 
 def test_deleted_block_is_hidden_but_preserved_for_later_writes(

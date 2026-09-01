@@ -342,11 +342,11 @@ export function MapPage() {
 
   useEffect(() => {
     const filterChanged = boundaryCacheFilterRef.current !== appliedFilterQuery;
-    if (filterChanged) {
-      boundaryCacheFilterRef.current = appliedFilterQuery;
-      setCachedMapBlocks(EMPTY_FOREST_BLOCK_COLLECTION);
-    }
+    // Keep the last successful boundary layer visible while a new filter or
+    // viewport request is in flight. Replace it atomically only after fresh
+    // data arrives, avoiding the blank-map flash seen on slower connections.
     if (!mapBlocks.data || (filterChanged && mapBlocks.isPlaceholderData)) return;
+    boundaryCacheFilterRef.current = appliedFilterQuery;
     setCachedMapBlocks((current) => mergeForestBlockCollections(
       filterChanged ? EMPTY_FOREST_BLOCK_COLLECTION : current,
       mapBlocks.data,
@@ -738,6 +738,9 @@ export function MapPage() {
           situationAssets={visibleMapAnnotations}
           onSelectSituationAsset={selectMapAnnotation}
           detailMode={detailMode}
+          forestBlockLoading={mapBlocks.isFetching}
+          forestBlockError={Boolean(mapBlocks.error)}
+          forestBlockRequestDurationMs={mapBlocks.data?.meta.requestDurationMs}
         />
         {mode === "2d" && (
           <ImageClarityStatus metrics={viewMetrics} asset={displayedImageryAssets[0]} />

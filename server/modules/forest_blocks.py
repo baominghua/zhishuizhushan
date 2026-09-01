@@ -3004,13 +3004,24 @@ def require_forest_block_map_view(context: AuthContext) -> None:
 
 @router.get("/map/forest-blocks.geojson")
 def forest_blocks_geojson(
+    response: Response,
     filters: ForestBlockFilters = Depends(filter_params),
     maxFeatures: int = Query(default=2000, ge=1, le=10000),
     zoom: float = Query(default=14, ge=0, le=24),
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     require_forest_block_map_view(context)
-    return forest_block_feature_collection(filters, context, max_features=maxFeatures, zoom=zoom)
+    collection = forest_block_feature_collection(filters, context, max_features=maxFeatures, zoom=zoom)
+    duration_ms = max(0.0, (time.perf_counter() - started_at) * 1000)
+    meta = collection["meta"]
+    response.headers["Cache-Control"] = "private, max-age=30, stale-while-revalidate=120"
+    response.headers["Server-Timing"] = f'forest-blocks;dur={duration_ms:.2f};desc="Forest block viewport query"'
+    response.headers["X-GIS-Feature-Count"] = str(meta["returned"])
+    response.headers["X-GIS-Total-Count"] = str(meta["total"])
+    response.headers["X-GIS-Truncated"] = str(meta["truncated"]).lower()
+    response.headers["X-GIS-Geometry-Mode"] = str(meta["geometryMode"])
+    return collection
 
 
 @router.get("/map/forest-blocks/tiles/{z}/{x}/{y}.pbf")
@@ -3022,6 +3033,7 @@ def forest_blocks_vector_tile(
     maxFeatures: int = Query(default=5000, ge=1, le=10000),
     context: AuthContext = Depends(request_context),
 ) -> Response:
+    started_at = time.perf_counter()
     require_forest_block_map_view(context)
     content, cache_status = forest_block_vector_tile(
         z,
@@ -3031,12 +3043,14 @@ def forest_blocks_vector_tile(
         context,
         max_features=maxFeatures,
     )
+    duration_ms = max(0.0, (time.perf_counter() - started_at) * 1000)
     return Response(
         content=content,
         media_type="application/vnd.mapbox-vector-tile",
         headers={
             "Cache-Control": f"private, max-age={min(60, FOREST_VECTOR_TILE_CACHE_TTL_SECONDS)}",
             "X-Vector-Tile-Cache": cache_status,
+            "Server-Timing": f'forest-block-tile;dur={duration_ms:.2f};desc="Forest block vector tile"',
         },
     )
 

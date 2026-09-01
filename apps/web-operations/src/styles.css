@@ -2122,6 +2122,14 @@ svg {
   border-left: 1px solid rgba(223, 242, 233, 0.22);
 }
 
+.map-feature-status.loading {
+  border-color: rgba(255, 210, 105, 0.7);
+}
+
+.map-feature-status.error {
+  border-color: rgba(255, 131, 111, 0.76);
+}
+
 .map-service-state {
   display: grid;
   width: 100%;

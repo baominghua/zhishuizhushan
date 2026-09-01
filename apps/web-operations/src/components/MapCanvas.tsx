@@ -45,6 +45,9 @@ interface MapCanvasProps {
   situationAssets?: MapSituationAsset[];
   onSelectSituationAsset?: (id: string) => void;
   detailMode?: boolean;
+  forestBlockLoading?: boolean;
+  forestBlockError?: boolean;
+  forestBlockRequestDurationMs?: number;
 }
 
 export type MapSituationAsset = MapAnnotation;
@@ -76,6 +79,9 @@ export function MapCanvas({
   situationAssets = [],
   onSelectSituationAsset,
   detailMode = false,
+  forestBlockLoading = false,
+  forestBlockError = false,
+  forestBlockRequestDurationMs,
 }: MapCanvasProps) {
   if (loading) return <LoadingState>正在连接地图服务</LoadingState>;
 
@@ -151,11 +157,20 @@ export function MapCanvas({
         <small>{config.available ? "天地图服务端缓存" : "OpenStreetMap 备用底图"}</small>
       </div>
       {layers.forestBlocks && (
-        <div className="map-feature-status" aria-live="polite">
+        <div className={`map-feature-status ${forestBlockError ? "error" : forestBlockLoading ? "loading" : "ready"}`} aria-live="polite">
           {mode === "2d" ? (
-            <><strong>MVT</strong><span>林班矢量瓦片</span><small>按视窗加载</small></>
+            <><strong>MVT</strong><span>林班矢量瓦片</span><small>{forestBlockError ? "更新失败 · 当前边界继续显示" : forestBlockLoading ? "更新中 · 当前边界继续显示" : "按视窗持久在线"}</small></>
           ) : (
-            <><strong>{featureCollection.meta.returned}</strong><span>个林班边界</span>{featureCollection.meta.truncated && <small>当前层级仅显示前 {featureCollection.meta.maxFeatures} 个</small>}</>
+            <>
+              <strong>{featureCollection.meta.returned}</strong><span>个林班边界</span>
+              <small>
+                {forestBlockError
+                  ? "更新失败 · 已保留上次边界"
+                  : forestBlockLoading
+                    ? "更新中 · 已保留当前边界"
+                    : `${forestBlockRequestDurationMs === undefined ? "已持久在线" : `${Math.round(forestBlockRequestDurationMs)} ms`}${featureCollection.meta.truncated ? ` · 当前层级限 ${featureCollection.meta.maxFeatures} 个` : ""}`}
+              </small>
+            </>
           )}
         </div>
       )}

@@ -514,6 +514,8 @@ export interface ForestBlockFeatureCollection {
     zoom: number;
     geometryMode: "full" | "simplified";
     simplificationTolerance: number;
+    /** Browser-observed API round trip. Added client-side for GIS diagnostics. */
+    requestDurationMs?: number;
   };
   features: ForestBlockMapFeature[];
 }

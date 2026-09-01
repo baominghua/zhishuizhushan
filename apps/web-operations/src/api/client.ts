@@ -362,10 +362,19 @@ export const api = {
     request<CarbonEstimateRecord>(`/api/v2/carbon/estimates/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteCarbonEstimate: (id: string) =>
     request<{ ok: boolean; deleted: string }>(`/api/v2/carbon/estimates/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  forestBlockMap: (query: ForestBlockQuery & { bbox: string; zoom: number; maxFeatures?: number }) =>
-    request<ForestBlockFeatureCollection>(
+  forestBlockMap: async (query: ForestBlockQuery & { bbox: string; zoom: number; maxFeatures?: number }) => {
+    const startedAt = performance.now();
+    const collection = await request<ForestBlockFeatureCollection>(
       `/api/map/forest-blocks.geojson?${queryString(query)}`,
-    ),
+    );
+    return {
+      ...collection,
+      meta: {
+        ...collection.meta,
+        requestDurationMs: Math.max(0, performance.now() - startedAt),
+      },
+    };
+  },
   forestBlocks: (query: string | ForestBlockQuery = "") => {
     const filters = typeof query === "string" ? { q: query } : query;
     const search = new URLSearchParams(queryString({ ...filters, limit: filters.limit ?? 20 }));
