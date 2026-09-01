@@ -7,13 +7,13 @@ import type { ForestBlockFeatureCollection, ImageryAsset } from "../api/types";
 import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import type { CopcViewerStatus } from "../components/CopcPointCloudViewer";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
-import { OpenLayersMap } from "../components/OpenLayersMap";
 import { QueryState } from "../components/QueryState";
 import { mergeForestBlockCollections, mergeSelectedForestBlock } from "../maps/forestBlocks";
 import type { MapAreaFocusRequest, MapLayerState, MapSceneModel, MapViewMetrics, MapViewport, MapZoomRequest } from "../maps/scene";
 
 const CesiumGlobe = lazy(async () => ({ default: (await import("../components/CesiumGlobe")).CesiumGlobe }));
 const CopcPointCloudViewer = lazy(async () => ({ default: (await import("../components/CopcPointCloudViewer")).CopcPointCloudViewer }));
+const OpenLayersMap = lazy(async () => ({ default: (await import("../components/OpenLayersMap")).OpenLayersMap }));
 
 const EMPTY_FEATURES: ForestBlockFeatureCollection = {
   type: "FeatureCollection",
@@ -261,7 +261,7 @@ export function AssetViewerPage() {
           <div className="asset-viewer-layout">
             <section className="asset-viewer-stage">
               {mode === "2d" ? (
-                <OpenLayersMap
+                <Suspense fallback={<div className="map-service-state">正在启动二维影像引擎</div>}><OpenLayersMap
                   config={mapConfig.data}
                   scene={scene}
                   layers={layers}
@@ -277,7 +277,7 @@ export function AssetViewerPage() {
                   forestBlockFilterQuery=""
                   situationAssets={[]}
                   detailMode
-                />
+                /></Suspense>
               ) : useCopcViewer ? (
                 <Suspense fallback={<div className="map-service-state">正在启动 COPC 流式点云引擎</div>}>
                   <CopcPointCloudViewer

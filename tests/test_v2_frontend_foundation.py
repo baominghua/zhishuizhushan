@@ -168,6 +168,19 @@ def test_v2_workspace_routes_and_moso_markers_remain_distinct_from_green_canopy(
     assert "覆盖外推补量" in sandbox
 
 
+def test_map_engines_are_loaded_only_for_the_selected_view_mode():
+    web_root = ROOT_DIR / "apps" / "web-operations" / "src"
+    map_canvas = (web_root / "components" / "MapCanvas.tsx").read_text(encoding="utf-8")
+    asset_viewer = (web_root / "pages" / "AssetViewerPage.tsx").read_text(encoding="utf-8")
+
+    assert 'await import("./OpenLayersMap")' in map_canvas
+    assert 'await import("./CesiumGlobe")' in map_canvas
+    assert "正在启动二维地图" in map_canvas
+    assert 'await import("../components/OpenLayersMap")' in asset_viewer
+    assert 'await import("../components/CopcPointCloudViewer")' in asset_viewer
+    assert 'await import("../components/CesiumGlobe")' in asset_viewer
+
+
 def test_v2_basemap_settings_are_managed_server_side():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     router = (web_root / "router.tsx").read_text(encoding="utf-8")

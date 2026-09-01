@@ -11,13 +11,16 @@ import type {
   MapViewport,
   MapZoomRequest,
 } from "../maps/scene";
-import { OpenLayersMap } from "./OpenLayersMap";
 import type { Spatial3dDisplaySettings } from "./CesiumGlobe";
 import type { MapAnnotation } from "../maps/mapAnnotations";
 import { MapAnnotationLegend } from "./MapAnnotationLegend";
 
 const CesiumGlobe = lazy(async () => ({
   default: (await import("./CesiumGlobe")).CesiumGlobe,
+}));
+
+const OpenLayersMap = lazy(async () => ({
+  default: (await import("./OpenLayersMap")).OpenLayersMap,
 }));
 
 const EMPTY_ROAD_FEATURES: ForestRoadFeatureCollection = { type: "FeatureCollection", features: [] };
@@ -108,7 +111,7 @@ export function MapCanvas({
   return (
     <div className={`map-engine-canvas map-engine-${mode}`}>
       {mode === "2d" ? (
-        <OpenLayersMap
+        <Suspense fallback={<LoadingState>正在启动二维地图</LoadingState>}><OpenLayersMap
           config={config}
           scene={scene}
           layers={layers}
@@ -126,7 +129,7 @@ export function MapCanvas({
           situationAssets={situationAssets}
           onSelectSituationAsset={onSelectSituationAsset}
           detailMode={detailMode}
-        />
+        /></Suspense>
       ) : (
         <Suspense fallback={<LoadingState>正在启动三维地球</LoadingState>}>
           <CesiumGlobe
