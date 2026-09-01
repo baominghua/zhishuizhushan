@@ -18,7 +18,7 @@ import View from "ol/View";
 import { useEffect, useRef } from "react";
 import "ol/ol.css";
 
-import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
+import type { ForestBlockFeatureCollection, ForestRoadFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { MAP_ANNOTATION_COLORS } from "../maps/mapAnnotations";
 import type {
@@ -38,6 +38,7 @@ interface OpenLayersMapProps {
   zoomRequest: MapZoomRequest;
   areaFocusRequest: MapAreaFocusRequest;
   featureCollection: ForestBlockFeatureCollection;
+  roadFeatureCollection?: ForestRoadFeatureCollection;
   selectedBlockId: string | null;
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
@@ -48,6 +49,8 @@ interface OpenLayersMapProps {
   onSelectSituationAsset?: (id: string) => void;
   detailMode: boolean;
 }
+
+const EMPTY_ROAD_FEATURES: ForestRoadFeatureCollection = { type: "FeatureCollection", features: [] };
 
 const WEB_MERCATOR_MAX_RESOLUTION = 156543.03392804097;
 const BLOCK_LABEL_MIN_ZOOM = 12;
@@ -113,6 +116,31 @@ function createBlockStyle(feature: FeatureLike, selectedBlockId: string | null, 
   return [casing, line];
 }
 
+function createRoadStyle(feature: FeatureLike, resolution: number) {
+  const zoom = Math.log2(WEB_MERCATOR_MAX_RESOLUTION / resolution);
+  const condition = String(feature.get("condition") || "fair");
+  const color = condition === "closed" ? "#ff5b5b" : condition === "poor" ? "#ff8a3d" : "#ffc928";
+  const name = zoom >= 14 ? String(feature.get("name") || feature.get("roadCode") || "") : "";
+  return [
+    new Style({
+      stroke: new Stroke({ color: "rgba(30, 21, 8, 0.92)", width: 7 }),
+      zIndex: 34,
+    }),
+    new Style({
+      stroke: new Stroke({ color, width: 3.4 }),
+      text: name ? new Text({
+        text: name,
+        font: "700 12px system-ui, sans-serif",
+        fill: new Fill({ color: "#fff8dc" }),
+        stroke: new Stroke({ color: "rgba(33, 23, 7, 0.98)", width: 4 }),
+        placement: "line",
+        overflow: true,
+      }) : undefined,
+      zIndex: 35,
+    }),
+  ];
+}
+
 export function OpenLayersMap({
   config,
   scene,
@@ -121,6 +149,7 @@ export function OpenLayersMap({
   zoomRequest,
   areaFocusRequest,
   featureCollection,
+  roadFeatureCollection = EMPTY_ROAD_FEATURES,
   selectedBlockId,
   onSelectBlock,
   onViewportChange,
@@ -136,11 +165,13 @@ export function OpenLayersMap({
   const imageryLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const labelLayerRef = useRef<TileLayer<XYZ> | null>(null);
   const blockLayerRef = useRef<VectorTileLayer | null>(null);
+  const roadLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const selectedLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const situationLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const situationSourceRef = useRef(new VectorSource());
   const droneImageryLayersRef = useRef(new globalThis.Map<string, TileLayer<XYZ>>());
   const selectedSourceRef = useRef(new VectorSource());
+  const roadSourceRef = useRef(new VectorSource());
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
   const selectBlockRef = useRef(onSelectBlock);
   const selectSituationRef = useRef(onSelectSituationAsset);
@@ -191,6 +222,12 @@ export function OpenLayersMap({
       zIndex: 40,
       style: (feature, resolution) => createBlockStyle(feature, selectedBlockIdRef.current, resolution),
     });
+    const roadLayer = new VectorLayer({
+      source: roadSourceRef.current,
+      declutter: "forest-road-labels",
+      zIndex: 35,
+      style: createRoadStyle,
+    });
     const situationLayer = new VectorLayer({
       source: situationSourceRef.current,
       zIndex: 80,
@@ -198,7 +235,7 @@ export function OpenLayersMap({
     });
     const map = new Map({
       target: mapElement.current,
-      layers: [imagery, labels, blockLayer, selectedLayer, situationLayer],
+      layers: [imagery, labels, blockLayer, roadLayer, selectedLayer, situationLayer],
       interactions: defaultInteractions({ mouseWheelZoom: false }).extend([
         new MouseWheelZoom({
           constrainResolution: true,
@@ -269,6 +306,7 @@ export function OpenLayersMap({
     imageryLayerRef.current = imagery;
     labelLayerRef.current = labels;
     blockLayerRef.current = blockLayer;
+    roadLayerRef.current = roadLayer;
     selectedLayerRef.current = selectedLayer;
     situationLayerRef.current = situationLayer;
     reportViewport();
@@ -280,6 +318,7 @@ export function OpenLayersMap({
       imageryLayerRef.current = null;
       labelLayerRef.current = null;
       blockLayerRef.current = null;
+      roadLayerRef.current = null;
       selectedLayerRef.current = null;
       situationLayerRef.current = null;
       droneImageryLayersRef.current.clear();
@@ -301,8 +340,9 @@ export function OpenLayersMap({
     imageryLayerRef.current?.setVisible(layers.imagery);
     labelLayerRef.current?.setVisible(layers.labels);
     blockLayerRef.current?.setVisible(layers.forestBlocks);
+    roadLayerRef.current?.setVisible(layers.forestRoads);
     selectedLayerRef.current?.setVisible(layers.forestBlocks);
-  }, [layers.forestBlocks, layers.imagery, layers.labels]);
+  }, [layers.forestBlocks, layers.forestRoads, layers.imagery, layers.labels]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -377,6 +417,14 @@ export function OpenLayersMap({
       featureProjection: "EPSG:3857",
     }));
   }, [featureCollection]);
+
+  useEffect(() => {
+    const source = roadSourceRef.current;
+    source.clear();
+    source.addFeatures(new GeoJSON().readFeatures(roadFeatureCollection, {
+      featureProjection: "EPSG:3857",
+    }));
+  }, [roadFeatureCollection]);
 
   useEffect(() => {
     selectedBlockIdRef.current = selectedBlockId;

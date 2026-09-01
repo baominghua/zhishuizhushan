@@ -18,7 +18,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api/client";
-import type { ForestBlockOption, ForestBlockQuery, ImageryAsset, MosoInventoryEstimate, SituationAssetRecord } from "../api/types";
+import type { ForestBlockOption, ForestBlockQuery, ForestRoadFeatureCollection, ImageryAsset, MosoInventoryEstimate, SituationAssetRecord } from "../api/types";
 import type { Spatial3dDisplaySettings } from "../components/CesiumGlobe";
 import { MapCanvas } from "../components/MapCanvas";
 import { ImageClarityStatus } from "../components/ImageClarityStatus";
@@ -52,6 +52,11 @@ import {
 } from "../maps/mapAnnotations";
 
 const MAP_MODE_STORAGE_KEY = "smart-bamboo-v2-map-mode";
+
+const EMPTY_FOREST_ROAD_COLLECTION: ForestRoadFeatureCollection = {
+  type: "FeatureCollection",
+  features: [],
+};
 
 type MapFilterValues = Pick<
   ForestBlockQuery,
@@ -203,6 +208,14 @@ export function MapPage() {
   });
   const [cachedMapBlocks, setCachedMapBlocks] = useState(EMPTY_FOREST_BLOCK_COLLECTION);
   const boundaryCacheFilterRef = useRef(appliedFilterQuery);
+  const forestRoadMap = useQuery({
+    queryKey: ["forest-road-map"],
+    queryFn: api.forestRoadMap,
+    enabled: layers.forestRoads,
+    staleTime: 60_000,
+    gcTime: 15 * 60_000,
+    placeholderData: (previous) => previous,
+  });
   const imageryAssets = useQuery({
     queryKey: ["published-imagery-assets", viewport.bbox.join(",")],
     queryFn: () => api.imageryAssets({ published: true, bbox: viewport.bbox.join(","), limit: 30 }),
@@ -712,6 +725,7 @@ export function MapPage() {
           zoomRequest={zoomRequest}
           areaFocusRequest={areaFocusRequest}
           featureCollection={mapFeatures}
+          roadFeatureCollection={forestRoadMap.data ?? EMPTY_FOREST_ROAD_COLLECTION}
           selectedBlockId={selected?.id ?? null}
           onSelectBlock={selectMapBlock}
           onViewportChange={updateViewport}
@@ -827,6 +841,13 @@ export function MapPage() {
               </span>
             </label>
             <label>
+              <input type="checkbox" checked={layers.forestRoads} onChange={() => toggleLayer("forestRoads")} />
+              <span>
+                <strong>林区道路</strong>
+                <small>{forestRoadMap.isFetching ? "正在读取道路空间台账" : `${forestRoadMap.data?.features.length ?? 0} 条正式道路`}</small>
+              </span>
+            </label>
+            <label>
               <input type="checkbox" checked={layers.imagery} onChange={() => toggleLayer("imagery")} />
               <span><strong>卫星影像</strong><small>天地图影像底图</small></span>
             </label>
@@ -916,6 +937,7 @@ export function MapPage() {
               <span><strong>地名注记</strong><small>道路与行政区注记</small></span>
             </label>
             {mapBlocks.error && <p className="map-layer-error">林班边界读取失败，请稍后重试</p>}
+            {forestRoadMap.error && <p className="map-layer-error">林区道路读取失败，请稍后重试</p>}
           </aside>
         )}
         {selectedMapAnnotation && (

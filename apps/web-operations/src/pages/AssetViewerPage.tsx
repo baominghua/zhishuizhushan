@@ -128,6 +128,7 @@ export function AssetViewerPage() {
     imagery: mode === "2d" && showBasemap,
     labels: false,
     forestBlocks: showForestBlocks,
+    forestRoads: false,
     droneImagery: mode === "2d",
     spatial3d: mode === "3d",
   }), [mode, showBasemap, showForestBlocks]);

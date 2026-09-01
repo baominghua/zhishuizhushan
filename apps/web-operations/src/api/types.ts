@@ -9,6 +9,7 @@ export interface V2Module {
     | "map"
     | "forest-blocks"
     | "forest-subcompartments"
+    | "forest-roads"
     | "resourceSurveys"
     | "attachments"
     | "forest-rights"
@@ -803,6 +804,75 @@ export interface ForestSubcompartmentQuery {
   limit?: number;
   offset?: number;
 }
+
+export type RoadClass = "main" | "branch" | "operation" | "firebreak" | "footpath" | "other";
+export type RoadSurface = "paved" | "gravel" | "earth" | "boardwalk" | "other";
+export type RoadCondition = "good" | "fair" | "poor" | "closed";
+
+export interface ForestRoadRecord {
+  id: string;
+  roadCode: string;
+  name: string;
+  roadClass: RoadClass;
+  surfaceType: RoadSurface;
+  condition: RoadCondition;
+  widthM: number | null;
+  lengthKm: number;
+  linkedBlockCodes: string[];
+  responsibleUnit: string;
+  lastInspectedOn: string;
+  notes: string;
+  geometry: { type: "LineString" | "MultiLineString"; coordinates: unknown[] };
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  maintenance?: RoadMaintenanceRecord[];
+}
+
+export interface ForestRoadFeatureCollection {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    id: string;
+    geometry: ForestRoadRecord["geometry"];
+    properties: Pick<
+      ForestRoadRecord,
+      "id" | "roadCode" | "name" | "roadClass" | "surfaceType" | "condition" | "widthM" | "lengthKm" | "linkedBlockCodes"
+    >;
+  }>;
+}
+
+export interface ForestRoadPayload {
+  roadCode: string;
+  name: string;
+  roadClass: RoadClass;
+  surfaceType: RoadSurface;
+  condition: RoadCondition;
+  widthM?: number | null;
+  lengthKm?: number | null;
+  linkedBlockCodes: string[];
+  responsibleUnit?: string;
+  lastInspectedOn?: string;
+  notes?: string;
+  geometry: ForestRoadRecord["geometry"];
+}
+
+export interface RoadMaintenanceRecord {
+  id: string;
+  roadId: string;
+  maintenanceType: "inspection" | "repair" | "clearing" | "drainage" | "closure" | "reopen";
+  occurredOn: string;
+  conditionAfter?: RoadCondition | null;
+  costYuan?: number | null;
+  responsibleUnit: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface RoadMaintenancePayload extends Omit<RoadMaintenanceRecord, "id" | "roadId" | "createdBy" | "createdAt"> {}
 
 export interface ResourceSurveyRecord {
   id: string;

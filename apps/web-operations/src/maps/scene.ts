@@ -16,6 +16,7 @@ export interface MapLayerState {
   imagery: boolean;
   labels: boolean;
   forestBlocks: boolean;
+  forestRoads: boolean;
   droneImagery: boolean;
   spatial3d: boolean;
 }
@@ -46,6 +47,7 @@ export const DEFAULT_MAP_LAYERS: MapLayerState = {
   imagery: true,
   labels: true,
   forestBlocks: true,
+  forestRoads: true,
   droneImagery: false,
   spatial3d: false,
 };

@@ -53,6 +53,7 @@ const MODULE_ICONS = {
   map: Map,
   "forest-blocks": Trees,
   "forest-subcompartments": Layers3,
+  "forest-roads": Route,
   resourceSurveys: FileClock,
   attachments: Paperclip,
   "forest-rights": FolderKey,
@@ -85,7 +86,7 @@ const MODULE_ICONS = {
 
 const MODULE_ORDER = [
   "workspace", "operations-todos", "operations-notifications", "leadership-cockpit", "map",
-  "forest-blocks", "forest-subcompartments", "forest-rights", "resourceSurveys", "resource-intelligence", "imports", "attachments",
+  "forest-blocks", "forest-subcompartments", "forest-roads", "forest-rights", "resourceSurveys", "resource-intelligence", "imports", "attachments",
   "patrol", "harvest", "labor", "workforce-development", "cost-management", "safety-events", "mobile-operations",
   "equipment", "drone-missions", "imagery-assets", "integration-hub",
   "ai-findings", "ai-models", "ai-inference", "carbon-estimates",
@@ -113,6 +114,7 @@ function pageTitle(pathname: string) {
   if (pathname.includes("/map")) return "GIS 一张图";
   if (pathname.includes("/resources/forest-blocks")) return "林班台账";
   if (pathname.includes("/resources/forest-subcompartments")) return "小班台账";
+  if (pathname.includes("/resources/roads")) return "道路台账";
   if (pathname.includes("/resources/resource-surveys")) return "资源调查";
   if (pathname.includes("/system/attachments")) return "附件中心";
   if (pathname.includes("/resources/forest-rights")) return "林权档案";

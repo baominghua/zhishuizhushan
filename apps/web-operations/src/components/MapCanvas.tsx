@@ -1,7 +1,7 @@
 import { Globe2, Map as MapIcon, Unplug } from "lucide-react";
 import { lazy, Suspense } from "react";
 
-import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
+import type { ForestBlockFeatureCollection, ForestRoadFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type {
   MapAreaFocusRequest,
   MapLayerState,
@@ -20,6 +20,8 @@ const CesiumGlobe = lazy(async () => ({
   default: (await import("./CesiumGlobe")).CesiumGlobe,
 }));
 
+const EMPTY_ROAD_FEATURES: ForestRoadFeatureCollection = { type: "FeatureCollection", features: [] };
+
 interface MapCanvasProps {
   config?: MapConfigResponse;
   loading: boolean;
@@ -30,6 +32,7 @@ interface MapCanvasProps {
   zoomRequest: MapZoomRequest;
   areaFocusRequest: MapAreaFocusRequest;
   featureCollection: ForestBlockFeatureCollection;
+  roadFeatureCollection?: ForestRoadFeatureCollection;
   selectedBlockId: string | null;
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
@@ -60,6 +63,7 @@ export function MapCanvas({
   zoomRequest,
   areaFocusRequest,
   featureCollection,
+  roadFeatureCollection = EMPTY_ROAD_FEATURES,
   selectedBlockId,
   onSelectBlock,
   onViewportChange,
@@ -106,6 +110,7 @@ export function MapCanvas({
           zoomRequest={zoomRequest}
           areaFocusRequest={areaFocusRequest}
           featureCollection={featureCollection}
+          roadFeatureCollection={roadFeatureCollection}
           selectedBlockId={selectedBlockId}
           onSelectBlock={onSelectBlock}
           onViewportChange={onViewportChange}
@@ -126,6 +131,7 @@ export function MapCanvas({
             zoomRequest={zoomRequest}
             areaFocusRequest={areaFocusRequest}
             featureCollection={featureCollection}
+            roadFeatureCollection={roadFeatureCollection}
             selectedBlockId={selectedBlockId}
             onSelectBlock={onSelectBlock}
             onViewportChange={onViewportChange}

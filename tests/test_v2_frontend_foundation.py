@@ -820,3 +820,23 @@ def test_gis_annotation_selection_keeps_point_details_separate_from_forest_block
     assert "<MapAnnotationCard" in page
     assert "查看关联林班" in page
     assert "setSelectedMapAnnotationId(null)" in page
+
+
+def test_forest_road_ledger_and_spatial_layer_are_wired_into_both_map_engines():
+    web_root = ROOT_DIR / "apps" / "web-operations" / "src"
+    page = (web_root / "pages" / "MapPage.tsx").read_text(encoding="utf-8")
+    canvas = (web_root / "components" / "MapCanvas.tsx").read_text(encoding="utf-8")
+    open_layers = (web_root / "components" / "OpenLayersMap.tsx").read_text(encoding="utf-8")
+    cesium = (web_root / "components" / "CesiumGlobe.tsx").read_text(encoding="utf-8")
+    road_page = (web_root / "pages" / "ForestRoadsPage.tsx").read_text(encoding="utf-8")
+    router = (web_root / "router.tsx").read_text(encoding="utf-8")
+
+    assert 'queryFn: api.forestRoadMap' in page
+    assert 'toggleLayer("forestRoads")' in page
+    assert "林区道路" in page
+    assert "roadFeatureCollection={roadFeatureCollection}" in canvas
+    assert "roadSourceRef" in open_layers and "createRoadStyle" in open_layers
+    assert '"#ffc928"' in open_layers and '"#ff5b5b"' in open_layers
+    assert "roadDataSourceRef" in cesium and "clampToGround: true" in cesium
+    assert "ForestRoadsPage" in router and 'path: "/resources/roads"' in router
+    assert "RoadGeometryEditor" in road_page and "巡检维护记录" in road_page

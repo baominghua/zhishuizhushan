@@ -23,6 +23,7 @@ import type {
   ForestBlockFeatureCollection,
   ForestBlockQuery,
   ForestBlockRecord,
+  ForestRoadFeatureCollection,
   ForestBlockOptionsResponse,
   MosoInventoryBatchTask,
   MosoInventoryEstimateResponse,
@@ -106,6 +107,10 @@ import type {
   ResourceStatisticsResponse,
   CockpitTopicsResponse,
   RequirementsBaseline,
+  ForestRoadRecord,
+  ForestRoadPayload,
+  RoadMaintenancePayload,
+  RoadMaintenanceRecord,
 } from "./types";
 
 export class ApiError extends Error {
@@ -403,6 +408,15 @@ export const api = {
     request<LedgerResponse<ForestSubcompartmentRecord>>(
       `/api/v2/resources/forest-subcompartments?${queryString(query)}`,
     ),
+  forestRoads: (query: { q?: string; roadClass?: string; condition?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<ForestRoadRecord>>(`/api/v2/roads?${queryString(query)}`),
+  forestRoad: (id: string) => request<ForestRoadRecord>(`/api/v2/roads/${encodeURIComponent(id)}`),
+  forestRoadMap: () => request<ForestRoadFeatureCollection>("/api/v2/roads/map.geojson"),
+  createForestRoad: (payload: ForestRoadPayload) => request<ForestRoadRecord>("/api/v2/roads", { method: "POST", body: JSON.stringify(payload) }),
+  updateForestRoad: (id: string, payload: Partial<ForestRoadPayload> & { expectedVersion: number }) => request<ForestRoadRecord>(`/api/v2/roads/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteForestRoad: (id: string, expectedVersion: number) => request<ForestRoadRecord>(`/api/v2/roads/${encodeURIComponent(id)}?expectedVersion=${expectedVersion}`, { method: "DELETE" }),
+  restoreForestRoad: (id: string) => request<ForestRoadRecord>(`/api/v2/roads/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  addForestRoadMaintenance: (id: string, payload: RoadMaintenancePayload) => request<RoadMaintenanceRecord>(`/api/v2/roads/${encodeURIComponent(id)}/maintenance`, { method: "POST", body: JSON.stringify(payload) }),
   forestSubcompartmentDetail: (id: string) =>
     request<ForestSubcompartmentRecord>(
       `/api/v2/resources/forest-subcompartments/${encodeURIComponent(id)}`,

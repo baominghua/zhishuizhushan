@@ -34,7 +34,7 @@ import {
 import { useEffect, useRef } from "react";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
-import type { ForestBlockFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
+import type { ForestBlockFeatureCollection, ForestRoadFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { forestBlockColor } from "../maps/forestBlocks";
 import { MAP_ANNOTATION_COLORS, MAP_ANNOTATION_GLYPHS } from "../maps/mapAnnotations";
@@ -54,6 +54,7 @@ interface CesiumGlobeProps {
   zoomRequest: MapZoomRequest;
   areaFocusRequest: MapAreaFocusRequest;
   featureCollection: ForestBlockFeatureCollection;
+  roadFeatureCollection?: ForestRoadFeatureCollection;
   selectedBlockId: string | null;
   onSelectBlock: (id: string) => void;
   onViewportChange: (viewport: MapViewport) => void;
@@ -69,6 +70,8 @@ interface CesiumGlobeProps {
   qualityMode?: "smooth" | "standard" | "detail";
   onSpatialLoadProgress?: (progress: { pending: number; processing: number; ready: boolean }) => void;
 }
+
+const EMPTY_ROAD_FEATURES: ForestRoadFeatureCollection = { type: "FeatureCollection", features: [] };
 
 export interface Spatial3dDisplaySettings {
   opacity: number;
@@ -412,6 +415,7 @@ export function CesiumGlobe({
   zoomRequest,
   areaFocusRequest,
   featureCollection,
+  roadFeatureCollection = EMPTY_ROAD_FEATURES,
   selectedBlockId,
   onSelectBlock,
   onViewportChange,
@@ -441,8 +445,10 @@ export function CesiumGlobe({
   const spatial3dBaseMatricesRef = useRef<Map<string, Matrix4>>(new Map());
   const targetSpatialAssetIdRef = useRef(targetSpatialAssetId);
   const blockDataSourceRef = useRef<GeoJsonDataSource | null>(null);
+  const roadDataSourceRef = useRef<GeoJsonDataSource | null>(null);
   const selectedBlockIdRef = useRef<string | null>(selectedBlockId);
   const forestBlocksVisibleRef = useRef(layers.forestBlocks);
+  const forestRoadsVisibleRef = useRef(layers.forestRoads);
   const selectBlockRef = useRef(onSelectBlock);
   const selectSituationRef = useRef(onSelectSituationAsset);
   const viewportChangeRef = useRef(onViewportChange);
@@ -585,7 +591,7 @@ export function CesiumGlobe({
       const id = picked?.id?.id;
       if (id?.startsWith("map-annotation:")) {
         selectSituationRef.current?.(id.slice("map-annotation:".length));
-      } else if (id) {
+      } else if (id && !roadDataSourceRef.current?.entities.getById(id)) {
         selectBlockRef.current(id);
       }
     }, ScreenSpaceEventType.LEFT_CLICK);
@@ -610,6 +616,7 @@ export function CesiumGlobe({
       labelLayerRef.current = null;
       labelLayerReadyRef.current = false;
       blockDataSourceRef.current = null;
+      roadDataSourceRef.current = null;
       droneImageryLayersRef.current = new Map();
       spatial3dTilesetsRef.current = new Map();
       desiredSpatial3dAssetIdsRef.current = new Set();
@@ -628,8 +635,10 @@ export function CesiumGlobe({
     }
     forestBlocksVisibleRef.current = layers.forestBlocks;
     if (blockDataSourceRef.current) blockDataSourceRef.current.show = layers.forestBlocks;
+    forestRoadsVisibleRef.current = layers.forestRoads;
+    if (roadDataSourceRef.current) roadDataSourceRef.current.show = layers.forestRoads;
     viewerRef.current?.scene.requestRender();
-  }, [layers.forestBlocks, layers.imagery, layers.labels]);
+  }, [layers.forestBlocks, layers.forestRoads, layers.imagery, layers.labels]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -864,6 +873,47 @@ export function CesiumGlobe({
       cancelled = true;
     };
   }, [featureCollection, forestBlockOverlayHeight]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    let cancelled = false;
+    const previous = roadDataSourceRef.current;
+
+    void GeoJsonDataSource.load(
+      roadFeatureCollection as Parameters<typeof GeoJsonDataSource.load>[0],
+      {
+        clampToGround: true,
+        stroke: Color.fromCssColorString("#ffc928"),
+        strokeWidth: 4,
+      },
+    ).then((dataSource) => {
+      if (cancelled || viewer.isDestroyed()) return;
+      const now = JulianDate.now();
+      dataSource.entities.values.forEach((entity) => {
+        if (!entity.polyline) return;
+        const properties = (entity.properties?.getValue(now) ?? {}) as { condition?: string };
+        const color = properties.condition === "closed"
+          ? Color.fromCssColorString("#ff5b5b")
+          : properties.condition === "poor"
+            ? Color.fromCssColorString("#ff8a3d")
+            : Color.fromCssColorString("#ffc928");
+        entity.polyline.width = new ConstantProperty(4);
+        entity.polyline.material = new ColorMaterialProperty(color);
+        entity.polyline.depthFailMaterial = new ColorMaterialProperty(Color.fromCssColorString("#fff2b0"));
+        entity.polyline.clampToGround = new ConstantProperty(true);
+      });
+      dataSource.show = forestRoadsVisibleRef.current;
+      viewer.dataSources.add(dataSource);
+      roadDataSourceRef.current = dataSource;
+      if (previous) viewer.dataSources.remove(previous, true);
+      viewer.scene.requestRender();
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roadFeatureCollection]);
 
   useEffect(() => {
     selectedBlockIdRef.current = selectedBlockId;

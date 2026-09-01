@@ -25,6 +25,7 @@ from .governance import router as governance_router
 from .intelligence import router as intelligence_router
 from .roadmap_extensions import router as roadmap_extensions_router
 from .tools import router as tools_router
+from .roads import router as roads_router
 
 
 router = APIRouter(prefix="/api/v2")
@@ -53,3 +54,4 @@ router.include_router(governance_router)
 router.include_router(intelligence_router)
 router.include_router(roadmap_extensions_router)
 router.include_router(tools_router)
+router.include_router(roads_router)

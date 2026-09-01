@@ -136,6 +136,13 @@ V2_MODULES: tuple[dict[str, Any], ...] = (
         "status": "available",
     },
     {
+        "key": "forest-roads",
+        "label": "道路台账",
+        "path": "/resources/roads",
+        "requiredPermission": "forest.roads.view",
+        "status": "available",
+    },
+    {
         "key": "resourceSurveys",
         "label": "资源调查",
         "path": "/resources/resource-surveys",

@@ -185,6 +185,15 @@ V2_ROLE_MODULES = [
         ],
     },
     {
+        "key": "forestRoads",
+        "label": "道路台账",
+        "href": "/v2/resources/roads",
+        "permission": "forest.roads.view",
+        "group": "空间与权属",
+        "dataDomain": "forest-spatial",
+        "apiScopes": ["/api/v2/roads"],
+    },
+    {
         "key": "resourceSurveys",
         "label": "资源调查",
         "href": "/v2/resources/resource-surveys",
@@ -792,6 +801,13 @@ EXTRA_PERMISSIONS = [
     {"code": "forest.subcompartments.delete", "label": "小班台账删除", "module": "subcompartments"},
     {"code": "forest.subcompartments.rollback", "label": "小班台账版本回退", "module": "subcompartments"},
     {"code": "forest.subcompartments.export", "label": "小班台账导出", "module": "subcompartments"},
+    {"code": "forest.roads.view", "label": "道路台账查看", "module": "forestRoads"},
+    {"code": "forest.roads.manage", "label": "道路台账全权管理", "module": "forestRoads"},
+    {"code": "forest.roads.create", "label": "道路台账新增", "module": "forestRoads"},
+    {"code": "forest.roads.update", "label": "道路台账编辑", "module": "forestRoads"},
+    {"code": "forest.roads.delete", "label": "道路台账删除", "module": "forestRoads"},
+    {"code": "forest.roads.maintain", "label": "道路巡检维护", "module": "forestRoads"},
+    {"code": "forest.roads.export", "label": "道路台账导出", "module": "forestRoads"},
     {"code": "forest.surveys.view", "label": "资源调查查看", "module": "resourceSurveys"},
     {"code": "forest.surveys.manage", "label": "资源调查全权管理", "module": "resourceSurveys"},
     {"code": "forest.surveys.create", "label": "资源调查与记录新增", "module": "resourceSurveys"},
@@ -1013,6 +1029,19 @@ MANAGE_PERMISSION_IMPLICATIONS = {
         "forest.subcompartments.rollback",
         "forest.subcompartments.export",
     ],
+    "forest.roads.manage": [
+        "forest.roads.view",
+        "forest.roads.create",
+        "forest.roads.update",
+        "forest.roads.delete",
+        "forest.roads.maintain",
+        "forest.roads.export",
+    ],
+    "forest.roads.create": ["forest.roads.view"],
+    "forest.roads.update": ["forest.roads.view"],
+    "forest.roads.delete": ["forest.roads.view"],
+    "forest.roads.maintain": ["forest.roads.view"],
+    "forest.roads.export": ["forest.roads.view"],
     "forest.surveys.manage": [
         "forest.surveys.view",
         "forest.surveys.create",
@@ -1354,14 +1383,18 @@ ROLE_PERMISSION_PRESETS = [
 for _preset in ROLE_PERMISSION_PRESETS:
     _role_code = str(_preset.get("roleCode") or "")
     if _role_code == "city-leader":
-        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement"])
-        _preset.setdefault("permissions", []).extend(["forest.analytics.view", "costs.view"])
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "forestRoads"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.view", "costs.view", "forest.roads.view"])
     elif _role_code == "county-admin":
-        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "integrationHub", "workforceDevelopment", "systemGovernance"])
-        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage", "costs.export", "integrations.manage", "system.accessRequests.approve", "operations.audit.manage"])
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "integrationHub", "workforceDevelopment", "systemGovernance", "forestRoads"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage", "costs.export", "integrations.manage", "system.accessRequests.approve", "operations.audit.manage", "forest.roads.manage"])
     elif _role_code == "town-forestry-chief":
-        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "workforceDevelopment"])
-        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage"])
+        _preset.setdefault("menuModules", []).extend(["resourceIntelligence", "costManagement", "workforceDevelopment", "forestRoads"])
+        _preset.setdefault("permissions", []).extend(["forest.analytics.manage", "costs.manage", "forest.roads.manage"])
+    elif _role_code == "forest-ranger":
+        _preset.setdefault("menuModules", []).append("forestRoads")
+        _preset.setdefault("permissions", []).extend(["forest.roads.view", "forest.roads.maintain"])
+        _preset.setdefault("permissions", []).append("system.accessRequests.create")
     elif _role_code in {"forest-ranger", "bamboo-farmer", "drone-pilot", "emergency-rescue"}:
         _preset.setdefault("permissions", []).append("system.accessRequests.create")
     elif _role_code == "ai-engineer":
