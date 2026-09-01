@@ -162,6 +162,11 @@ def test_v2_workspace_routes_and_moso_markers_remain_distinct_from_green_canopy(
     assert "new RegularShape" in evidence_map
     assert "declutter: false" in evidence_map
 
+    sandbox = (web_root / "pages" / "MosoInventorySandboxPage.tsx").read_text(encoding="utf-8")
+    assert 'title="竹冠候选提取" detail={`${formatNumber(detectedCandidateCount)} 个有坐标候选点`}' in sandbox
+    assert 'label="有坐标影像候选" value={formatNumber(detectedCandidateCount)}' in sandbox
+    assert "覆盖外推补量" in sandbox
+
 
 def test_v2_basemap_settings_are_managed_server_side():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
