@@ -1307,6 +1307,7 @@ def test_local_release_publisher_uses_verified_git_bundle_and_stable_shortcut():
     assert 'git bundle verify "`$bundle"' in publisher
     assert 'git merge --ff-only "`$target_commit"' in publisher
     assert 'RELEASE_BUNDLE="`$bundle"' in publisher
+    assert '$remoteScript = $remoteScript.Replace("`r", "")' in publisher
     assert '"--build-arg", "SMART_BAMBOO_BUILD_COMMIT=$TargetCommit"' in publisher
     assert '"archive", "--format=tar"' in publisher
     assert '"/var/tmp/smart-bamboo-release.XXXXXX"' in publisher

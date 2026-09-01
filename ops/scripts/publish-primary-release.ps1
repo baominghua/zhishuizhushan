@@ -415,6 +415,7 @@ ${prebuiltEnvironment}RELEASE_BUNDLE="`$bundle" TARGET_COMMIT="`$target_commit" 
 rm -f "`$bundle"
 $remoteImageCleanup
 "@
+$remoteScript = $remoteScript.Replace("`r", "")
 $remoteScriptBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
 $executeCommand = "script_path=`$(mktemp /tmp/smart-bamboo-release-XXXXXX.sh); printf '%s' '$remoteScriptBase64' | base64 -d > `"`$script_path`"; bash `"`$script_path`"; status=`$?; rm -f `"`$script_path`"; exit `$status"
 Invoke-Native -FilePath $ssh -Arguments @($sshCommon + @($target, $executeCommand)) -FailureMessage "服务器生产发布失败；远端 Bundle 已保留，可重试"
