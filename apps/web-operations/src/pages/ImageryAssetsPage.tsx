@@ -104,8 +104,11 @@ export function ImageryAssetsPage() {
     mutationFn: async (task: SpatialAssetTask) => {
       const asset = await api.imageryAsset(task.sceneId);
       const suggested = asset.coverageAnalysis?.suggestedBlockCodes ?? [];
-      if (!suggested.length) return { asset, needsReview: true };
-      if (!window.confirm(`系统已匹配 ${suggested.length} 个林班。确认采用建议覆盖关系吗？`)) return { asset, needsReview: true };
+      // A bounding footprint may intersect many neighbouring blocks. Only a
+      // unique candidate is safe for the queue's shortcut; multi-block
+      // results must be reviewed row by row instead of being bulk-linked.
+      if (suggested.length !== 1) return { asset, needsReview: true };
+      if (!window.confirm(`系统唯一匹配林班 ${suggested[0]}。确认采用该覆盖关系吗？`)) return { asset, needsReview: true };
       return { asset: await api.confirmImageryCoverage(asset.id, { blockCodes: suggested, relationType: "forest-block" }), needsReview: false };
     },
     onSuccess: async ({ asset, needsReview }) => {
@@ -294,7 +297,8 @@ function SpatialAssetUploadForm({ onCancel, onQueued }: { onCancel: () => void; 
 
 function CoverageConfirmation({ asset, onCancel, onSaved }: { asset: ImageryAsset; onCancel: () => void; onSaved: (record: ImageryAsset) => void }) {
   const analysis = asset.coverageAnalysis;
-  const [blocks, setBlocks] = useState<ForestBlockOption[]>(() => (analysis?.matches ?? []).filter((item) => item.suggested).map(matchToBlock));
+  const suggestedMatches = (analysis?.matches ?? []).filter((item) => item.suggested);
+  const [blocks, setBlocks] = useState<ForestBlockOption[]>(() => suggestedMatches.length === 1 ? suggestedMatches.map(matchToBlock) : []);
   const [relationType, setRelationType] = useState<"forest-block" | "independent-point">(() => asset.spatialRelation?.type || "forest-block");
   const [pointName, setPointName] = useState(asset.spatialRelation?.pointName || asset.name);
   const [pointCategory, setPointCategory] = useState(asset.spatialRelation?.pointCategory || "竹材加工厂");
@@ -309,6 +313,7 @@ function CoverageConfirmation({ asset, onCancel, onSaved }: { asset: ImageryAsse
       <label className={relationType === "independent-point" ? "active" : ""}><input type="radio" name="relationType" checked={relationType === "independent-point"} onChange={() => setRelationType("independent-point")} /><span><strong>独立空间点位</strong><small>适合加工厂、机巢、堆场等林外设施</small></span></label>
     </div>
     <div className="coverage-summary"><Summary label="有效覆盖面积" value={analysis?.effectiveAreaHa == null ? "—" : `${(analysis.effectiveAreaHa * 15).toFixed(2)} 亩`} detail="按有效轮廓估算，重叠盘点时只计一次" /><Summary label="相交林班" value={analysis?.matches.length ?? 0} detail="包含边缘相交" /><Summary label="已选林班" value={blocks.length} detail="确认后正式关联" /></div>
+    {suggestedMatches.length > 1 ? <p className="form-warning">检测到 {suggestedMatches.length} 个候选林班，系统未自动全选。请结合任务名称、交叠面积和影像范围人工勾选实际覆盖林班。</p> : null}
     {analysis?.error ? <p className="form-error">自动分析未完成：{analysis.error}</p> : null}
     <div className="coverage-table-wrap"><table className="coverage-table"><thead><tr><th>选择</th><th>林班</th><th>交叠面积</th><th>占林班</th><th>占成果</th></tr></thead><tbody>{(analysis?.matches ?? []).map((match) => <tr key={match.blockCode} className={selectedCodes.has(match.blockCode) ? "selected" : ""} onClick={() => toggleMatch(match)}><td><input type="checkbox" checked={selectedCodes.has(match.blockCode)} onChange={() => toggleMatch(match)} onClick={(event) => event.stopPropagation()} /></td><td><strong>{match.blockName}</strong><small>{match.blockCode}{match.location ? ` · ${match.location}` : ""}</small></td><td>{(match.intersectionAreaHa * 15).toFixed(2)} 亩</td><td>{match.blockCoveragePercent}%</td><td>{match.imageryCoveragePercent}%</td></tr>)}{!analysis?.matches.length ? <tr><td colSpan={5}><div className="table-empty compact"><AlertTriangle aria-hidden="true" /><strong>没有自动匹配到正式林班</strong><p>请检查林班是否有几何边界，或使用下方按钮人工选择。</p></div></td></tr> : null}</tbody></table></div>
     {relationType === "forest-block" ? <><div className="relation-toolbar"><div><strong>最终关联林班<em>*</em></strong><small>跨林班成果只建一份档案，可确认多个林班。</small></div><button className="button secondary" type="button" onClick={() => setSelectorOpen(true)}><MapPinned aria-hidden="true" />补充林班</button></div><BlockChips blocks={blocks} onRemove={(code) => setBlocks((items) => items.filter((item) => item.code !== code))} /></> : <div className="independent-point-form"><label><span>点位名称<em>*</em></span><input value={pointName} onChange={(event) => setPointName(event.target.value)} placeholder="例如 大横厂房" /></label><label><span>点位类型</span><select value={pointCategory} onChange={(event) => setPointCategory(event.target.value)}><option>竹材加工厂</option><option>无人机机巢</option><option>临时堆场</option><option>仓储物流点</option><option>其他设施</option></select></label><p>位置默认取影像有效范围中心；确认后作为独立点位进入 GIS 图层、搜索和成果详情。</p></div>}

@@ -3858,6 +3858,7 @@ svg {
 .comparison-row .negative { color: var(--danger); }
 .field-span { grid-column: 1 / -1; }
 .form-error { margin: 0; padding: 10px 12px; color: var(--danger); background: #fceeee; border: 1px solid #e9c1c1; border-radius: 6px; font-size: 12px; }
+.form-warning { margin: 0; padding: 10px 12px; color: #71450a; background: #fff7df; border: 1px solid #e6c57c; border-radius: 6px; font-size: 12px; line-height: 1.55; }
 .form-success { margin: 0; padding: 10px 12px; color: var(--accent-strong); background: var(--accent-soft); border: 1px solid #b9dccc; border-radius: 6px; font-size: 12px; }
 .form-actions { position: sticky; bottom: -20px; justify-content: flex-end; margin: 0 -20px -20px; padding: 14px 20px; background: rgba(255, 255, 255, 0.97); border-top: 1px solid var(--line); }
 

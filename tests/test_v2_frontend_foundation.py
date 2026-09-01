@@ -181,6 +181,15 @@ def test_map_engines_are_loaded_only_for_the_selected_view_mode():
     assert 'await import("../components/CesiumGlobe")' in asset_viewer
 
 
+def test_spatial_coverage_shortcut_never_bulk_links_ambiguous_candidates():
+    page = (ROOT_DIR / "apps" / "web-operations" / "src" / "pages" / "ImageryAssetsPage.tsx").read_text(encoding="utf-8")
+
+    assert "if (suggested.length !== 1) return { asset, needsReview: true }" in page
+    assert "系统唯一匹配林班 ${suggested[0]}" in page
+    assert "suggestedMatches.length === 1 ? suggestedMatches.map(matchToBlock) : []" in page
+    assert "系统未自动全选" in page
+
+
 def test_v2_basemap_settings_are_managed_server_side():
     web_root = ROOT_DIR / "apps" / "web-operations" / "src"
     router = (web_root / "router.tsx").read_text(encoding="utf-8")
