@@ -2089,6 +2089,9 @@ def test_v2_equipment_drone_and_ai_finding_form_one_traceable_chain(app_client):
     flight = next(item for item in flights.json()["items"] if item["missionId"] == mission_id)
     assert flight["origin"] == "mission"
     assert flight["completeness"] == "complete"
+    assert flights.json()["summary"]["trajectoryImported"] == 0
+    assert flights.json()["summary"]["incomplete"] == 0
+    assert flights.json()["summary"]["linkedResults"] == 1
     assert flight["durationMinutes"] == 76
     assert flight["distanceKm"] == 14.2
     assert flight["coverageAreaMu"] == 261

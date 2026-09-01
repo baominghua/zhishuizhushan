@@ -26,9 +26,9 @@ export function DroneFlightLedger() {
   return <>
     <section className="domain-summary-strip">
       <FlightSummary label="飞行记录" value={ledger.data?.total ?? 0} detail="真实起飞或轨迹导入" />
-      <FlightSummary label="轨迹导入" value={items.filter((item) => item.origin === "trajectory").length} detail="DJI Terra POS / SBET" />
-      <FlightSummary label="资料待补" value={items.filter((item) => item.completeness === "incomplete").length} detail="不虚构缺失字段" tone="warning" />
-      <FlightSummary label="成果已关联" value={items.filter((item) => item.resultAttachmentCount > 0 || item.sourceSceneIds.length > 0).length} detail="附件或影像成果" tone="active" />
+      <FlightSummary label="轨迹导入" value={ledger.data?.summary.trajectoryImported ?? 0} detail="DJI Terra POS / SBET" />
+      <FlightSummary label="资料待补" value={ledger.data?.summary.incomplete ?? 0} detail="不虚构缺失字段" tone="warning" />
+      <FlightSummary label="成果已关联" value={ledger.data?.summary.linkedResults ?? 0} detail="附件或影像成果" tone="active" />
     </section>
     <section className="ledger-shell">
       <div className="ledger-toolbar domain-ledger-toolbar">

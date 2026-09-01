@@ -589,6 +589,9 @@ def test_v2_drone_page_links_formal_devices_blocks_and_task_transitions():
     assert "api.droneFlights" in flight_ledger
     assert "资料完整性" in flight_ledger
     assert "轨迹与成果" in flight_ledger
+    assert "ledger.data?.summary.trajectoryImported" in flight_ledger
+    assert "ledger.data?.summary.incomplete" in flight_ledger
+    assert "ledger.data?.summary.linkedResults" in flight_ledger
     assert "/api/v2/drone/flights" in client
     assert 'name="resultAssetUrls"' not in page
     for action in (

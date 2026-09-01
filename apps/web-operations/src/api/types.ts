@@ -1944,6 +1944,14 @@ export interface DroneFlightRecord {
   updatedAt: string;
 }
 
+export interface DroneFlightLedgerResponse extends LedgerResponse<DroneFlightRecord> {
+  summary: {
+    trajectoryImported: number;
+    incomplete: number;
+    linkedResults: number;
+  };
+}
+
 export type AiFindingStatus = "pending" | "confirmed" | "converted" | "ignored";
 export type AiFindingType = "pest" | "fire" | "disease" | "illegal-cutting" | "road-damage" | "tree-fall" | "other";
 

@@ -15,7 +15,6 @@ import type {
   AiInferenceFindingPayload,
   DeviceMaintenancePayload,
   DroneMission,
-  DroneFlightRecord,
   DroneMissionActionPayload,
   DroneMissionPayload,
   ForestBlockPayload,
@@ -734,7 +733,7 @@ export const api = {
   droneMissions: (query: { q?: string; status?: string; linkedBlockCode?: string; deviceId?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
     request<LedgerResponse<DroneMission>>(`/api/v2/drone/missions?${queryString(query)}`),
   droneFlights: (query: { q?: string; origin?: string; completeness?: string; limit?: number; offset?: number } = {}) =>
-    request<LedgerResponse<DroneFlightRecord>>(`/api/v2/drone/flights?${queryString(query)}`),
+    request<import("./types").DroneFlightLedgerResponse>(`/api/v2/drone/flights?${queryString(query)}`),
   droneMission: (id: string) => request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}`),
   createDroneMission: (payload: DroneMissionPayload) =>
     request<DroneMission>("/api/v2/drone/missions", { method: "POST", body: JSON.stringify(payload) }),

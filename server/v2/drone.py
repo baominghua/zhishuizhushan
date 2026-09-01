@@ -173,7 +173,13 @@ def flight_record_view(record: dict[str, Any]) -> dict[str, Any]:
         "trajectoryFileCount": int(summary.get("trajectoryFileCount") or 0),
         "trajectorySizeBytes": int(summary.get("trajectorySizeBytes") or 0),
         "sourceSceneIds": [str(item) for item in summary.get("sourceSceneIds") or []],
-        "resultAttachmentCount": len(attachments) or int(summary.get("resultAttachmentCount") or 0),
+        # Preserve the older external-result URLs in the historical ledger
+        # while preferring controlled attachment relations for new missions.
+        "resultAttachmentCount": (
+            len(attachments)
+            or len(record.get("resultAssetUrls") or [])
+            or int(summary.get("resultAttachmentCount") or 0)
+        ),
         "missingFields": missing_fields,
         "completeness": "incomplete" if missing_fields else "complete",
         "blocks": list(record.get("blocks") or []),
@@ -275,7 +281,21 @@ def flight_ledger(
             continue
         rows.append(row)
     rows.sort(key=lambda item: item.get("actualStartAt") or item.get("updatedAt") or "", reverse=True)
-    return {"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset}
+    return {
+        "items": rows[offset:offset + limit],
+        "total": len(rows),
+        "limit": limit,
+        "offset": offset,
+        "summary": {
+            "trajectoryImported": sum(1 for row in rows if row["origin"] == "trajectory"),
+            "incomplete": sum(1 for row in rows if row["completeness"] == "incomplete"),
+            "linkedResults": sum(
+                1
+                for row in rows
+                if int(row.get("resultAttachmentCount") or 0) > 0 or bool(row.get("sourceSceneIds"))
+            ),
+        },
+    }
 
 
 @router.get("/flights-export.csv")
