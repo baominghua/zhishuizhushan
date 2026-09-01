@@ -147,6 +147,40 @@ def mission_view(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def flight_record_view(record: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(record.get("flightSummary") or {})
+    origin = "trajectory" if summary.get("recordOrigin") == "trajectory-auto-import" else "mission"
+    missing_fields = [str(item) for item in summary.get("missingFields") or [] if str(item)]
+    attachments = linked_attachments("drone_mission", str(record["id"]), "result")
+    return {
+        "id": str(record["id"]),
+        "missionId": str(record["id"]),
+        "missionNo": str(record.get("missionNo") or ""),
+        "title": str(record.get("title") or ""),
+        "origin": origin,
+        "status": str(record.get("status") or ""),
+        "deviceCode": str(record.get("deviceCode") or ""),
+        "deviceName": str(record.get("deviceName") or ""),
+        "pilotName": str(record.get("pilotName") or ""),
+        "routeName": str(record.get("routeName") or ""),
+        "actualStartAt": record.get("actualStartAt"),
+        "actualEndAt": record.get("actualEndAt"),
+        "durationMinutes": summary.get("durationMinutes"),
+        "distanceKm": summary.get("distanceKm"),
+        "coverageAreaMu": summary.get("coverageAreaMu"),
+        "trajectoryPath": str(summary.get("trajectoryPath") or ""),
+        "trajectoryFormats": [str(item) for item in summary.get("trajectoryFormats") or []],
+        "trajectoryFileCount": int(summary.get("trajectoryFileCount") or 0),
+        "trajectorySizeBytes": int(summary.get("trajectorySizeBytes") or 0),
+        "sourceSceneIds": [str(item) for item in summary.get("sourceSceneIds") or []],
+        "resultAttachmentCount": len(attachments) or int(summary.get("resultAttachmentCount") or 0),
+        "missingFields": missing_fields,
+        "completeness": "incomplete" if missing_fields else "complete",
+        "blocks": list(record.get("blocks") or []),
+        "updatedAt": str(record.get("updatedAt") or ""),
+    }
+
+
 def update_mission_view(record: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     return mission_view(update_mission(record, event))
 
@@ -204,6 +238,63 @@ def export_missions(
             record.get("actualEndAt") or "", len(linked_attachments("drone_mission", str(record["id"]), "result")) or len(record.get("resultAssetUrls") or []), record.get("updatedAt") or "",
         ])
     return Response(content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="drone-missions.csv"'})
+
+
+@router.get("/flights")
+def flight_ledger(
+    q: str = Query(default=""), origin: str = Query(default=""),
+    completeness: str = Query(default=""), limit: int = Query(default=50, ge=1, le=10000),
+    offset: int = Query(default=0, ge=0), context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    require_permission(context, "drone.missions.view")
+    if origin and origin not in {"mission", "trajectory"}:
+        raise HTTPException(status_code=422, detail="不支持的飞行记录来源。")
+    if completeness and completeness not in {"complete", "incomplete"}:
+        raise HTTPException(status_code=422, detail="不支持的资料完整性条件。")
+    keyword = q.strip().lower()
+    rows: list[dict[str, Any]] = []
+    for mission in list_missions(include_deleted=False):
+        if not mission.get("actualStartAt") and (mission.get("flightSummary") or {}).get("recordOrigin") != "trajectory-auto-import":
+            continue
+        try:
+            require_mission_scope(mission, context)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                continue
+            raise
+        row = flight_record_view(mission)
+        if origin and row["origin"] != origin:
+            continue
+        if completeness and row["completeness"] != completeness:
+            continue
+        haystack = " ".join([
+            row["missionNo"], row["title"], row["deviceCode"], row["deviceName"],
+            row["pilotName"], row["routeName"], " ".join(item.get("code", "") for item in row["blocks"]),
+        ]).lower()
+        if keyword and keyword not in haystack:
+            continue
+        rows.append(row)
+    rows.sort(key=lambda item: item.get("actualStartAt") or item.get("updatedAt") or "", reverse=True)
+    return {"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset}
+
+
+@router.get("/flights-export.csv")
+def export_flights(context: AuthContext = Depends(request_context)) -> Response:
+    require_permission(context, "drone.missions.view")
+    response = flight_ledger(q="", origin="", completeness="", limit=10000, offset=0, context=context)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["飞行记录", "任务编号", "任务名称", "来源", "资料完整性", "无人机", "飞手", "航线", "实际起飞", "实际结束", "时长(分钟)", "航程(km)", "覆盖面积(亩)", "轨迹格式", "轨迹文件数", "成果数", "林班", "待补资料"])
+    for row in response["items"]:
+        writer.writerow([
+            row["id"], row["missionNo"], row["title"], row["origin"], row["completeness"],
+            " · ".join(value for value in [row["deviceName"], row["deviceCode"]] if value), row["pilotName"],
+            row["routeName"], row["actualStartAt"] or "", row["actualEndAt"] or "", row["durationMinutes"],
+            row["distanceKm"], row["coverageAreaMu"], "/".join(row["trajectoryFormats"]), row["trajectoryFileCount"],
+            row["resultAttachmentCount"], "、".join(item.get("code", "") for item in row["blocks"]),
+            "、".join(row["missingFields"]),
+        ])
+    return Response(content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": 'attachment; filename="drone-flights.csv"'})
 
 
 @router.post("/missions")

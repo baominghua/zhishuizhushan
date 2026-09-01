@@ -34,6 +34,7 @@ import type {
   ForestBlockOption,
 } from "../api/types";
 import { AttachmentSelector } from "../components/AttachmentSelector";
+import { DroneFlightLedger } from "../components/DroneFlightLedger";
 import { ForestBlockSelector } from "../components/ForestBlockSelector";
 import { LedgerPagination } from "../components/LedgerPagination";
 import { QueryState } from "../components/QueryState";
@@ -70,6 +71,7 @@ export function DroneMissionsPage() {
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<DroneMission | null>(null);
   const [editing, setEditing] = useState<DroneMission | null>(null);
+  const [view, setView] = useState<"missions" | "flights">("missions");
   const deferredQ = useDeferredValue(q);
   const ledger = useQuery({
     queryKey: ["v2-drone-missions", deferredQ, status, includeDeleted, offset],
@@ -102,8 +104,10 @@ export function DroneMissionsPage() {
   return <div className="standard-page ledger-page drone-page">
     <section className="page-heading ledger-heading">
       <div><span className="eyebrow">低空作业 / 任务全过程</span><h1>无人机任务</h1><p>以正式无人机和林班为依据，管理计划、派发、飞行、成果、复核与归档。</p></div>
-      <div className="heading-actions"><a className="button secondary" href={`/api/v2/drone/missions-export.csv?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}`}><Download aria-hidden="true" />导出</a><button className="button secondary" type="button" disabled={!canManage || syncTrajectories.isPending} onClick={() => { if (window.confirm("扫描已确认覆盖的空间成果，并按 DJI Terra 轨迹目录补建历史飞行任务台账？同一航次不会重复创建。")) syncTrajectories.mutate(); }}><DatabaseZap aria-hidden="true" />{syncTrajectories.isPending ? "正在同步" : "同步轨迹台账"}</button><button className="button secondary" type="button" onClick={() => ledger.refetch()}><RefreshCw aria-hidden="true" />刷新</button><button className="button primary" type="button" disabled={!canManage} onClick={() => setCreating(true)}><Plus aria-hidden="true" />新建任务</button></div>
+      <div className="heading-actions">{view === "missions" && <a className="button secondary" href={`/api/v2/drone/missions-export.csv?q=${encodeURIComponent(q)}&status=${encodeURIComponent(status)}`}><Download aria-hidden="true" />导出任务</a>}<button className="button secondary" type="button" disabled={!canManage || syncTrajectories.isPending} onClick={() => { if (window.confirm("扫描已确认覆盖的空间成果，并按 DJI Terra 轨迹目录补建历史飞行任务台账？同一航次不会重复创建。")) syncTrajectories.mutate(); }}><DatabaseZap aria-hidden="true" />{syncTrajectories.isPending ? "正在同步" : "同步轨迹台账"}</button>{view === "missions" && <><button className="button secondary" type="button" onClick={() => ledger.refetch()}><RefreshCw aria-hidden="true" />刷新</button><button className="button primary" type="button" disabled={!canManage} onClick={() => setCreating(true)}><Plus aria-hidden="true" />新建任务</button></>}</div>
     </section>
+    <nav className="roadmap-command-panel" aria-label="无人机运营台账"><button className={`roadmap-tab ${view === "missions" ? "active" : ""}`} type="button" onClick={() => setView("missions")}>任务台账</button><button className={`roadmap-tab ${view === "flights" ? "active" : ""}`} type="button" onClick={() => setView("flights")}>飞行记录台账</button><small>任务负责计划与办理，飞行记录保存实际航次、轨迹、成果和资料完整性。</small></nav>
+    {view === "flights" ? <DroneFlightLedger /> : <>
     <section className="domain-summary-strip"><Summary label="任务总数" value={metrics.total} detail="正式飞行任务" /><Summary label="待执行" value={metrics.pending} detail="待安排或已派发" tone="warning" /><Summary label="执行中" value={metrics.active} detail="飞行或成果处理" tone="active" /><Summary label="已归档" value={metrics.completed} detail="本页已完成任务" /></section>
     <section className="ledger-shell">
       <div className="ledger-toolbar domain-ledger-toolbar"><label className="search-field"><Search aria-hidden="true" /><input value={q} onChange={(event) => { setQ(event.target.value); setOffset(0); }} placeholder="搜索任务编号、标题、无人机或飞手" /></label><label className="compact-filter"><span>任务状态</span><select value={status} onChange={(event) => { setStatus(event.target.value); setOffset(0); }}><option value="">全部状态</option>{Object.entries(STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="deleted-toggle"><input type="checkbox" checked={includeDeleted} onChange={(event) => { setIncludeDeleted(event.target.checked); setOffset(0); }} /><span>显示已删除</span></label>{(q || status) && <button className="text-button" type="button" onClick={() => { setQ(""); setStatus(""); setOffset(0); }}>清除条件</button>}</div>
@@ -113,6 +117,7 @@ export function DroneMissionsPage() {
     <SidePanel wide open={creating} eyebrow="无人机任务" title="新建任务" onClose={() => !createMission.isPending && setCreating(false)}><MissionForm pending={createMission.isPending} error={createMission.error} onCancel={() => setCreating(false)} onSubmit={(payload) => createMission.mutate(payload)} /></SidePanel>
     <SidePanel wide open={Boolean(editing)} eyebrow="无人机任务" title={`编辑 ${editing?.missionNo || "任务"}`} onClose={() => !updateMission.isPending && setEditing(null)}>{editing && <MissionForm initial={editing} pending={updateMission.isPending} error={updateMission.error} onCancel={() => setEditing(null)} onSubmit={(payload) => updateMission.mutate({ id: editing.id, payload })} />}</SidePanel>
     <SidePanel wide open={Boolean(selected)} eyebrow="任务全过程" title={selected?.title || "任务详情"} onClose={() => !transition.isPending && setSelected(null)}>{selected && <MissionDetail record={selected} permissions={actionPermission} pending={transition.isPending} error={transition.error} onAction={(action, payload) => transition.mutate({ id: selected.id, action, payload })} />}</SidePanel>
+    </>}
   </div>;
 }
 

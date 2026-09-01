@@ -1889,6 +1889,34 @@ export interface DroneMissionActionPayload {
   reviewNote?: string;
 }
 
+export interface DroneFlightRecord {
+  id: string;
+  missionId: string;
+  missionNo: string;
+  title: string;
+  origin: "mission" | "trajectory";
+  status: DroneMissionStatus;
+  deviceCode: string;
+  deviceName: string;
+  pilotName: string;
+  routeName: string;
+  actualStartAt: string | null;
+  actualEndAt: string | null;
+  durationMinutes: number | null;
+  distanceKm: number | null;
+  coverageAreaMu: number | null;
+  trajectoryPath: string;
+  trajectoryFormats: string[];
+  trajectoryFileCount: number;
+  trajectorySizeBytes: number;
+  sourceSceneIds: string[];
+  resultAttachmentCount: number;
+  missingFields: string[];
+  completeness: "complete" | "incomplete";
+  blocks: Array<{ id: string; code: string }>;
+  updatedAt: string;
+}
+
 export type AiFindingStatus = "pending" | "confirmed" | "converted" | "ignored";
 export type AiFindingType = "pest" | "fire" | "disease" | "illegal-cutting" | "road-damage" | "tree-fall" | "other";
 

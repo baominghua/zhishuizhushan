@@ -2084,6 +2084,19 @@ def test_v2_equipment_drone_and_ai_finding_form_one_traceable_chain(app_client):
         assert response.status_code == 200, response.text
         assert response.json()["status"] == expected
 
+    flights = app_client.get("/api/v2/drone/flights", headers=ADMIN_HEADERS)
+    assert flights.status_code == 200, flights.text
+    flight = next(item for item in flights.json()["items"] if item["missionId"] == mission_id)
+    assert flight["origin"] == "mission"
+    assert flight["completeness"] == "complete"
+    assert flight["durationMinutes"] == 76
+    assert flight["distanceKm"] == 14.2
+    assert flight["coverageAreaMu"] == 261
+    assert flight["blocks"][0]["code"] == "V2-DRONE-BLOCK-001"
+    flight_csv = app_client.get("/api/v2/drone/flights-export.csv", headers=ADMIN_HEADERS)
+    assert flight_csv.status_code == 200
+    assert mission_id in flight_csv.content.decode("utf-8-sig")
+
     finding = app_client.post(
         "/api/v2/ai/findings",
         headers=ADMIN_HEADERS,
@@ -2139,10 +2152,12 @@ def test_v2_equipment_drone_and_ai_finding_form_one_traceable_chain(app_client):
 def test_v2_equipment_drone_and_ai_require_dedicated_permissions(app_client):
     devices = app_client.get("/api/v2/iot/devices")
     missions = app_client.get("/api/v2/drone/missions")
+    flights = app_client.get("/api/v2/drone/flights")
     findings = app_client.get("/api/v2/ai/findings")
     assert devices.status_code == 403
     assert "iot.devices.view" in devices.json()["detail"]
     assert missions.status_code == 403
+    assert flights.status_code == 403
     assert "drone.missions.view" in missions.json()["detail"]
     assert findings.status_code == 403
     assert "ai.findings.view" in findings.json()["detail"]

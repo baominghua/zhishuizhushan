@@ -562,6 +562,12 @@ def test_v2_drone_page_links_formal_devices_blocks_and_task_transitions():
         / "pages"
         / "DroneMissionsPage.tsx"
     ).read_text(encoding="utf-8")
+    flight_ledger = (
+        ROOT_DIR / "apps" / "web-operations" / "src" / "components" / "DroneFlightLedger.tsx"
+    ).read_text(encoding="utf-8")
+    client = (
+        ROOT_DIR / "apps" / "web-operations" / "src" / "api" / "client.ts"
+    ).read_text(encoding="utf-8")
 
     assert 'path: "/drone/missions"' in router
     assert "component: DroneMissionsPage" in router
@@ -573,6 +579,12 @@ def test_v2_drone_page_links_formal_devices_blocks_and_task_transitions():
     assert "missions-export.csv" in page
     assert "AttachmentSelector" in page
     assert "resultAttachmentIds" in page
+    assert "飞行记录台账" in page
+    assert "DroneFlightLedger" in page
+    assert "api.droneFlights" in flight_ledger
+    assert "资料完整性" in flight_ledger
+    assert "轨迹与成果" in flight_ledger
+    assert "/api/v2/drone/flights" in client
     assert 'name="resultAssetUrls"' not in page
     for action in (
         "assign", "start", "upload-result", "review", "return", "complete", "cancel",
