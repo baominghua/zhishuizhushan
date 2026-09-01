@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import threading
 import time
 import urllib.parse
@@ -4334,6 +4335,8 @@ def resolve_point_cloud_import_sources(path_value: str, *, recursive: bool) -> l
 
 
 DJI_TRAJECTORY_SUFFIXES = {".csv", ".out", ".txt"}
+DJI_TRAJECTORY_MAX_POINTS = 2_500
+DJI_TRAJECTORY_MAX_TEXT_BYTES = 64 * 1024 * 1024
 
 
 def discover_dji_trajectory_metadata(source_paths: list[Path]) -> dict[str, Any]:
@@ -4431,6 +4434,225 @@ def scene_trajectory_evidence(scene: dict[str, Any]) -> dict[str, Any]:
         if resolved_paths
         else {"available": False, "fileCount": 0, "totalSize": 0, "formats": [], "path": "", "files": []}
     )
+
+
+def _trajectory_coordinate_pair(values: list[float], header: list[str]) -> tuple[float, float, float | None] | None:
+    normalized = [re.sub(r"[^a-z0-9]", "", value.lower()) for value in header]
+
+    def column(*names: str) -> int | None:
+        for name in names:
+            if name in normalized:
+                return normalized.index(name)
+        return None
+
+    longitude_index = column("longitude", "lon", "lng", "long")
+    latitude_index = column("latitude", "lat")
+    x_index = column("x", "easting", "east")
+    y_index = column("y", "northing", "north")
+    height_index = column("height", "altitude", "alt", "z", "ellipsoidheight")
+    first = longitude_index if longitude_index is not None else x_index
+    second = latitude_index if latitude_index is not None else y_index
+    if first is None or second is None or first >= len(values) or second >= len(values):
+        # DJI Terra POS exports commonly place time, longitude, latitude and
+        # height first.  For headerless files only accept an unmistakable WGS84
+        # pair; projected coordinates are handled when a header identifies X/Y.
+        candidates = ((0, 1), (1, 2))
+        pair = next(((a, b) for a, b in candidates if b < len(values) and abs(values[a]) <= 180 and abs(values[b]) <= 90), None)
+        if pair is None:
+            return None
+        first, second = pair
+    longitude, latitude = values[first], values[second]
+    height = values[height_index] if height_index is not None and height_index < len(values) else None
+    return longitude, latitude, height
+
+
+def _transform_trajectory_coordinates(
+    points: list[tuple[float, float, float | None]],
+    crs: str,
+) -> list[list[float]]:
+    if not points:
+        return []
+    geographic = all(abs(x) <= 180 and abs(y) <= 90 for x, y, _ in points)
+    xs = [item[0] for item in points]
+    ys = [item[1] for item in points]
+    if not geographic:
+        if not crs:
+            return []
+        try:
+            from rasterio.warp import transform
+
+            xs, ys = transform(crs, "EPSG:4326", xs, ys)
+        except Exception:
+            return []
+    result: list[list[float]] = []
+    for index, (_, _, height) in enumerate(points):
+        longitude, latitude = float(xs[index]), float(ys[index])
+        if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+            continue
+        result.append([longitude, latitude, float(height or 0)])
+    return result
+
+
+def parse_text_trajectory(path: Path, crs: str) -> list[list[float]]:
+    if path.stat().st_size > DJI_TRAJECTORY_MAX_TEXT_BYTES:
+        raise ValueError("Trajectory text file exceeds the 64 MB safety limit")
+    header: list[str] = []
+    raw_points: list[tuple[float, float, float | None]] = []
+    with path.open("r", encoding="utf-8-sig", errors="replace") as source:
+        for raw_line in source:
+            line = raw_line.strip().lstrip("#").strip()
+            if not line:
+                continue
+            fields = [item.strip() for item in (line.split(",") if "," in line else re.split(r"\s+", line))]
+            try:
+                values = [float(value) for value in fields]
+            except ValueError:
+                if not header:
+                    header = fields
+                continue
+            point = _trajectory_coordinate_pair(values, header)
+            if point is not None:
+                raw_points.append(point)
+    return _transform_trajectory_coordinates(raw_points, crs)
+
+
+def parse_sbet_trajectory(path: Path) -> list[list[float]]:
+    """Read the standard 17-double SBET record (lat/lon are radians)."""
+    record_size = struct.calcsize("<17d")
+    size = path.stat().st_size
+    if not size or size % record_size:
+        return []
+    points: list[list[float]] = []
+    with path.open("rb") as source:
+        while record := source.read(record_size):
+            values = struct.unpack("<17d", record)
+            latitude = math.degrees(values[1])
+            longitude = math.degrees(values[2])
+            if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                points.append([longitude, latitude, float(values[3])])
+    return points
+
+
+def parse_sbet_text_trajectory(path: Path) -> list[list[float]]:
+    """Read DJI Terra's human-readable SBET export (lat/lon are radians)."""
+    if path.stat().st_size > DJI_TRAJECTORY_MAX_TEXT_BYTES:
+        raise ValueError("Trajectory text file exceeds the 64 MB safety limit")
+    points: list[list[float]] = []
+    with path.open("r", encoding="utf-8-sig", errors="replace") as source:
+        for raw_line in source:
+            line = raw_line.strip()
+            if not line or line.startswith("%"):
+                continue
+            try:
+                values = [float(value) for value in re.split(r"\s+", line)]
+            except ValueError:
+                continue
+            if len(values) < 4:
+                continue
+            latitude = math.degrees(values[1])
+            longitude = math.degrees(values[2])
+            if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                points.append([longitude, latitude, float(values[3])])
+    return points
+
+
+def downsample_trajectory(points: list[list[float]], limit: int = DJI_TRAJECTORY_MAX_POINTS) -> list[list[float]]:
+    if len(points) <= limit:
+        return points
+    step = (len(points) - 1) / (limit - 1)
+    return [points[round(index * step)] for index in range(limit)]
+
+
+def trajectory_distance_km(points: list[list[float]]) -> float:
+    total = 0.0
+    for first, second in zip(points, points[1:]):
+        lon1, lat1, lon2, lat2 = map(math.radians, (first[0], first[1], second[0], second[1]))
+        delta_lat = lat2 - lat1
+        delta_lon = lon2 - lon1
+        value = math.sin(delta_lat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+        total += 2 * 6_371.0088 * math.asin(min(1.0, math.sqrt(value)))
+    return round(total, 3)
+
+
+def scene_trajectory_geojson(scene: dict[str, Any]) -> dict[str, Any]:
+    evidence = scene_trajectory_evidence(scene)
+    files: list[Path] = []
+    for value in evidence.get("files") or []:
+        try:
+            path = resolve_catalog_path(str(value))
+        except (OSError, ValueError, HTTPException):
+            continue
+        if path.is_file() and path.suffix.lower() in DJI_TRAJECTORY_SUFFIXES:
+            files.append(path)
+    if not files and str(evidence.get("path") or "").strip():
+        try:
+            trajectory_root = resolve_catalog_path(str(evidence["path"]))
+        except (OSError, ValueError, HTTPException):
+            trajectory_root = None
+        if trajectory_root is not None and trajectory_root.is_dir():
+            files.extend(
+                path.resolve()
+                for path in trajectory_root.rglob("*")
+                if path.is_file()
+                and path.suffix.lower() in DJI_TRAJECTORY_SUFFIXES
+                and (
+                    path.name.lower().startswith("pos_")
+                    or "_sbet" in path.name.lower()
+                    or "_smrmsg" in path.name.lower()
+                )
+            )
+    files = sorted(set(files), key=lambda item: (0 if item.name.lower().startswith("pos_") else 1 if "_sbet" in item.name.lower() else 2, item.name.lower()))
+    pos_files = [path for path in files if path.name.lower().startswith("pos_")]
+    sbet_files: dict[str, Path] = {}
+    for path in (item for item in files if "_sbet" in item.name.lower()):
+        key = re.sub(r"\.(out|txt)$", "", path.name.lower())
+        if key not in sbet_files or path.suffix.lower() == ".out":
+            sbet_files[key] = path
+    selected_files = pos_files or list(sbet_files.values())
+    segments: list[list[list[float]]] = []
+    source_point_count = 0
+    total_distance_km = 0.0
+    source_format = "POS" if pos_files else "SBET" if selected_files else ""
+    for path in selected_files:
+        try:
+            if "_sbet" in path.name.lower() and path.suffix.lower() == ".out":
+                candidate = parse_sbet_trajectory(path)
+            elif "_sbet" in path.name.lower() and path.suffix.lower() == ".txt":
+                candidate = parse_sbet_text_trajectory(path)
+            else:
+                candidate = parse_text_trajectory(path, str(scene.get("crs") or ""))
+        except (OSError, ValueError):
+            continue
+        if len(candidate) >= 2:
+            source_point_count += len(candidate)
+            total_distance_km += trajectory_distance_km(candidate)
+            segments.append(candidate)
+    segment_limit = max(2, DJI_TRAJECTORY_MAX_POINTS // len(segments)) if segments else DJI_TRAJECTORY_MAX_POINTS
+    sampled_segments = [downsample_trajectory(segment, segment_limit) for segment in segments]
+    features: list[dict[str, Any]] = []
+    if sampled_segments:
+        features.extend(
+            {"type": "Feature", "id": f"flight-path-{index + 1}", "properties": {"kind": "path", "segment": index + 1}, "geometry": {"type": "LineString", "coordinates": segment}}
+            for index, segment in enumerate(sampled_segments)
+        )
+        features.extend([
+            {"type": "Feature", "id": "flight-start", "properties": {"kind": "start", "label": "起点"}, "geometry": {"type": "Point", "coordinates": sampled_segments[0][0]}},
+            {"type": "Feature", "id": "flight-end", "properties": {"kind": "end", "label": "终点"}, "geometry": {"type": "Point", "coordinates": sampled_segments[-1][-1]}},
+        ])
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "meta": {
+            "available": bool(sampled_segments),
+            "sourceFormat": source_format,
+            "sourcePointCount": source_point_count,
+            "returnedPointCount": sum(len(segment) for segment in sampled_segments),
+            "segmentCount": len(sampled_segments),
+            "distanceKm": round(total_distance_km, 3),
+            "fileCount": int(evidence.get("fileCount") or 0),
+            "formats": list(evidence.get("formats") or []),
+        },
+    }
 
 
 def trajectory_mission_source_key(trajectory: dict[str, Any]) -> str:
@@ -6962,6 +7184,17 @@ def update_scene_delivery(scene_id: str, payload: SceneDeliveryRequest, request:
 @app.get("/api/scenes/{scene_id}")
 def get_scene(scene_id: str, request: Request) -> dict[str, Any]:
     return public_scene(find_allowed_scene(scene_id, request), request)
+
+
+@app.get("/api/scenes/{scene_id}/trajectory.geojson")
+def get_scene_trajectory(scene_id: str, request: Request) -> dict[str, Any]:
+    scene = find_allowed_scene(scene_id, request)
+    if effective_scene_asset_type(scene) != "pointcloud":
+        raise HTTPException(status_code=404, detail="Trajectory is only available for point-cloud assets")
+    payload = scene_trajectory_geojson(scene)
+    if not payload["meta"]["available"]:
+        raise HTTPException(status_code=404, detail="No renderable POS/SBET trajectory was found")
+    return payload
 
 
 @app.patch("/api/scenes/{scene_id}")

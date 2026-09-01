@@ -770,6 +770,7 @@ export const api = {
       body: JSON.stringify({ path, ...payload, processingStage: "ready" }),
     }),
   imageryAsset: (id: string) => request<ImageryAsset>(`/api/scenes/${encodeURIComponent(id)}`),
+  sceneTrajectory: (id: string) => request<import("./types").SceneTrajectoryFeatureCollection>(`/api/scenes/${encodeURIComponent(id)}/trajectory.geojson`),
   spatialAssetTask: (id: string) => request<SpatialAssetTask>(`/api/tasks/${encodeURIComponent(id)}`),
   spatialAssetTasks: (query: { status?: string; includeArchived?: boolean; limit?: number; offset?: number } = {}) =>
     request<SpatialAssetTaskResponse>(`/api/tasks?${queryString(query)}`),

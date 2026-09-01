@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "maplibre-gl-lidar/style.css";
 
-import type { ForestBlockFeatureCollection } from "../api/types";
+import type { ForestBlockFeatureCollection, SceneTrajectoryFeatureCollection } from "../api/types";
 import type { MapViewport, MapZoomRequest } from "../maps/scene";
 import type { Spatial3dDisplaySettings } from "./CesiumGlobe";
 
@@ -25,6 +25,7 @@ interface CopcPointCloudViewerProps {
   url: string;
   bounds?: [number, number, number, number];
   featureCollection: ForestBlockFeatureCollection;
+  trajectory?: SceneTrajectoryFeatureCollection;
   settings: Spatial3dDisplaySettings;
   quality: "smooth" | "standard" | "detail";
   homeRequest: number;
@@ -36,6 +37,7 @@ interface CopcPointCloudViewerProps {
 const EMPTY_GEOJSON = { type: "FeatureCollection" as const, features: [] };
 const POINT_BUDGETS = { smooth: 750_000, standard: 1_500_000, detail: 3_000_000 } as const;
 const FOREST_BLOCK_LAYER_IDS = ["forest-block-fill", "forest-block-casing", "forest-block-line"] as const;
+const TRAJECTORY_LAYER_IDS = ["flight-path-casing", "flight-path-line", "flight-path-points"] as const;
 
 function initialCenter(bounds?: CopcPointCloudViewerProps["bounds"]): [number, number] {
   if (!bounds || bounds.length !== 4) return [117.7135, 27.5448];
@@ -69,6 +71,7 @@ export function CopcPointCloudViewer({
   url,
   bounds,
   featureCollection,
+  trajectory,
   settings,
   quality,
   homeRequest,
@@ -99,12 +102,16 @@ export function CopcPointCloudViewer({
         version: 8,
         sources: {
           "forest-blocks": { type: "geojson", data: EMPTY_GEOJSON },
+          "flight-trajectory": { type: "geojson", data: EMPTY_GEOJSON },
         },
         layers: [
           { id: "point-cloud-background", type: "background", paint: { "background-color": "#061b16" } },
           { id: "forest-block-fill", type: "fill", source: "forest-blocks", paint: { "fill-color": "#55d5a8", "fill-opacity": 0.022 } },
           { id: "forest-block-casing", type: "line", source: "forest-blocks", paint: { "line-color": "#021f19", "line-width": 5, "line-opacity": 0.94 } },
           { id: "forest-block-line", type: "line", source: "forest-blocks", paint: { "line-color": "#b8ffe4", "line-width": 2, "line-opacity": 0.98 } },
+          { id: "flight-path-casing", type: "line", source: "flight-trajectory", filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#32120a", "line-width": 8, "line-opacity": 0.96 } },
+          { id: "flight-path-line", type: "line", source: "flight-trajectory", filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#ff5a36", "line-width": 4, "line-opacity": 1 } },
+          { id: "flight-path-points", type: "circle", source: "flight-trajectory", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 7, "circle-color": ["match", ["get", "kind"], "start", "#00d7ff", "#ffd400"], "circle-stroke-color": "#32120a", "circle-stroke-width": 3 } },
         ],
       },
     });
@@ -145,8 +152,11 @@ export function CopcPointCloudViewer({
     const onMoveEnd = () => onViewportChange(viewportForMap(map));
     const bringForestBoundaryToFront = () => {
       const styleLayers = map.getStyle().layers ?? [];
-      if (styleLayers.at(-1)?.id === "forest-block-line") return;
+      if (styleLayers.at(-1)?.id === "flight-path-points") return;
       FOREST_BLOCK_LAYER_IDS.forEach((layerId) => {
+        if (map.getLayer(layerId)) map.moveLayer(layerId);
+      });
+      TRAJECTORY_LAYER_IDS.forEach((layerId) => {
         if (map.getLayer(layerId)) map.moveLayer(layerId);
       });
     };
@@ -205,6 +215,15 @@ export function CopcPointCloudViewer({
       });
     }
   }, [featureCollection]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const source = map?.getSource("flight-trajectory");
+    if (source instanceof GeoJSONSource) source.setData((trajectory ?? EMPTY_GEOJSON) as never);
+    if (map) TRAJECTORY_LAYER_IDS.forEach((layerId) => {
+      if (map.getLayer(layerId)) map.moveLayer(layerId);
+    });
+  }, [trajectory]);
 
   useEffect(() => {
     const control = controlRef.current;

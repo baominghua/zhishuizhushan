@@ -34,7 +34,7 @@ import {
 import { useEffect, useRef } from "react";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
-import type { ForestBlockFeatureCollection, ForestRoadFeatureCollection, ImageryAsset, MapConfigResponse } from "../api/types";
+import type { ForestBlockFeatureCollection, ForestRoadFeatureCollection, ImageryAsset, MapConfigResponse, SceneTrajectoryFeatureCollection } from "../api/types";
 import type { MapSituationAsset } from "./MapCanvas";
 import { forestBlockColor } from "../maps/forestBlocks";
 import { MAP_ANNOTATION_COLORS, MAP_ANNOTATION_GLYPHS } from "../maps/mapAnnotations";
@@ -65,6 +65,7 @@ interface CesiumGlobeProps {
   minimumZoomDistance?: number;
   spatial3dDisplaySettings: Record<string, Spatial3dDisplaySettings>;
   situationAssets: MapSituationAsset[];
+  trajectory?: SceneTrajectoryFeatureCollection;
   onSelectSituationAsset?: (id: string) => void;
   detailMode: boolean;
   qualityMode?: "smooth" | "standard" | "detail";
@@ -426,6 +427,7 @@ export function CesiumGlobe({
   minimumZoomDistance,
   spatial3dDisplaySettings,
   situationAssets,
+  trajectory,
   onSelectSituationAsset,
   detailMode,
   qualityMode,
@@ -837,6 +839,53 @@ export function CesiumGlobe({
       if (!viewer.isDestroyed()) viewer.entities.remove(entity);
     });
   }, [situationAssets]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !trajectory?.features.length) return;
+    let cancelled = false;
+    let added: GeoJsonDataSource | null = null;
+    void GeoJsonDataSource.load(
+      trajectory as Parameters<typeof GeoJsonDataSource.load>[0],
+      {
+        clampToGround: false,
+        stroke: Color.fromCssColorString("#ff5a36"),
+        strokeWidth: 5,
+        markerColor: Color.fromCssColorString("#ffd400"),
+        markerSize: 14,
+      },
+    ).then((dataSource) => {
+      if (cancelled || viewer.isDestroyed()) return;
+      const now = JulianDate.now();
+      dataSource.entities.values.forEach((entity) => {
+        if (entity.polyline) {
+          entity.polyline.width = new ConstantProperty(5);
+          entity.polyline.material = new ColorMaterialProperty(Color.fromCssColorString("#ff5a36"));
+          entity.polyline.depthFailMaterial = new ColorMaterialProperty(Color.fromCssColorString("#fff3b0"));
+        }
+        const properties = (entity.properties?.getValue(now) ?? {}) as { label?: string };
+        if (entity.position && properties.label) {
+          entity.label = new LabelGraphics({
+            text: properties.label,
+            font: "700 15px system-ui, sans-serif",
+            fillColor: Color.WHITE,
+            outlineColor: Color.fromCssColorString("#32120a"),
+            outlineWidth: 4,
+            style: LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cartesian2(0, -24),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          });
+        }
+      });
+      viewer.dataSources.add(dataSource);
+      added = dataSource;
+      viewer.scene.requestRender();
+    });
+    return () => {
+      cancelled = true;
+      if (added && !viewer.isDestroyed()) viewer.dataSources.remove(added, true);
+    };
+  }, [trajectory]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

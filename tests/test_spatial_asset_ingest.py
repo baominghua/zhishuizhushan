@@ -901,6 +901,114 @@ def test_trajectory_sidecar_creates_one_partial_historical_drone_mission(monkeyp
     assert "droneDevice" in record["flightSummary"]["missingFields"]
 
 
+def test_pos_trajectory_is_parsed_and_downsampled_for_map_overlay(tmp_path):
+    import server.app as app_module
+
+    path = tmp_path / "POS_DJI_demo.csv"
+    path.write_text(
+        "# time,longitude,latitude,height\n"
+        "1,117.1000,27.2000,801\n"
+        "2,117.1010,27.2010,803\n"
+        "3,117.1020,27.2020,805\n",
+        encoding="utf-8",
+    )
+
+    points = app_module.parse_text_trajectory(path, "EPSG:4326")
+
+    assert points == [
+        [117.1, 27.2, 801.0],
+        [117.101, 27.201, 803.0],
+        [117.102, 27.202, 805.0],
+    ]
+    assert app_module.downsample_trajectory(points, 2) == [points[0], points[-1]]
+    assert app_module.trajectory_distance_km(points) > 0
+
+
+def test_sbet_trajectory_reads_standard_seventeen_double_records(tmp_path):
+    import struct
+    import server.app as app_module
+
+    path = tmp_path / "demo_sbet.out"
+    records = []
+    for index in range(2):
+        values = [0.0] * 17
+        values[0] = index
+        values[1] = app_module.math.radians(27.2 + index * 0.001)
+        values[2] = app_module.math.radians(117.1 + index * 0.001)
+        values[3] = 800 + index
+        records.append(struct.pack("<17d", *values))
+    path.write_bytes(b"".join(records))
+
+    points = app_module.parse_sbet_trajectory(path)
+
+    assert len(points) == 2
+    assert points[0] == pytest.approx([117.1, 27.2, 800])
+
+
+def test_dji_sbet_text_trajectory_converts_radians_to_degrees(tmp_path):
+    import server.app as app_module
+
+    path = tmp_path / "DJI_demo_sbet.txt"
+    path.write_text(
+        " %      Time       Latitude      Longitude     Altitude\n"
+        " %     (SOW)      (radians)      (radians)     (meters)\n"
+        f"442633.90 {app_module.math.radians(27.2)} {app_module.math.radians(117.1)} 981.02 0 0 0\n"
+        f"442633.91 {app_module.math.radians(27.201)} {app_module.math.radians(117.101)} 982.02 0 0 0\n",
+        encoding="utf-8",
+    )
+
+    points = app_module.parse_sbet_text_trajectory(path)
+
+    assert len(points) == 2
+    assert points[0] == pytest.approx([117.1, 27.2, 981.02])
+
+
+def test_scene_trajectory_geojson_contains_path_endpoints_and_statistics(tmp_path, monkeypatch):
+    import server.app as app_module
+
+    path = tmp_path / "POS_DJI_demo.csv"
+    path.write_text("x,y,z\n117.1,27.2,800\n117.11,27.21,805\n", encoding="utf-8")
+    monkeypatch.setattr(app_module, "resolve_catalog_path", lambda _value: path)
+    monkeypatch.setattr(
+        app_module,
+        "scene_trajectory_evidence",
+        lambda _scene: {"available": True, "fileCount": 1, "formats": ["POS"], "files": ["trajectory/POS_DJI_demo.csv"]},
+    )
+
+    payload = app_module.scene_trajectory_geojson({"crs": "EPSG:4326"})
+
+    assert payload["type"] == "FeatureCollection"
+    assert [feature["id"] for feature in payload["features"]] == ["flight-path-1", "flight-start", "flight-end"]
+    assert payload["meta"]["available"] is True
+    assert payload["meta"]["sourceFormat"] == "POS"
+    assert payload["meta"]["sourcePointCount"] == 2
+    assert payload["meta"]["distanceKm"] > 0
+
+
+def test_scene_trajectory_endpoint_returns_renderable_geojson(app_client, monkeypatch):
+    import server.app as app_module
+
+    monkeypatch.setattr(
+        app_module,
+        "find_allowed_scene",
+        lambda scene_id, _request: {"id": scene_id, "assetType": "pointcloud"},
+    )
+    monkeypatch.setattr(
+        app_module,
+        "scene_trajectory_geojson",
+        lambda _scene: {
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "id": "flight-path-1", "properties": {"kind": "path"}, "geometry": {"type": "LineString", "coordinates": [[117.1, 27.2, 800], [117.2, 27.3, 810]]}}],
+            "meta": {"available": True, "sourceFormat": "POS", "sourcePointCount": 2, "returnedPointCount": 2, "segmentCount": 1, "distanceKm": 1.2, "fileCount": 1, "formats": ["POS"]},
+        },
+    )
+
+    response = app_client.get("/api/scenes/scene-trajectory/trajectory.geojson")
+
+    assert response.status_code == 200
+    assert response.json()["features"][0]["id"] == "flight-path-1"
+
+
 def test_trajectory_sidecar_deduplicates_pnts_and_copc_scene_records(monkeypatch):
     import server.app as app_module
 

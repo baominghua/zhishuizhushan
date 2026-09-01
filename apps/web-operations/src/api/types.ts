@@ -1889,6 +1889,26 @@ export interface DroneMissionActionPayload {
   reviewNote?: string;
 }
 
+export interface SceneTrajectoryFeatureCollection {
+  type: "FeatureCollection";
+  features: Array<{
+    type: "Feature";
+    id: string;
+    properties: { kind: "path" | "start" | "end"; label?: string };
+    geometry: { type: "LineString" | "Point"; coordinates: number[] | number[][] };
+  }>;
+  meta: {
+    available: boolean;
+    sourceFormat: string;
+    sourcePointCount: number;
+    returnedPointCount: number;
+    segmentCount: number;
+    distanceKm: number;
+    fileCount: number;
+    formats: string[];
+  };
+}
+
 export interface DroneFlightRecord {
   id: string;
   missionId: string;
