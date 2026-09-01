@@ -47,7 +47,7 @@ class SafetyEventCreate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     description: str = Field(default="", max_length=5000)
-    linkedBlockCodes: list[str] = Field(min_length=1)
+    linkedBlockCodes: list[str] = Field(default_factory=list)
 
 
 class SafetyAlertCreate(BaseModel):
@@ -238,7 +238,8 @@ def add_safety_event(
     context: AuthContext = Depends(request_context),
 ) -> dict[str, Any]:
     require_permission(context, "safety.events.create")
-    blocks = validated_blocks(payload.linkedBlockCodes, context)
+    event_type = validate_enum(payload.eventType, EVENT_TYPES, "事件类型")
+    blocks = validated_blocks(payload.linkedBlockCodes, context, required=event_type != "sos")
     record = build_event_record(payload.model_dump(), blocks, context.user)
     return create_event(record, timeline_entry("report", "", "new", context.user, "安全事件已上报。"))
 

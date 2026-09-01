@@ -4929,6 +4929,7 @@ svg {
 .field-mobile-actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 .field-mobile-actions button { display: flex; min-height: 48px; align-items: center; justify-content: center; gap: 8px; color: #0e624a; background: #fff; border: 1px solid var(--line-strong); border-radius: 6px; font-weight: 700; cursor: pointer; }
 .field-mobile-actions button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+.field-mobile-actions button.danger { color: #fff; background: #a73939; border-color: #a73939; grid-column: 1 / -1; }
 .field-mobile-actions button:disabled { opacity: .6; cursor: wait; }
 .field-mobile-actions svg { width: 17px; }
 .field-mobile-notice,.field-track-bar { display: flex; min-height: 48px; align-items: center; gap: 10px; padding: 10px 14px; color: #775117; background: #fff7e6; border: 1px solid #ead4a6; border-radius: 6px; font-size: 11px; }
@@ -4965,6 +4966,14 @@ svg {
 .field-mobile-footer svg { width: 12px; }
 .field-mobile-footer a { color: var(--accent-strong); font-weight: 700; }
 .field-task-detail { display: grid; gap: 16px; }
+.field-sos-confirmation { display: grid; gap: 16px; }
+.field-sos-warning { display: flex; align-items: flex-start; gap: 12px; padding: 14px; color: #782d2d; background: #fff0ee; border: 1px solid #e6b8b3; border-radius: 8px; }
+.field-sos-warning > svg { width: 24px; height: 24px; flex: 0 0 24px; }
+.field-sos-warning span { display: grid; gap: 5px; }.field-sos-warning small { color: #85514d; line-height: 1.55; }
+.field-sos-confirmation > label { display: grid; gap: 7px; color: #394a43; font-size: 12px; font-weight: 700; }
+.field-sos-confirmation textarea { width: 100%; padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px; resize: vertical; font: inherit; box-sizing: border-box; }
+.field-sos-confirmation .field-sos-check { display: flex; align-items: flex-start; gap: 9px; padding: 12px; background: #f7f9f8; border: 1px solid var(--line); border-radius: 8px; font-weight: 600; line-height: 1.55; }
+.field-sos-check input { width: 18px; height: 18px; flex: 0 0 18px; accent-color: #a73939; }
 .field-task-detail section { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .field-task-detail dl { display: grid; margin: 0; grid-template-columns: 1fr 1fr; }
 .field-task-detail dl div { display: grid; gap: 4px; padding: 10px 0; }

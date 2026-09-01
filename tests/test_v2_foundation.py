@@ -2552,6 +2552,18 @@ def test_v2_mobile_offline_sync_track_and_resumable_evidence_flow(app_client):
     assert app_client.get("/api/v2/mobile/operations", headers=ADMIN_HEADERS).json()["total"] == 1
     assert app_client.get("/api/v2/mobile/operations-export.csv", headers=ADMIN_HEADERS).status_code == 200
 
+    sos_sync = app_client.post(
+        "/api/v2/mobile/sync", headers=ADMIN_HEADERS,
+        json={"operations": [{
+            "clientOperationId": "sos-mobile-0001", "entityType": "safety", "entityId": "", "action": "sos",
+            "occurredAt": "2026-08-11T08:20:00+08:00",
+            "payload": {"title": "现场人员紧急求助", "description": "发现突发火情，需要立即支援。", "longitude": 118.312, "latitude": 27.045},
+        }]},
+    )
+    assert sos_sync.status_code == 200, sos_sync.text
+    assert sos_sync.json()["completed"] == 1
+    assert sos_sync.json()["results"][0]["result"]["entity"]["severity"] == "critical"
+
     content = b"mobile-evidence-data"
     session = app_client.post(
         "/api/v2/mobile/uploads",

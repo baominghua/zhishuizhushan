@@ -247,6 +247,8 @@ def test_v2_mobile_field_workspace_supports_offline_tasks_tracks_and_idempotent_
     assert '"/api/v2/mobile/devices/register"' in client
     assert "远程注销设备" in (web_root / "pages" / "MobileOperationsPage.tsx").read_text(encoding="utf-8")
     assert "registerCurrentDevice" in page
+    assert "二次确认并提交 SOS" in page
+    assert 'clientOperationId: createClientId("sos")' in page
     assert 'method: "PUT", body' in client
     assert '/complete`' in client
 

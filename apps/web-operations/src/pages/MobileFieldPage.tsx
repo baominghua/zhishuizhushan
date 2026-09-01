@@ -66,6 +66,7 @@ export function MobileFieldPage() {
   const [selected, setSelected] = useState<MobileFieldTask | null>(null);
   const [busy, setBusy] = useState<"download" | "sync" | "track" | "evidence" | "">("");
   const [notice, setNotice] = useState("");
+  const [sosOpen, setSosOpen] = useState(false);
   const watchRef = useRef<number | null>(null);
   const nativeTrackingRef = useRef(false);
 
@@ -195,6 +196,27 @@ export function MobileFieldPage() {
     setNotice(online ? "操作已加入同步队列，请点击立即同步。" : "操作已安全保存在本机，联网后可继续同步。");
   }
 
+  async function queueSos(description: string) {
+    let longitude: number | undefined;
+    let latitude: number | undefined;
+    const latest = state.activeTrack?.points.at(-1);
+    if (latest) ({ longitude, latitude } = latest);
+    else if (navigator.geolocation) {
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8_000, maximumAge: 30_000 }));
+        longitude = position.coords.longitude; latitude = position.coords.latitude;
+      } catch { /* SOS must remain usable when location is unavailable. */ }
+    }
+    const operation: MobilePendingOperation = {
+      clientOperationId: createClientId("sos"), entityType: "safety", entityId: "", action: "sos",
+      baseVersion: "", occurredAt: new Date().toISOString(),
+      payload: { title: `${principal?.user || "现场人员"} 现场 SOS`, description, locationText: longitude !== undefined ? "移动端实时定位" : "定位暂不可用", longitude, latitude },
+    };
+    updateState((current) => ({ ...current, operations: [...current.operations, operation] }));
+    setSosOpen(false);
+    setNotice(online ? "SOS 已进入高优先级同步队列，请立即点击同步；同时请直接拨打应急联系人电话。" : "SOS 已保存在本机，但当前无网络；请立即拨打应急联系人电话并尽快移动到有信号区域。" );
+  }
+
   function startTrack(task: MobileFieldTask) {
     const bridge = nativeBridge();
     if (!bridge && !navigator.geolocation) { setNotice("当前设备不支持定位。"); return; }
@@ -258,6 +280,7 @@ export function MobileFieldPage() {
     <section className="field-mobile-actions" aria-label="现场快捷操作">
       <button type="button" onClick={downloadPackage} disabled={Boolean(busy)}><CloudDownload />{busy === "download" ? "正在更新" : "更新离线包"}</button>
       <button className="primary" type="button" onClick={syncPending} disabled={Boolean(busy)}><CloudUpload />{busy === "sync" ? "正在同步" : pendingCount ? `同步 ${pendingCount} 条记录` : "检查更新"}</button>
+      <button className="danger" type="button" onClick={() => setSosOpen(true)} disabled={Boolean(busy)}><ShieldAlert />紧急求助</button>
     </section>
 
     {notice && <div className="field-mobile-notice" role="status"><AlertTriangle />{notice}</div>}
@@ -281,6 +304,19 @@ export function MobileFieldPage() {
       <Link to="/operations/mobile-sync"><RefreshCw /><span>同步记录</span></Link>
     </nav>
     <SidePanel open={Boolean(selected)} eyebrow="现场任务" title={selected?.title || "任务详情"} onClose={() => setSelected(null)}>{selected && <TaskDetail task={selected} tracking={Boolean(state.activeTrack)} evidenceCount={state.evidence.filter((item) => item.taskId === selected.id).length} onQueue={queueOperation} onTrack={startTrack} onEvidence={queueEvidence} />}</SidePanel>
+    <SidePanel open={sosOpen} eyebrow="现场安全 / 二次确认" title="发起紧急求助" onClose={() => setSosOpen(false)}><SosConfirmation online={online} onSubmit={queueSos} /></SidePanel>
+  </div>;
+}
+
+function SosConfirmation({ online, onSubmit }: { online: boolean; onSubmit: (description: string) => Promise<void> }) {
+  const [description, setDescription] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [sending, setSending] = useState(false);
+  return <div className="field-sos-confirmation">
+    <div className="field-sos-warning"><ShieldAlert /><span><strong>仅用于人身安全、火情或重大险情</strong><small>{online ? "提交后将进入最高优先级同步队列，并尝试附带当前位置。" : "当前离线：系统只能先保存记录，请优先直接拨打应急电话。"}</small></span></div>
+    <label><span>现场情况</span><textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="简要说明人员、险情、位置特征和需要的支援" /></label>
+    <label className="field-sos-check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>我确认这是紧急事件，并已知晓离线时应同时电话求助。</span></label>
+    <button className="button danger full" type="button" disabled={!confirmed || description.trim().length < 4 || sending} onClick={async () => { setSending(true); try { await onSubmit(description.trim()); } finally { setSending(false); } }}><ShieldAlert />{sending ? "正在记录" : "二次确认并提交 SOS"}</button>
   </div>;
 }
 
