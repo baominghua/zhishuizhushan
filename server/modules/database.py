@@ -411,6 +411,10 @@ def mobile_upload_sessions_json_path() -> Path:
     return get_data_dir() / "mobile" / "upload_sessions.json"
 
 
+def mobile_devices_json_path() -> Path:
+    return get_data_dir() / "mobile" / "devices.json"
+
+
 def operations_notification_reads_json_path() -> Path:
     return get_data_dir() / "operations" / "notification_reads.json"
 

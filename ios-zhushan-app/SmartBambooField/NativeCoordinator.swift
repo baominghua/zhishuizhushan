@@ -14,6 +14,7 @@ final class NativeCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKS
       const post = (action, payload = {}) => window.webkit.messageHandlers.smartBambooNative.postMessage({action, ...payload});
       window.SmartBambooNative = {
         version: () => '1.0-ios', isOnline: () => online,
+        platform: () => 'ios', deviceId: () => '\(UIDevice.current.identifierForVendor?.uuidString ?? "ios-unknown-device")',
         startLocation: () => post('location.start'), stopLocation: () => post('location.stop'),
         reload: () => post('reload'), openLocationSettings: () => post('location.settings'),
         get: () => '', set: (key, value) => { post('secure.set', {key, value}); return true; },

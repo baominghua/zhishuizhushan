@@ -38,6 +38,27 @@ import { currentConnectivity, nativeBridge, subscribeConnectivity, subscribeNati
 
 type TaskFilter = "all" | "patrol" | "labor" | "safety";
 
+async function registerCurrentDevice() {
+  const bridge = nativeBridge();
+  let fallbackId = window.localStorage.getItem("smart-bamboo.mobile-device-id");
+  if (!fallbackId) {
+    fallbackId = createClientId("web-device");
+    window.localStorage.setItem("smart-bamboo.mobile-device-id", fallbackId);
+  }
+  const platform = bridge?.platform?.() || "web";
+  const deviceId = bridge?.deviceId?.() || fallbackId;
+  window.localStorage.setItem("smart-bamboo.mobile-device-id", deviceId);
+  await api.registerMobileDevice({
+    deviceId,
+    deviceName: platform === "web" ? "移动浏览器" : `${platform === "android" ? "Android" : "iOS"} 现场终端`,
+    platform,
+    appVersion: bridge?.version?.() || "1.0.0-web",
+    osVersion: navigator.userAgent.slice(0, 64),
+    pushToken: bridge?.get?.("push-token") || "",
+    capabilities: bridge ? ["camera", "location", "network", "secure-store", "file"] : ["camera", "location", "network", "file"],
+  });
+}
+
 export function MobileFieldPage() {
   const [state, setState] = useState<MobileFieldState>(() => readMobileFieldState());
   const [online, setOnline] = useState(currentConnectivity);
@@ -86,6 +107,7 @@ export function MobileFieldPage() {
     setBusy("download"); setNotice("");
     try {
       const offlinePackage = await api.mobileOfflinePackage();
+      await registerCurrentDevice();
       updateState((current) => ({ ...current, offlinePackage }));
       setNotice(`已更新 ${offlinePackage.tasks.length} 条现场任务，可离线查看。`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "任务包下载失败。"); }
@@ -116,6 +138,7 @@ export function MobileFieldPage() {
         if (result.failed) message += `，${result.failed} 条未通过校验`;
       }
       const offlinePackage = await api.mobileOfflinePackage();
+      await registerCurrentDevice();
       updateState((current) => ({ ...current, offlinePackage, operations: [], tracks: [], evidence: current.evidence.filter((item) => !completedEvidence.has(item.clientEvidenceId)), lastSyncedAt: new Date().toISOString() }));
       setSelected(null);
       setNotice(`${message}。`);

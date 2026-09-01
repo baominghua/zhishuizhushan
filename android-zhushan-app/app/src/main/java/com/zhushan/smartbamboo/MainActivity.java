@@ -432,6 +432,8 @@ public class MainActivity extends Activity implements LocationListener {
         private final SecureStore secureStore = new SecureStore(MainActivity.this);
 
         @JavascriptInterface public String version() { return "1.0"; }
+        @JavascriptInterface public String platform() { return "android"; }
+        @JavascriptInterface public String deviceId() { return Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID); }
         @JavascriptInterface public boolean isOnline() { return MainActivity.this.isOnline(); }
         @JavascriptInterface public String get(String key) { return secureStore.get(key); }
         @JavascriptInterface public boolean set(String key, String value) { return secureStore.set(key, value); }

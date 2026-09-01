@@ -61,6 +61,9 @@ import type {
   LaborWorkerPayload,
   MapConfigResponse,
   MobileEvidenceRecord,
+  MobileDeviceLedger,
+  MobileDeviceRecord,
+  MobileClientPolicy,
   MobileOfflinePackage,
   MobileUploadSession,
   MobilePendingOperation,
@@ -203,6 +206,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 function requestHeaders(initial: Record<string, string> = {}): Record<string, string> {
   const headers = { ...initial };
+  if (typeof window !== "undefined") {
+    const mobileDeviceId = window.localStorage.getItem("smart-bamboo.mobile-device-id");
+    if (mobileDeviceId) headers["X-Smart-Bamboo-Device-ID"] = mobileDeviceId;
+  }
   if (import.meta.env.DEV) {
     headers["X-RS-User"] = "v2-developer";
     headers["X-RS-Roles"] = "admin";
@@ -899,4 +906,12 @@ export const api = {
     request<LedgerResponse<MobileTrackRecord>>(`/api/v2/mobile/tracks?${queryString(query)}`),
   mobileEvidence: (query: { q?: string; userId?: string; limit?: number; offset?: number } = {}) =>
     request<LedgerResponse<MobileEvidenceRecord>>(`/api/v2/mobile/evidence?${queryString(query)}`),
+  mobileDevices: (query: { q?: string; status?: string; userId?: string; limit?: number; offset?: number } = {}) =>
+    request<MobileDeviceLedger>(`/api/v2/mobile/devices?${queryString(query)}`),
+  registerMobileDevice: (payload: { deviceId: string; deviceName: string; platform: "android" | "ios" | "web"; appVersion: string; osVersion: string; pushToken: string; capabilities: string[] }) =>
+    request<{ device: MobileDeviceRecord; clientPolicy: MobileClientPolicy }>("/api/v2/mobile/devices/register", { method: "POST", body: JSON.stringify(payload) }),
+  revokeMobileDevice: (id: string, note: string) =>
+    request<MobileDeviceRecord>(`/api/v2/mobile/devices/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ note }) }),
+  restoreMobileDevice: (id: string) =>
+    request<MobileDeviceRecord>(`/api/v2/mobile/devices/${encodeURIComponent(id)}/restore`, { method: "POST" }),
 };

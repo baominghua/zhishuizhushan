@@ -351,6 +351,19 @@ async def enforce_human_session_policy_for_api(request: Request, call_next):
 
 
 @app.middleware("http")
+async def enforce_mobile_device_revocation(request: Request, call_next):
+    path = request.url.path.rstrip("/")
+    device_id = request.headers.get("X-Smart-Bamboo-Device-ID", "").strip()
+    administrative_device_path = path == "/api/v2/mobile/devices" or path.endswith("/revoke") or path.endswith("/restore")
+    if device_id and path.startswith("/api/v2/mobile/") and not administrative_device_path:
+        from server.modules.mobile_devices import mobile_device_by_id
+        device = mobile_device_by_id(device_id)
+        if device and device.get("status") == "revoked":
+            return JSONResponse(status_code=403, content={"detail": "该移动设备已被管理员远程注销，请联系管理员恢复绑定。"})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def prevent_stale_application_shells(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.rstrip("/") or "/"

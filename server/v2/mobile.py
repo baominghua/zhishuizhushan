@@ -43,6 +43,7 @@ from server.modules.mobile_sync import (
     upload_session_ledger,
     utc_now,
 )
+from server.modules.mobile_devices import list_mobile_devices, mobile_device_by_id, restore_mobile_device, revoke_mobile_device, upsert_mobile_device
 from server.v2.labor import LaborAction, apply_job_action, job_detail, job_ledger
 from server.v2.patrol import PatrolAction, apply_patrol_action, get_patrol_task, list_patrol_tasks
 from server.v2.safety import SafetyEventCreate, add_safety_event, safety_event_ledger
@@ -99,6 +100,39 @@ class UploadSessionCreate(BaseModel):
     sha256: str = Field(default="", max_length=64)
     taskType: str = Field(default="", max_length=64)
     taskId: str = Field(default="", max_length=128)
+
+
+class MobileDeviceRegistration(BaseModel):
+    deviceId: str = Field(min_length=8, max_length=128)
+    deviceName: str = Field(default="", max_length=128)
+    platform: Literal["android", "ios", "web"]
+    appVersion: str = Field(min_length=1, max_length=32)
+    osVersion: str = Field(default="", max_length=64)
+    pushToken: str = Field(default="", max_length=512)
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+
+
+class MobileDeviceRevocation(BaseModel):
+    note: str = Field(min_length=2, max_length=500)
+
+
+def client_policy() -> dict[str, Any]:
+    return {
+        "minimumVersions": {
+            "android": os.getenv("SMART_BAMBOO_ANDROID_MIN_VERSION", "1.0.0"),
+            "ios": os.getenv("SMART_BAMBOO_IOS_MIN_VERSION", "1.0.0"),
+            "web": os.getenv("SMART_BAMBOO_WEB_MIN_VERSION", "1.0.0"),
+        },
+        "latestVersions": {
+            "android": os.getenv("SMART_BAMBOO_ANDROID_LATEST_VERSION", "1.0.0"),
+            "ios": os.getenv("SMART_BAMBOO_IOS_LATEST_VERSION", "1.0.0"),
+            "web": os.getenv("SMART_BAMBOO_WEB_LATEST_VERSION", "1.0.0"),
+        },
+        "updateUrls": {
+            "android": os.getenv("SMART_BAMBOO_ANDROID_UPDATE_URL", ""),
+            "ios": os.getenv("SMART_BAMBOO_IOS_UPDATE_URL", ""),
+        },
+    }
 
 
 def parse_timestamp(value: str, label: str) -> str:
@@ -317,7 +351,54 @@ def mobile_bootstrap(
             },
         },
         "syncCursor": operations[0]["receivedAt"] if operations else "",
+        "clientPolicy": client_policy(),
     }
+
+
+@router.post("/devices/register")
+def register_mobile_device(payload: MobileDeviceRegistration, context: AuthContext = Depends(request_context)) -> dict[str, Any]:
+    now = utc_now()
+    existing = mobile_device_by_id(payload.deviceId)
+    if existing and existing.get("status") == "revoked":
+        raise HTTPException(status_code=403, detail="该设备已被管理员远程注销，请联系管理员恢复绑定。")
+    record = {
+        **(existing or {}), **payload.model_dump(mode="json"), "userId": context.user,
+        "status": "active", "registeredAt": (existing or {}).get("registeredAt") or now,
+        "lastSeenAt": now, "revokedAt": "", "revokedBy": "", "revocationNote": "",
+    }
+    return {"device": upsert_mobile_device(record), "clientPolicy": client_policy()}
+
+
+@router.get("/devices")
+def mobile_device_ledger(
+    q: str = Query(default=""), status: str = Query(default=""), user_id: str = Query(default="", alias="userId"),
+    limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    require_permission(context, "mobile.operations.view")
+    if status and status not in {"active", "revoked"}:
+        raise HTTPException(status_code=422, detail="设备状态不正确。")
+    records = list_mobile_devices(q, status, user_id)
+    items = [{**item, "pushTokenRegistered": bool(item.get("pushToken")), "pushToken": ""} for item in records[offset:offset + limit]]
+    return {"items": items, "total": len(records), "limit": limit, "offset": offset, "clientPolicy": client_policy()}
+
+
+@router.post("/devices/{device_id}/revoke")
+def revoke_registered_mobile_device(device_id: str, payload: MobileDeviceRevocation, context: AuthContext = Depends(request_context)) -> dict[str, Any]:
+    require_permission(context, "mobile.operations.manage")
+    record = revoke_mobile_device(device_id, utc_now(), context.user, payload.note.strip())
+    if not record:
+        raise HTTPException(status_code=404, detail="移动设备不存在。")
+    return record
+
+
+@router.post("/devices/{device_id}/restore")
+def restore_registered_mobile_device(device_id: str, context: AuthContext = Depends(request_context)) -> dict[str, Any]:
+    require_permission(context, "mobile.operations.manage")
+    record = restore_mobile_device(device_id, utc_now(), context.user)
+    if not record:
+        raise HTTPException(status_code=404, detail="移动设备不存在。")
+    return record
 
 
 @router.get("/offline-package")

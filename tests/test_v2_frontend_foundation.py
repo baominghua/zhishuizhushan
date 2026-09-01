@@ -244,6 +244,9 @@ def test_v2_mobile_field_workspace_supports_offline_tasks_tracks_and_idempotent_
     assert '"/api/v2/mobile/sync"' in client
     assert '"/api/v2/mobile/tracks"' in client
     assert '"/api/v2/mobile/uploads"' in client
+    assert '"/api/v2/mobile/devices/register"' in client
+    assert "远程注销设备" in (web_root / "pages" / "MobileOperationsPage.tsx").read_text(encoding="utf-8")
+    assert "registerCurrentDevice" in page
     assert 'method: "PUT", body' in client
     assert '/complete`' in client
 

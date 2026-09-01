@@ -2479,7 +2479,46 @@ def test_v2_mobile_offline_sync_track_and_resumable_evidence_flow(app_client):
     package = app_client.get("/api/v2/mobile/offline-package", headers=ADMIN_HEADERS)
     assert package.status_code == 200
     assert package.json()["packageVersion"]
+    assert package.json()["clientPolicy"]["minimumVersions"]["android"] == "1.0.0"
     assert any(item["id"] == task["id"] for item in package.json()["tasks"])
+
+    registration_payload = {
+        "deviceId": "android-field-device-0001",
+        "deviceName": "巡护员手机",
+        "platform": "android",
+        "appVersion": "1.0.0",
+        "osVersion": "Android 14",
+        "pushToken": "push-token-0001",
+        "capabilities": ["camera", "location", "secure-store"],
+    }
+    registered = app_client.post("/api/v2/mobile/devices/register", headers=ADMIN_HEADERS, json=registration_payload)
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["device"]["status"] == "active"
+    assert registered.json()["clientPolicy"]["latestVersions"]["android"] == "1.0.0"
+    device_ledger = app_client.get("/api/v2/mobile/devices", headers=ADMIN_HEADERS)
+    assert device_ledger.status_code == 200
+    assert device_ledger.json()["total"] == 1
+    assert device_ledger.json()["items"][0]["pushToken"] == ""
+    assert device_ledger.json()["items"][0]["pushTokenRegistered"] is True
+    revoked = app_client.post(
+        "/api/v2/mobile/devices/android-field-device-0001/revoke",
+        headers=ADMIN_HEADERS, json={"note": "测试远程注销设备"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+    assert revoked.json()["pushToken"] == ""
+    blocked_package = app_client.get(
+        "/api/v2/mobile/offline-package", headers={**ADMIN_HEADERS, "X-Smart-Bamboo-Device-ID": "android-field-device-0001"},
+    )
+    assert blocked_package.status_code == 403
+    assert "远程注销" in blocked_package.json()["detail"]
+    denied = app_client.post("/api/v2/mobile/devices/register", headers=ADMIN_HEADERS, json=registration_payload)
+    assert denied.status_code == 403
+    restored_device = app_client.post(
+        "/api/v2/mobile/devices/android-field-device-0001/restore", headers=ADMIN_HEADERS,
+    )
+    assert restored_device.status_code == 200
+    assert restored_device.json()["status"] == "active"
 
     track_payload = {
         "clientTrackId": "track-mobile-0001",

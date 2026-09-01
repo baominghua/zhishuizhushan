@@ -1,5 +1,7 @@
 export interface SmartBambooNativeBridge {
   version(): string;
+  platform(): "android" | "ios";
+  deviceId(): string;
   isOnline(): boolean;
   get(key: string): string;
   set(key: string, value: string): boolean;

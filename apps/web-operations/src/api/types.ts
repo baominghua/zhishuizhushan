@@ -2101,6 +2101,35 @@ export interface MobileOfflinePackage {
   generatedAt: string;
   expiresAt: string;
   downloadPolicy: string;
+  clientPolicy: MobileClientPolicy;
+}
+
+export interface MobileClientPolicy {
+  minimumVersions: Record<"android" | "ios" | "web", string>;
+  latestVersions: Record<"android" | "ios" | "web", string>;
+  updateUrls: Partial<Record<"android" | "ios", string>>;
+}
+
+export interface MobileDeviceRecord {
+  deviceId: string;
+  deviceName: string;
+  userId: string;
+  platform: "android" | "ios" | "web";
+  appVersion: string;
+  osVersion: string;
+  pushToken: string;
+  pushTokenRegistered?: boolean;
+  capabilities: string[];
+  status: "active" | "revoked";
+  registeredAt: string;
+  lastSeenAt: string;
+  revokedAt: string;
+  revokedBy: string;
+  revocationNote: string;
+}
+
+export interface MobileDeviceLedger extends LedgerResponse<MobileDeviceRecord> {
+  clientPolicy: MobileClientPolicy;
 }
 
 export interface MobilePendingOperation {
