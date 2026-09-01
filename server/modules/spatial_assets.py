@@ -259,6 +259,7 @@ def read_las_header(path: Path) -> dict[str, Any]:
         offset_x, offset_y, offset_z = struct.unpack_from("<ddd", header, 155)
         max_x, min_x, max_y, min_y, max_z, min_z = struct.unpack_from("<dddddd", header, 179)
         wkt = ""
+        is_copc = False
         source.seek(header_size)
         for _ in range(variable_length_records):
             record_header = source.read(54)
@@ -270,6 +271,8 @@ def read_las_header(path: Path) -> dict[str, Any]:
             record = source.read(record_length)
             if user_id == "LASF_Projection" and record_id in {2111, 2112}:
                 wkt = _decode_las_text(record)
+            if user_id.lower() == "copc" and record_id == 1 and record_length >= 160:
+                is_copc = True
     crs = None
     if wkt:
         rasterio = _require_rasterio()
@@ -301,7 +304,27 @@ def read_las_header(path: Path) -> dict[str, Any]:
         "nativeBounds": [float(min_x), float(min_y), float(min_z), float(max_x), float(max_y), float(max_z)],
         "crs": crs,
         "crsWkt": wkt,
+        "isCopc": is_copc,
     }
+
+
+def is_complete_copc_output(path: Path, expected_point_count: int) -> bool:
+    """Return true only for a finalized COPC whose header matches the source set."""
+    try:
+        if not path.is_file() or path.stat().st_size <= 375:
+            return False
+        header = read_las_header(path)
+    except (OSError, ValueError, struct.error):
+        return False
+    point_count = int(header.get("pointCount") or 0)
+    bounds = [float(value) for value in header.get("nativeBounds") or []]
+    return (
+        bool(header.get("isCopc"))
+        and point_count > 0
+        and point_count == int(expected_point_count)
+        and len(bounds) == 6
+        and all(math.isfinite(value) for value in bounds)
+    )
 
 
 def point_cloud_collection_metadata(paths: Iterable[Path]) -> dict[str, Any]:

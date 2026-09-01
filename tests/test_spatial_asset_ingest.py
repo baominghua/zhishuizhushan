@@ -18,6 +18,7 @@ from server.modules.spatial_assets import (
     coverage_analysis,
     effective_raster_footprint,
     inspect_3d_tileset,
+    is_complete_copc_output,
     normalized_tileset_document,
     point_cloud_collection_metadata,
 )
@@ -241,6 +242,18 @@ def test_copc_conversion_recenters_large_projected_coordinates(tmp_path, monkeyp
     assert writer["scale_x"] == pytest.approx(0.001)
     assert writer["offset_x"] == pytest.approx((5038000.0 + 5039764.81) / 2)
     assert abs((5039764.81 - writer["offset_x"]) / writer["scale_x"]) < (2**31) - 1024
+
+
+def test_completed_copc_validation_requires_copc_vlr_and_matching_point_count(tmp_path, monkeypatch):
+    output = tmp_path / "dataset.copc.laz"
+    output.write_bytes(b"LASF" + bytes(400))
+    monkeypatch.setattr(
+        "server.modules.spatial_assets.read_las_header",
+        lambda _path: {"isCopc": True, "pointCount": 123, "nativeBounds": [1, 2, 3, 4, 5, 6]},
+    )
+
+    assert is_complete_copc_output(output, 123) is True
+    assert is_complete_copc_output(output, 124) is False
 
 
 def test_dji_tileset_inspection_reads_pnts_and_normalizes_legacy_asset_version(tmp_path):
@@ -596,6 +609,55 @@ def test_point_cloud_task_keeps_completed_copc_when_optional_pnts_conversion_fai
     assert scene["copcPath"].endswith("dataset.copc.laz")
     assert scene["tilesetPath"] == ""
     assert scene["transferStatus"] == "pointcloud-ready-with-warnings"
+
+
+def test_point_cloud_retry_reuses_completed_copc_and_discards_partial_pnts(app_client, isolated_env, monkeypatch):
+    import server.app as app_module
+
+    source = isolated_env / "s7-cloud.las"
+    source.write_bytes(b"LASF-source")
+    dataset_dir = isolated_env / "s7-result"
+    dataset_dir.mkdir()
+    (dataset_dir / "dataset.copc.laz").write_bytes(b"complete-copc")
+    partial_tiles = dataset_dir / "3dtiles"
+    partial_tiles.mkdir()
+    (partial_tiles / "partial.pnts").write_bytes(b"partial")
+    point_cloud = {
+        "bounds": [118.0, 26.0, 118.1, 26.1],
+        "nativeBounds": [500000.0, 2876000.0, 0.0, 510000.0, 2887000.0, 900.0],
+        "crs": "EPSG:4509",
+        "footprint": {"type": "Polygon", "coordinates": [[[118.0, 26.0], [118.1, 26.0], [118.1, 26.1], [118.0, 26.1], [118.0, 26.0]]]},
+        "pointCount": 73_904_650,
+        "fileCount": 1,
+        "versions": ["1.4"],
+        "pointFormats": [7],
+        "dimensions": ["X", "Y", "Z", "Red", "Green", "Blue"],
+        "attributeModes": ["rgb", "elevation"],
+        "files": [{"name": source.name, "size": source.stat().st_size}],
+        "trajectory": {"available": False, "fileCount": 0, "totalSize": 0, "formats": [], "path": "", "files": []},
+    }
+    app_module.upsert_task({
+        "id": "task-s7-resume", "type": "pointcloud-register", "status": "queued", "progress": 0,
+        "message": "Queued retry", "sceneId": "pc-s7-resume", "name": "S7 LAS",
+        "sourcePaths": [str(source)], "datasetPath": str(dataset_dir), "outputs": ["copc", "3dtiles"],
+        "deleteOriginalOnSceneDelete": False, "analysisContext": {}, "events": [],
+    })
+    monkeypatch.setattr(app_module, "point_cloud_collection_metadata", lambda _paths: dict(point_cloud))
+    monkeypatch.setattr(app_module, "discover_dji_trajectory_metadata", lambda _paths: dict(point_cloud["trajectory"]))
+    monkeypatch.setattr(app_module, "apply_scene_coverage_analysis", lambda scene, *_args: scene)
+    monkeypatch.setattr(app_module, "is_complete_copc_output", lambda *_args: True)
+    monkeypatch.setattr(app_module, "convert_point_cloud_to_copc", lambda *_args, **_kwargs: pytest.fail("COPC must be reused"))
+    monkeypatch.setattr(app_module, "convert_point_cloud_to_3dtiles", lambda *_args, **_kwargs: pytest.fail("partial PNTS must not restart"))
+
+    app_module.run_point_cloud_conversion_task("task-s7-resume")
+
+    task = app_module.find_task_record("task-s7-resume")
+    scene = next(item for item in app_module.load_catalog() if item["id"] == "pc-s7-resume")
+    assert task["status"] == "completed"
+    assert task["reusedCopc"] is True
+    assert "未完成的 PNTS" in task["conversionWarnings"][0]
+    assert scene["storage"] == "COPC"
+    assert not partial_tiles.exists()
 
 
 def test_confirm_coverage_writes_scene_codes_and_formal_links(app_client, monkeypatch):

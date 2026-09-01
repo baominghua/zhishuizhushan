@@ -134,6 +134,7 @@ from server.modules.spatial_assets import (
     effective_union_area_hectares,
     effective_raster_footprint,
     inspect_3d_tileset,
+    is_complete_copc_output,
     normalized_tileset_document,
     point_cloud_collection_metadata,
 )
@@ -5131,6 +5132,7 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
     completed_outputs = list(outputs)
     conversion_warnings: list[str] = []
     copc_path = dataset_dir / "dataset.copc.laz"
+    reused_copc = False
     try:
         point_cloud = point_cloud_collection_metadata(source_paths)
         point_cloud["trajectory"] = discover_dji_trajectory_metadata(source_paths)
@@ -5148,46 +5150,61 @@ def run_point_cloud_conversion_task(task_id: str) -> None:
             update_task(task_id, sourcePaths=[str(path) for path in source_paths], sourcesOwned=True)
         if "copc" in outputs:
             update_task(task_id, progress=25, message="Converting point cloud to COPC")
-            if copc_path.exists():
-                copc_path.unlink()
-            last_copc_heartbeat = {"minute": -1}
-
-            def report_copc_progress(written: int, total: int, elapsed: float) -> None:
-                elapsed_minute = int(elapsed // 60)
-                if elapsed_minute == last_copc_heartbeat["minute"]:
-                    return
-                last_copc_heartbeat["minute"] = elapsed_minute
+            reused_copc = is_complete_copc_output(copc_path, int(point_cloud.get("pointCount") or 0))
+            if reused_copc:
                 update_task(
                     task_id,
-                    progress=min(59, 25 + elapsed_minute),
-                    message=(
-                        f"正在生成 COPC · {len(source_paths)} 个 LAS/LAZ · "
-                        f"已运行 {elapsed_minute + 1} 分钟 · "
-                        f"已写入 {written / 1024 / 1024 / 1024:.2f} GB"
-                    ),
-                    heartbeatAt=now_iso(),
-                    sourceBytes=total,
-                    outputBytes=written,
+                    progress=60,
+                    message="已校验并复用上次完成的 COPC，不再重复处理源 LAS/LAZ",
+                    outputBytes=copc_path.stat().st_size,
+                    reusedCopc=True,
                 )
+            else:
+                if copc_path.exists():
+                    copc_path.unlink()
+                last_copc_heartbeat = {"minute": -1}
 
-            convert_point_cloud_to_copc(
-                source_paths,
-                copc_path,
-                pdal_executable=POINT_CLOUD_PDAL_EXECUTABLE,
-                progress_callback=report_copc_progress,
-                cancel_check=lambda: find_task_record(task_id).get("status") == "canceled",
-            )
+                def report_copc_progress(written: int, total: int, elapsed: float) -> None:
+                    elapsed_minute = int(elapsed // 60)
+                    if elapsed_minute == last_copc_heartbeat["minute"]:
+                        return
+                    last_copc_heartbeat["minute"] = elapsed_minute
+                    update_task(
+                        task_id,
+                        progress=min(59, 25 + elapsed_minute),
+                        message=(
+                            f"正在生成 COPC · {len(source_paths)} 个 LAS/LAZ · "
+                            f"已运行 {elapsed_minute + 1} 分钟 · "
+                            f"已写入 {written / 1024 / 1024 / 1024:.2f} GB"
+                        ),
+                        heartbeatAt=now_iso(),
+                        sourceBytes=total,
+                        outputBytes=written,
+                    )
+
+                convert_point_cloud_to_copc(
+                    source_paths,
+                    copc_path,
+                    pdal_executable=POINT_CLOUD_PDAL_EXECUTABLE,
+                    progress_callback=report_copc_progress,
+                    cancel_check=lambda: find_task_record(task_id).get("status") == "canceled",
+                )
         if "3dtiles" in outputs:
             update_task(task_id, progress=65, message="Converting point cloud to 3D Tiles")
             tiles_dir = dataset_dir / "3dtiles"
-            if tiles_dir.exists():
-                shutil.rmtree(tiles_dir)
             try:
-                convert_point_cloud_to_3dtiles(
-                    source_paths,
-                    tiles_dir,
-                    py3dtiles_executable=POINT_CLOUD_3DTILES_EXECUTABLE,
-                )
+                if reused_copc and tiles_dir.exists() and not (tiles_dir / "tileset.json").is_file():
+                    raise RuntimeError("检测到上次未完成的 PNTS 兼容瓦片；已保留完整 COPC，跳过重复转换")
+                if (tiles_dir / "tileset.json").is_file():
+                    inspect_3d_tileset(tiles_dir / "tileset.json")
+                else:
+                    if tiles_dir.exists():
+                        shutil.rmtree(tiles_dir)
+                    convert_point_cloud_to_3dtiles(
+                        source_paths,
+                        tiles_dir,
+                        py3dtiles_executable=POINT_CLOUD_3DTILES_EXECUTABLE,
+                    )
             except Exception as exc:
                 if "copc" not in completed_outputs or not copc_path.is_file():
                     raise
@@ -5358,7 +5375,11 @@ def retry_failed_conversion_task(task_id: str) -> dict[str, Any]:
     }
     if source_path is not None:
         retry_task["sourcePath"] = str(source_path)
-    for key in ["startedAt", "completedAt", "failedAt", "scene"]:
+    for key in [
+        "startedAt", "completedAt", "failedAt", "scene", "archivedAt", "archivedBy",
+        "canceledAt", "canceledBy", "pausedAfterRestartAt", "heartbeatAt", "outputBytes",
+        "conversionWarnings", "reusedCopc",
+    ]:
         retry_task.pop(key, None)
     retry_task["events"] = [
         {

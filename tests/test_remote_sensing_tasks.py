@@ -1545,6 +1545,9 @@ def test_failed_imagery_task_can_be_retried_with_permission(isolated_env, monkey
         "sourcePath": str(source_path),
         "cogPath": str(isolated_env / "old-output.tif"),
         "retryAttempt": 1,
+        "archivedAt": "2026-08-28T09:49:19+00:00",
+        "archivedBy": "admin",
+        "conversionWarnings": ["old warning"],
     }
     executor = FakeExecutor()
     monkeypatch.setattr(app_module, "TASK_EXECUTOR", executor)
@@ -1570,6 +1573,9 @@ def test_failed_imagery_task_can_be_retried_with_permission(isolated_env, monkey
     assert body["task"]["retryAttempt"] == 2
     assert body["task"]["sourcePath"] == str(source_path.resolve())
     assert body["task"]["sceneId"] == "scene-retry-001"
+    assert "archivedAt" not in body["task"]
+    assert "archivedBy" not in body["task"]
+    assert "conversionWarnings" not in body["task"]
     assert executor.calls == [(app_module.run_conversion_task, (body["task"]["id"],))]
 
     detail = client.get(f"/api/tasks/{body['task']['id']}", headers={"X-RS-Roles": "admin"})
