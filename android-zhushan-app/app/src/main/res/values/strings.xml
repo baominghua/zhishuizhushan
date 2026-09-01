@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">智慧竹山</string>
+    <string name="choose_evidence">拍摄或选择现场凭证</string>
+    <string name="no_file_picker">当前设备没有可用的文件选择器</string>
+    <string name="no_application_for_link">当前设备无法打开此链接</string>
+    <string name="download_started">已加入系统下载队列</string>
 </resources>

@@ -34,26 +34,41 @@ import {
   writeMobileFieldState,
   type MobileFieldState,
 } from "../mobileFieldStore";
+import { currentConnectivity, nativeBridge, subscribeConnectivity, subscribeNativeLocation } from "../nativeBridge";
 
 type TaskFilter = "all" | "patrol" | "labor" | "safety";
 
 export function MobileFieldPage() {
   const [state, setState] = useState<MobileFieldState>(() => readMobileFieldState());
-  const [online, setOnline] = useState(() => navigator.onLine);
+  const [online, setOnline] = useState(currentConnectivity);
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [selected, setSelected] = useState<MobileFieldTask | null>(null);
   const [busy, setBusy] = useState<"download" | "sync" | "track" | "evidence" | "">("");
   const [notice, setNotice] = useState("");
   const watchRef = useRef<number | null>(null);
+  const nativeTrackingRef = useRef(false);
 
   useEffect(() => writeMobileFieldState(state), [state]);
-  useEffect(() => {
-    const update = () => setOnline(navigator.onLine);
-    window.addEventListener("online", update);
-    window.addEventListener("offline", update);
-    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  useEffect(() => subscribeConnectivity(setOnline), []);
+  useEffect(() => subscribeNativeLocation((detail) => {
+    if (detail.status === "update" && typeof detail.longitude === "number" && typeof detail.latitude === "number") {
+      updateState((current) => current.activeTrack ? ({
+        ...current,
+        activeTrack: { ...current.activeTrack, points: [...current.activeTrack.points, {
+          longitude: detail.longitude!, latitude: detail.latitude!,
+          accuracyMeters: detail.accuracy ?? undefined, altitudeMeters: detail.altitude ?? undefined,
+          capturedAt: new Date(detail.timestamp || Date.now()).toISOString(),
+        }] },
+      }) : current);
+      return;
+    }
+    if (detail.status === "provider-disabled") setNotice("设备定位已关闭，请开启定位服务后重试。");
+    if (detail.status === "unavailable") { setNotice("当前无法获取设备定位，请检查定位权限。"); setBusy(""); }
+  }), []);
+  useEffect(() => () => {
+    if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
+    if (nativeTrackingRef.current) nativeBridge()?.stopLocation();
   }, []);
-  useEffect(() => () => { if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current); }, []);
 
   const tasks = state.offlinePackage?.tasks ?? [];
   const filteredTasks = useMemo(
@@ -158,14 +173,20 @@ export function MobileFieldPage() {
   }
 
   function startTrack(task: MobileFieldTask) {
-    if (!navigator.geolocation) { setNotice("当前设备不支持定位。"); return; }
-    if (watchRef.current !== null) return;
+    const bridge = nativeBridge();
+    if (!bridge && !navigator.geolocation) { setNotice("当前设备不支持定位。"); return; }
+    if (watchRef.current !== null || nativeTrackingRef.current) return;
     setBusy("track");
     const initial: MobileTrackPayload = {
       clientTrackId: createClientId("track"), taskType: task.taskType === "labor" ? "labor" : "patrol",
       taskId: task.id, status: "recording", points: [],
     };
     updateState((current) => ({ ...current, activeTrack: initial }));
+    if (bridge) {
+      nativeTrackingRef.current = true;
+      bridge.startLocation();
+      return;
+    }
     watchRef.current = navigator.geolocation.watchPosition(
       (position) => updateState((current) => current.activeTrack ? ({
         ...current,
@@ -182,6 +203,8 @@ export function MobileFieldPage() {
 
   function stopTrack() {
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
+    if (nativeTrackingRef.current) nativeBridge()?.stopLocation();
+    nativeTrackingRef.current = false;
     watchRef.current = null; setBusy("");
     updateState((current) => {
       const active = current.activeTrack;

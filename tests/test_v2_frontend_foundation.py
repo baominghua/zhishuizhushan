@@ -218,6 +218,7 @@ def test_v2_mobile_field_workspace_supports_offline_tasks_tracks_and_idempotent_
     page = (web_root / "pages" / "MobileFieldPage.tsx").read_text(encoding="utf-8")
     store = (web_root / "mobileFieldStore.ts").read_text(encoding="utf-8")
     client = (web_root / "api" / "client.ts").read_text(encoding="utf-8")
+    native_bridge = (web_root / "nativeBridge.ts").read_text(encoding="utf-8")
 
     assert 'path: "/field/mobile"' in router
     assert 'pathname === "/field/mobile"' in shell
@@ -227,6 +228,11 @@ def test_v2_mobile_field_workspace_supports_offline_tasks_tracks_and_idempotent_
     assert "api.syncMobileOperations" in page
     assert "api.uploadMobileTrack" in page
     assert "navigator.geolocation.watchPosition" in page
+    assert "nativeBridge()?.stopLocation" in page
+    assert "subscribeNativeLocation" in page
+    assert '"smart-bamboo-native:network"' in native_bridge
+    assert '"smart-bamboo-native:location"' in native_bridge
+    assert "bridge.isOnline()" in native_bridge
     assert "clientOperationId: createClientId" in page
     assert "crypto.subtle.digest" in page
     assert "readEvidenceBlob" in page
