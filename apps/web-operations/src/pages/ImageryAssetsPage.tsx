@@ -82,10 +82,11 @@ export function ImageryAssetsPage() {
   const items = ledger.data?.scenes ?? [];
   const metrics = useMemo(() => ({
     total: ledger.data?.total ?? 0,
-    orthophotos: items.filter((item) => assetType(item) === "orthophoto").length,
-    pointClouds: items.filter((item) => ["pointcloud", "oblique3d"].includes(assetType(item))).length,
-    pendingReview: items.filter((item) => item.processingStage === "coverage-review").length,
-  }), [items, ledger.data?.total]);
+    orthophotos: ledger.data?.summary?.byAssetType.orthophoto ?? 0,
+    surfaces: (ledger.data?.summary?.byAssetType.dsm ?? 0) + (ledger.data?.summary?.byAssetType.dtm ?? 0),
+    pointClouds: (ledger.data?.summary?.byAssetType.pointcloud ?? 0) + (ledger.data?.summary?.byAssetType.oblique3d ?? 0),
+    pendingReview: ledger.data?.summary?.pendingCoverage ?? 0,
+  }), [ledger.data]);
   const refresh = async () => { await client.invalidateQueries({ queryKey: ["imagery-assets"] }); };
   const remove = useMutation({ mutationFn: api.deleteImageryAsset, onSuccess: async () => { setSelected(null); await refresh(); } });
   const restore = useMutation({ mutationFn: api.restoreImageryAsset, onSuccess: async ({ scene }) => { setSelected(scene); await refresh(); } });
@@ -123,6 +124,7 @@ export function ImageryAssetsPage() {
     <section className="domain-summary-strip">
       <Summary label="成果总数" value={metrics.total} detail="正式空间资产" />
       <Summary label="正射成果" value={metrics.orthophotos} detail="GeoTIFF / COG" />
+      <Summary label="地表高程" value={metrics.surfaces} detail="DSM / DTM" />
       <Summary label="三维成果" value={metrics.pointClouds} detail="COPC / PNTS / B3DM" />
       <Summary label="待确认覆盖" value={metrics.pendingReview} detail="需人工确认林班" tone={metrics.pendingReview ? "warning" : "active"} />
     </section>

@@ -6778,11 +6778,34 @@ def list_scenes(
     if not status:
         scenes = [scene for scene in scenes if str(scene.get("status") or "active") != "archived"]
     page = scenes[offset : offset + limit]
+    by_asset_type: dict[str, int] = {}
+    by_resource_format: dict[str, int] = {}
+    pending_coverage = 0
+    published_count = 0
+    for scene in scenes:
+        scene_asset_type = effective_scene_asset_type(scene)
+        by_asset_type[scene_asset_type] = by_asset_type.get(scene_asset_type, 0) + 1
+        for scene_format in scene_resource_formats(scene):
+            by_resource_format[scene_format] = by_resource_format.get(scene_format, 0) + 1
+        if str(scene.get("processingStage") or "") == "coverage-review":
+            pending_coverage += 1
+        if published_workflow_scene(scene):
+            published_count += 1
     return {
         "total": len(scenes),
         "limit": limit,
         "offset": offset,
         "bbox": query_bbox,
+        # These figures describe the complete filtered result set, not only
+        # the current page.  Keeping the aggregation beside the list query
+        # also guarantees that permissions and every active filter use the
+        # exact same catalog scope as the ledger rows.
+        "summary": {
+            "byAssetType": by_asset_type,
+            "byResourceFormat": by_resource_format,
+            "pendingCoverage": pending_coverage,
+            "published": published_count,
+        },
         "scenes": [public_scene(scene, request) for scene in page],
     }
 

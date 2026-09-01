@@ -709,6 +709,10 @@ def test_imagery_assets_use_a_dedicated_ledger_and_published_map_layer():
     assert "ForestBlockSelector" in page
     assert "uploadImageryAsset" in page
     assert "publishImageryAsset" in page
+    assert "ledger.data?.summary?.byAssetType.orthophoto" in page
+    assert "ledger.data?.summary?.byAssetType.dsm" in page
+    assert "ledger.data?.summary?.byAssetType.dtm" in page
+    assert 'label="地表高程"' in page
     assert 'body.append("linkedBlockCodes"' in client
     assert 'toggleLayer("droneImagery")' in map_page
     assert "published: true" in map_page

@@ -361,6 +361,12 @@ export interface ImageryAssetResponse {
   limit: number;
   offset: number;
   bbox: [number, number, number, number] | null;
+  summary: {
+    byAssetType: Record<string, number>;
+    byResourceFormat: Record<string, number>;
+    pendingCoverage: number;
+    published: number;
+  };
 }
 
 export interface ImageryUploadPayload {

@@ -920,6 +920,44 @@ def test_scenes_can_filter_by_delivery_status_and_export_delivery_events(isolate
     assert "delivery accepted" in csv_text
 
 
+def test_scene_ledger_summary_uses_full_filtered_result_not_current_page(isolated_env):
+    app_module = reload_app_module()
+    scenes = [
+        sample_scene("scene-summary-orthophoto-1") | {"assetType": "orthophoto", "processingStage": "ready"},
+        sample_scene("scene-summary-orthophoto-2") | {"assetType": "orthophoto", "processingStage": "coverage-review"},
+        sample_scene("scene-summary-dsm") | {"assetType": "orthophoto", "fileName": "dsm.tif", "processingStage": "ready"},
+        sample_scene("scene-summary-pnts") | {"assetType": "pointcloud", "tilesetContentType": "pnts", "tilesetUrl": "/tileset.json", "processingStage": "ready"},
+    ]
+    for scene in scenes:
+        app_module.save_scene(scene)
+    client = TestClient(app_module.app)
+
+    first_page = client.get(
+        "/api/scenes?limit=1",
+        headers={"X-RS-Roles": "imagery.scenes.view"},
+    )
+
+    assert first_page.status_code == 200
+    payload = first_page.json()
+    assert len(payload["scenes"]) == 1
+    assert payload["total"] == 4
+    assert payload["summary"]["byAssetType"] == {
+        "orthophoto": 2,
+        "dsm": 1,
+        "pointcloud": 1,
+    }
+    assert payload["summary"]["pendingCoverage"] == 1
+    assert payload["summary"]["byResourceFormat"]["PNTS"] == 1
+
+    filtered = client.get(
+        "/api/scenes?assetType=dsm&limit=1",
+        headers={"X-RS-Roles": "imagery.scenes.view"},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 1
+    assert filtered.json()["summary"]["byAssetType"] == {"dsm": 1}
+
+
 def test_imagery_quality_issues_can_be_listed_and_filtered(isolated_env):
     app_module = reload_app_module()
     app_module.save_scene(
