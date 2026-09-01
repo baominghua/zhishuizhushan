@@ -1901,6 +1901,7 @@ export interface SceneTrajectoryFeatureCollection {
     available: boolean;
     sourceFormat: string;
     sourcePointCount: number;
+    sourcePointCountEstimated: boolean;
     returnedPointCount: number;
     segmentCount: number;
     distanceKm: number;

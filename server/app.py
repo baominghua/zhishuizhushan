@@ -4494,26 +4494,57 @@ def _transform_trajectory_coordinates(
     return result
 
 
-def parse_text_trajectory(path: Path, crs: str) -> list[list[float]]:
-    if path.stat().st_size > DJI_TRAJECTORY_MAX_TEXT_BYTES:
+def parse_text_trajectory(
+    path: Path,
+    crs: str,
+    limit: int = DJI_TRAJECTORY_PARSE_POINTS_PER_FILE,
+) -> list[list[float]]:
+    size = path.stat().st_size
+    if size > DJI_TRAJECTORY_MAX_TEXT_BYTES:
         raise ValueError("Trajectory text file exceeds the 64 MB safety limit")
     header: list[str] = []
     raw_points: list[tuple[float, float, float | None]] = []
-    with path.open("r", encoding="utf-8-sig", errors="replace") as source:
-        for raw_line in source:
-            line = raw_line.strip().lstrip("#").strip()
+
+    def consume(raw_line: bytes) -> None:
+        nonlocal header
+        line = raw_line.decode("utf-8-sig", errors="replace").strip().lstrip("#").strip()
+        if not line:
+            return
+        fields = [item.strip() for item in (line.split(",") if "," in line else re.split(r"\s+", line))]
+        try:
+            values = [float(value) for value in fields]
+        except ValueError:
+            if not header:
+                header = fields
+            return
+        point = _trajectory_coordinate_pair(values, header)
+        if point is not None and (not raw_points or point != raw_points[-1]):
+            raw_points.append(point)
+
+    with path.open("rb") as source:
+        # Read the small header region first so sampled data rows still retain
+        # their column semantics. Then seek to evenly spaced byte offsets; POS
+        # exports are ASCII with one record per line, so this avoids parsing
+        # millions of intermediate records while preserving the route shape.
+        for _ in range(12):
+            line = source.readline()
             if not line:
-                continue
-            fields = [item.strip() for item in (line.split(",") if "," in line else re.split(r"\s+", line))]
-            try:
-                values = [float(value) for value in fields]
-            except ValueError:
-                if not header:
-                    header = fields
-                continue
-            point = _trajectory_coordinate_pair(values, header)
-            if point is not None:
-                raw_points.append(point)
+                break
+            consume(line)
+            if raw_points:
+                break
+        step = max(1, math.ceil(max(1, size) / max(2, limit)))
+        for offset in range(step, size, step):
+            source.seek(offset)
+            source.readline()
+            line = source.readline()
+            if line:
+                consume(line)
+        if size:
+            source.seek(max(0, size - 4096))
+            tail = source.read().splitlines()
+            if tail:
+                consume(tail[-1])
     return _transform_trajectory_coordinates(raw_points, crs)
 
 
@@ -4612,7 +4643,14 @@ def scene_trajectory_geojson(scene: dict[str, Any]) -> dict[str, Any]:
                 )
             )
     files = sorted(set(files), key=lambda item: (0 if item.name.lower().startswith("pos_") else 1 if "_sbet" in item.name.lower() else 2, item.name.lower()))
-    pos_files = [path for path in files if path.name.lower().startswith("pos_")]
+    pos_files_by_stem: dict[str, Path] = {}
+    pos_preference = {".csv": 0, ".txt": 1, ".out": 2}
+    for path in (item for item in files if item.name.lower().startswith("pos_")):
+        key = re.sub(r"\.(csv|txt|out)$", "", path.name.lower())
+        current = pos_files_by_stem.get(key)
+        if current is None or pos_preference.get(path.suffix.lower(), 9) < pos_preference.get(current.suffix.lower(), 9):
+            pos_files_by_stem[key] = path
+    pos_files = list(pos_files_by_stem.values())
     sbet_files: dict[str, Path] = {}
     for path in (item for item in files if "_sbet" in item.name.lower()):
         key = re.sub(r"\.(out|txt)$", "", path.name.lower())
@@ -4637,7 +4675,7 @@ def scene_trajectory_geojson(scene: dict[str, Any]) -> dict[str, Any]:
             if "_sbet" in path.name.lower() and path.suffix.lower() == ".out":
                 source_point_count += path.stat().st_size // struct.calcsize("<17d")
             else:
-                source_point_count += len(candidate)
+                source_point_count += max(len(candidate), round(path.stat().st_size / 85))
             total_distance_km += trajectory_distance_km(candidate)
             segments.append(candidate)
     segment_limit = max(2, DJI_TRAJECTORY_MAX_POINTS // len(segments)) if segments else DJI_TRAJECTORY_MAX_POINTS
@@ -4659,6 +4697,7 @@ def scene_trajectory_geojson(scene: dict[str, Any]) -> dict[str, Any]:
             "available": bool(sampled_segments),
             "sourceFormat": source_format,
             "sourcePointCount": source_point_count,
+            "sourcePointCountEstimated": any(path.suffix.lower() != ".out" for path in selected_files),
             "returnedPointCount": sum(len(segment) for segment in sampled_segments),
             "segmentCount": len(sampled_segments),
             "distanceKm": round(total_distance_km, 3),

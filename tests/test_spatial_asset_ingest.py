@@ -924,6 +924,20 @@ def test_pos_trajectory_is_parsed_and_downsampled_for_map_overlay(tmp_path):
     assert app_module.trajectory_distance_km(points) > 0
 
 
+def test_large_pos_text_trajectory_uses_bounded_even_sampling(tmp_path):
+    import server.app as app_module
+
+    path = tmp_path / "POS_DJI_large.csv"
+    rows = ["# time,x,y,z"] + [f"{index},117.{index:04d},27.{index:04d},{800 + index}" for index in range(1, 501)]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    points = app_module.parse_text_trajectory(path, "EPSG:4326", limit=20)
+
+    assert len(points) <= 23
+    assert points[0] == pytest.approx([117.0001, 27.0001, 801])
+    assert points[-1] == pytest.approx([117.05, 27.05, 1300])
+
+
 def test_sbet_trajectory_reads_standard_seventeen_double_records(tmp_path):
     import struct
     import server.app as app_module
