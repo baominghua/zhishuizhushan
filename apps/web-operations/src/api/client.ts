@@ -686,6 +686,8 @@ export const api = {
     request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   applyDroneMissionAction: (id: string, action: string, payload: DroneMissionActionPayload = {}) =>
     request<DroneMission>(`/api/v2/drone/missions/${encodeURIComponent(id)}/actions/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(payload) }),
+  syncTrajectoryMissions: () =>
+    request<{ ok: boolean; created: number; updated: number; existing: number; skipped: number; failed: number }>("/api/scenes/trajectory-missions/sync", { method: "POST" }),
   imageryAssets: (query: { q?: string; status?: string; published?: boolean; includeDeleted?: boolean; bbox?: string; assetType?: string; resourceFormat?: string; limit?: number; offset?: number } = {}) =>
     request<ImageryAssetResponse>(`/api/scenes?${queryString(query)}`),
   imageryInventory: () => request<import("./types").ImageryInventoryResponse>("/api/scenes/inventory"),

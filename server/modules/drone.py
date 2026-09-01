@@ -66,8 +66,8 @@ MISSION_SELECT = """
 def mission_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
     return {
         "id": str(row[0]), "missionNo": str(row[1]), "title": str(row[2]),
-        "missionType": str(row[3]), "status": str(row[4]), "droneDeviceId": str(row[5]),
-        "deviceCode": str(row[6]), "deviceName": str(row[7]), "pilotName": str(row[8] or ""),
+        "missionType": str(row[3]), "status": str(row[4]), "droneDeviceId": str(row[5] or ""),
+        "deviceCode": str(row[6] or ""), "deviceName": str(row[7] or ""), "pilotName": str(row[8] or ""),
         "routeName": str(row[9] or ""), "objective": str(row[10] or ""),
         "plannedStartAt": iso_value(row[11]), "plannedEndAt": iso_value(row[12]),
         "actualStartAt": iso_value(row[13]), "actualEndAt": iso_value(row[14]),
@@ -151,7 +151,8 @@ def create_mission(record: dict[str, Any], timeline: dict[str, Any]) -> dict[str
                         created_by,created_at,updated_at,closed_at
                     ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (record["id"], record["missionNo"], record["title"], record["missionType"], record["status"],
-                     record["droneDeviceId"], record["deviceCode"], record["deviceName"], record.get("pilotName") or None,
+                     record.get("droneDeviceId") or None, record.get("deviceCode") or None,
+                     record.get("deviceName") or None, record.get("pilotName") or None,
                      record.get("routeName") or None, record.get("objective") or None,
                      mysql_datetime(record["plannedStartAt"]), mysql_datetime(record["plannedEndAt"]),
                      mysql_datetime(record.get("actualStartAt")), mysql_datetime(record.get("actualEndAt")),
@@ -194,8 +195,8 @@ def update_mission(record: dict[str, Any], timeline: dict[str, Any] | None = Non
                         planned_start_at=%s,planned_end_at=%s,actual_start_at=%s,actual_end_at=%s,
                         flight_summary=%s,result_asset_urls=%s,version=%s,updated_at=%s,closed_at=%s
                         WHERE id=%s AND deleted_at IS NULL""",
-                    (updated["title"], updated["missionType"], updated["status"], updated["droneDeviceId"],
-                     updated["deviceCode"], updated["deviceName"], updated.get("pilotName") or None,
+                    (updated["title"], updated["missionType"], updated["status"], updated.get("droneDeviceId") or None,
+                     updated.get("deviceCode") or None, updated.get("deviceName") or None, updated.get("pilotName") or None,
                      updated.get("routeName") or None, updated.get("objective") or None,
                      mysql_datetime(updated["plannedStartAt"]), mysql_datetime(updated["plannedEndAt"]),
                      mysql_datetime(updated.get("actualStartAt")), mysql_datetime(updated.get("actualEndAt")),

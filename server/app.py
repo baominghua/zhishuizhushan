@@ -88,6 +88,12 @@ from server.modules.database import (
 from server.modules.dictionaries import ensure_system_dictionaries
 from server.modules.dictionaries import router as dictionaries_router
 from server.modules.mysql_schema import REMOTE_SENSING_MYSQL_TABLES, mysql_catalog_schema_statements
+from server.modules.drone import (
+    create_mission,
+    list_missions,
+    timeline_entry as drone_timeline_entry,
+    update_mission,
+)
 from server.modules.forest_blocks import (
     FOREST_BLOCK_IDENTITY_LOOKUP_BATCH_SIZE,
     FOREST_BLOCK_MYSQL_WRITE_BATCH_SIZE,
@@ -4374,6 +4380,166 @@ def cached_dji_trajectory_metadata(source_paths: tuple[str, ...]) -> dict[str, A
     return discover_dji_trajectory_metadata([Path(path) for path in source_paths])
 
 
+def scene_trajectory_evidence(scene: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one canonical DJI trajectory sidecar for every scene representation."""
+    trajectory_path = str(scene.get("trajectoryPath") or "").strip()
+    if scene.get("trajectoryAvailable") and trajectory_path:
+        return {
+            "available": True,
+            "fileCount": int(scene.get("trajectoryFileCount") or 0),
+            "totalSize": int(scene.get("trajectorySize") or 0),
+            "formats": list(scene.get("trajectoryFormats") or []),
+            "path": trajectory_path,
+            "files": list(scene.get("trajectoryFiles") or []),
+        }
+    source_values = [
+        *[str(value) for value in scene.get("pointCloudSourcePaths") or [] if str(value).strip()],
+        *[
+            str(scene.get(key))
+            for key in ("originalPath", "copcPath", "tilesetPath")
+            if str(scene.get(key) or "").strip()
+        ],
+    ]
+    tileset_value = str(scene.get("tilesetPath") or "").strip()
+    if tileset_value and not scene.get("pointCloudSourcePaths"):
+        try:
+            sibling_metadata = cached_sibling_las_metadata(tileset_value)
+            source_values.extend(str(value) for value in sibling_metadata.get("pointCloudSourcePaths") or [])
+        except (OSError, ValueError, HTTPException):
+            pass
+    resolved_paths: list[str] = []
+    for value in dict.fromkeys(source_values):
+        try:
+            resolved_paths.append(str(resolve_catalog_path(value)))
+        except (OSError, ValueError):
+            continue
+    return (
+        cached_dji_trajectory_metadata(tuple(resolved_paths))
+        if resolved_paths
+        else {"available": False, "fileCount": 0, "totalSize": 0, "formats": [], "path": "", "files": []}
+    )
+
+
+def trajectory_mission_source_key(trajectory: dict[str, Any]) -> str:
+    path_value = str(trajectory.get("path") or "").strip().replace("\\", "/").lower()
+    return hashlib.sha256(path_value.encode("utf-8")).hexdigest()[:24] if path_value else ""
+
+
+def sync_scene_trajectory_mission(scene: dict[str, Any], actor: str) -> dict[str, Any]:
+    """Create or enrich one historical mission for one DJI trajectory directory."""
+    trajectory = scene_trajectory_evidence(scene)
+    source_key = trajectory_mission_source_key(trajectory)
+    if not trajectory.get("available") or not source_key:
+        return {"status": "skipped", "reason": "trajectory-not-found"}
+    block_codes = split_tokens(scene.get("linkedBlockCodes"))
+    if not block_codes:
+        return {"status": "skipped", "reason": "coverage-not-confirmed"}
+    blocks = [block for code in block_codes if (block := block_by_code(code))]
+    if not blocks:
+        return {"status": "skipped", "reason": "forest-block-not-found"}
+    source_scene_id = str(scene.get("id") or "")
+    existing = next(
+        (
+            mission
+            for mission in list_missions(include_deleted=True)
+            if str((mission.get("flightSummary") or {}).get("trajectorySourceKey") or "") == source_key
+        ),
+        None,
+    )
+    block_links = [{"id": str(block["id"]), "code": str(block["blockCode"])} for block in blocks]
+    if existing:
+        summary = dict(existing.get("flightSummary") or {})
+        source_scene_ids = list(dict.fromkeys([*(summary.get("sourceSceneIds") or []), source_scene_id]))
+        merged_links = {
+            str(item.get("code") or ""): {"id": str(item.get("id") or ""), "code": str(item.get("code") or "")}
+            for item in [*(existing.get("blocks") or []), *block_links]
+            if str(item.get("code") or "")
+        }
+        changed = source_scene_ids != list(summary.get("sourceSceneIds") or []) or len(merged_links) != len(existing.get("blocks") or [])
+        if changed:
+            updated = update_mission(
+                {
+                    **existing,
+                    "blocks": list(merged_links.values()),
+                    "flightSummary": {
+                        **summary,
+                        "sourceSceneIds": source_scene_ids,
+                        "trajectoryFiles": list(trajectory.get("files") or []),
+                        "trajectoryFormats": list(trajectory.get("formats") or []),
+                    },
+                },
+                drone_timeline_entry(
+                    "trajectory-link",
+                    str(existing.get("status") or "completed"),
+                    str(existing.get("status") or "completed"),
+                    actor or "system:trajectory-import",
+                    f"关联空间成果 {source_scene_id}，未重复创建航次。",
+                    {"sceneId": source_scene_id, "trajectorySourceKey": source_key},
+                ),
+            )
+            return {"status": "updated", "missionId": updated["id"], "missionNo": updated["missionNo"]}
+        return {"status": "existing", "missionId": existing["id"], "missionNo": existing["missionNo"]}
+    timestamp = now_iso()
+    mission_label = str(scene.get("missionId") or scene.get("name") or source_scene_id).strip()
+    mission = {
+        "id": str(uuid.uuid4()),
+        "missionNo": f"WRJ-IMP-{source_key[:12].upper()}",
+        "title": f"{mission_label} · 历史航测",
+        "missionType": "mapping",
+        "status": "completed",
+        "droneDeviceId": "",
+        "deviceCode": "",
+        "deviceName": "",
+        "pilotName": "",
+        "routeName": "",
+        "objective": "由 DJI Terra 飞行轨迹侧车资料自动生成；待补无人机、飞手和完整飞行日志。",
+        "plannedStartAt": None,
+        "plannedEndAt": None,
+        "actualStartAt": None,
+        "actualEndAt": None,
+        "flightSummary": {
+            "recordOrigin": "trajectory-auto-import",
+            "trajectorySourceKey": source_key,
+            "trajectoryPath": trajectory.get("path") or "",
+            "trajectoryFiles": list(trajectory.get("files") or []),
+            "trajectoryFormats": list(trajectory.get("formats") or []),
+            "trajectoryFileCount": int(trajectory.get("fileCount") or 0),
+            "trajectorySizeBytes": int(trajectory.get("totalSize") or 0),
+            "sourceSceneIds": [source_scene_id],
+            "sourceMissionId": str(scene.get("missionId") or ""),
+            "capturedAt": str(scene.get("capturedAt") or ""),
+            "missingFields": [
+                "droneDevice",
+                "pilot",
+                "plannedWindow",
+                "actualWindow",
+                "flightStatistics",
+                "originalFlightLog",
+            ],
+        },
+        "resultAssetUrls": [],
+        "version": 1,
+        "createdBy": "system:trajectory-import",
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "closedAt": timestamp,
+        "deletedAt": None,
+        "blocks": block_links,
+    }
+    created = create_mission(
+        mission,
+        drone_timeline_entry(
+            "trajectory-import",
+            "",
+            "completed",
+            actor or "system:trajectory-import",
+            "根据已确认林班关系和 DJI Terra 轨迹资料自动建立历史航测台账。",
+            {"sceneId": source_scene_id, "trajectorySourceKey": source_key},
+        ),
+    )
+    return {"status": "created", "missionId": created["id"], "missionNo": created["missionNo"]}
+
+
 @lru_cache(maxsize=256)
 def cached_3d_tileset_metadata(path_value: str) -> dict[str, Any]:
     return inspect_3d_tileset(resolve_catalog_path(path_value))
@@ -6971,8 +7137,38 @@ def confirm_scene_coverage(
             for block in blocks
         ],
     )
+    try:
+        trajectory_sync = sync_scene_trajectory_mission(updated, str(context.get("user") or ""))
+    except Exception as exc:
+        trajectory_sync = {"status": "failed", "reason": str(exc)}
+    if trajectory_sync.get("status") not in {"skipped", "existing"}:
+        updated["trajectoryMissionSync"] = trajectory_sync
+        save_scene(updated)
     archive_completed_scene_tasks(scene_id, str(context.get("user") or ""))
     return public_scene(updated, request)
+
+
+@app.post("/api/scenes/trajectory-missions/sync")
+def sync_trajectory_missions(request: Request) -> dict[str, Any]:
+    context = request_context(request)
+    require_admin_permission(platform_auth_context(context), "drone.missions.create")
+    outcomes = {"created": 0, "updated": 0, "existing": 0, "skipped": 0, "failed": 0}
+    items: list[dict[str, Any]] = []
+    for scene in filter_scenes(load_catalog(), context):
+        if str(scene.get("processingStage") or "ready") != "ready":
+            continue
+        try:
+            result = sync_scene_trajectory_mission(scene, str(context.get("user") or ""))
+        except Exception as exc:
+            result = {"status": "failed", "reason": str(exc)}
+        status = str(result.get("status") or "failed")
+        outcomes[status if status in outcomes else "failed"] += 1
+        if status not in {"skipped", "existing"}:
+            scene_update = {**scene, "trajectoryMissionSync": result, "updatedAt": now_iso()}
+            save_scene(scene_update)
+        if status != "skipped":
+            items.append({"sceneId": str(scene.get("id") or ""), **result})
+    return {"ok": outcomes["failed"] == 0, **outcomes, "items": items}
 
 
 @app.post("/api/point-clouds/upload-sessions")

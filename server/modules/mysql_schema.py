@@ -142,6 +142,24 @@ MYSQL_COLUMN_UPGRADES = {
     ): "ALTER TABLE safety_alerts ADD COLUMN review_json JSON NULL AFTER raw_payload",
 }
 
+MYSQL_NULLABLE_COLUMN_UPGRADES = {
+    ("drone_missions", "drone_device_id"): (
+        "ALTER TABLE drone_missions MODIFY COLUMN drone_device_id CHAR(36) NULL"
+    ),
+    ("drone_missions", "device_code"): (
+        "ALTER TABLE drone_missions MODIFY COLUMN device_code VARCHAR(128) NULL"
+    ),
+    ("drone_missions", "device_name"): (
+        "ALTER TABLE drone_missions MODIFY COLUMN device_name VARCHAR(255) NULL"
+    ),
+    ("drone_missions", "planned_start_at"): (
+        "ALTER TABLE drone_missions MODIFY COLUMN planned_start_at DATETIME(6) NULL"
+    ),
+    ("drone_missions", "planned_end_at"): (
+        "ALTER TABLE drone_missions MODIFY COLUMN planned_end_at DATETIME(6) NULL"
+    ),
+}
+
 
 def mysql_index_upgrade_statements(existing_indexes: set[tuple[str, str]]) -> list[str]:
     return [
@@ -156,6 +174,16 @@ def mysql_column_upgrade_statements(existing_columns: set[tuple[str, str]]) -> l
         statement
         for (table_name, column_name), statement in MYSQL_COLUMN_UPGRADES.items()
         if (table_name, column_name) not in existing_columns
+    ]
+
+
+def mysql_nullable_column_upgrade_statements(
+    column_nullability: dict[tuple[str, str], str],
+) -> list[str]:
+    return [
+        statement
+        for key, statement in MYSQL_NULLABLE_COLUMN_UPGRADES.items()
+        if str(column_nullability.get(key) or "").upper() == "NO"
     ]
 
 
@@ -201,11 +229,17 @@ def apply_mysql_schema_upgrades(cur: Any) -> None:
     for statement in mysql_index_upgrade_statements(existing_indexes):
         cur.execute(statement)
     cur.execute(
-        "SELECT table_name, column_name FROM information_schema.columns "
+        "SELECT table_name, column_name, is_nullable FROM information_schema.columns "
         "WHERE table_schema = DATABASE()"
     )
-    existing_columns = {(str(row[0]), str(row[1])) for row in cur.fetchall()}
+    column_rows = cur.fetchall()
+    existing_columns = {(str(row[0]), str(row[1])) for row in column_rows}
     for statement in mysql_column_upgrade_statements(existing_columns):
+        cur.execute(statement)
+    column_nullability = {
+        (str(row[0]), str(row[1])): str(row[2]) for row in column_rows
+    }
+    for statement in mysql_nullable_column_upgrade_statements(column_nullability):
         cur.execute(statement)
 
 
@@ -1119,14 +1153,14 @@ def mysql_schema_statements() -> list[str]:
             title VARCHAR(255) NOT NULL,
             mission_type VARCHAR(64) NOT NULL,
             status VARCHAR(32) NOT NULL,
-            drone_device_id CHAR(36) NOT NULL,
-            device_code VARCHAR(128) NOT NULL,
-            device_name VARCHAR(255) NOT NULL,
+            drone_device_id CHAR(36),
+            device_code VARCHAR(128),
+            device_name VARCHAR(255),
             pilot_name VARCHAR(128),
             route_name VARCHAR(255),
             objective TEXT,
-            planned_start_at DATETIME(6) NOT NULL,
-            planned_end_at DATETIME(6) NOT NULL,
+            planned_start_at DATETIME(6),
+            planned_end_at DATETIME(6),
             actual_start_at DATETIME(6),
             actual_end_at DATETIME(6),
             flight_summary JSON NOT NULL,

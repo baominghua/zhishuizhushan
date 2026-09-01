@@ -1718,8 +1718,8 @@ export interface DroneMission {
   pilotName: string;
   routeName: string;
   objective: string;
-  plannedStartAt: string;
-  plannedEndAt: string;
+  plannedStartAt: string | null;
+  plannedEndAt: string | null;
   actualStartAt: string | null;
   actualEndAt: string | null;
   flightSummary: Record<string, unknown>;

@@ -854,3 +854,96 @@ def test_confirm_coverage_allows_independent_facility_point(app_client):
         "longitude": pytest.approx(117.11),
         "latitude": pytest.approx(27.21),
     }
+
+
+def test_trajectory_sidecar_creates_one_partial_historical_drone_mission(monkeypatch):
+    import server.app as app_module
+
+    created_records = []
+    monkeypatch.setattr(app_module, "list_missions", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        app_module,
+        "block_by_code",
+        lambda code: {"id": f"id-{code}", "blockCode": code},
+    )
+    monkeypatch.setattr(
+        app_module,
+        "create_mission",
+        lambda record, timeline: created_records.append({**record, "timeline": [timeline]}) or created_records[-1],
+    )
+    scene = {
+        "id": "scene-trajectory-1",
+        "name": "邵武S9地块pnts",
+        "missionId": "DJI-S9-20260827",
+        "assetType": "pointcloud",
+        "processingStage": "ready",
+        "linkedBlockCodes": ["GJ9-001"],
+        "trajectoryAvailable": True,
+        "trajectoryPath": "inbox/S9/terra_trajectory",
+        "trajectoryFileCount": 3,
+        "trajectorySize": 1_024,
+        "trajectoryFormats": ["POS", "SBET", "SMRMSG"],
+        "trajectoryFiles": ["inbox/S9/terra_trajectory/POS_demo.csv"],
+    }
+
+    result = app_module.sync_scene_trajectory_mission(scene, "reviewer")
+
+    assert result["status"] == "created"
+    assert len(created_records) == 1
+    record = created_records[0]
+    assert record["missionNo"].startswith("WRJ-IMP-")
+    assert record["status"] == "completed"
+    assert record["droneDeviceId"] == ""
+    assert record["plannedStartAt"] is None
+    assert record["actualStartAt"] is None
+    assert record["blocks"] == [{"id": "id-GJ9-001", "code": "GJ9-001"}]
+    assert record["flightSummary"]["recordOrigin"] == "trajectory-auto-import"
+    assert "droneDevice" in record["flightSummary"]["missingFields"]
+
+
+def test_trajectory_sidecar_deduplicates_pnts_and_copc_scene_records(monkeypatch):
+    import server.app as app_module
+
+    trajectory = {
+        "available": True,
+        "path": "inbox/S9/terra_trajectory",
+        "fileCount": 1,
+        "totalSize": 100,
+        "formats": ["POS"],
+        "files": ["inbox/S9/terra_trajectory/POS_demo.csv"],
+    }
+    source_key = app_module.trajectory_mission_source_key(trajectory)
+    existing = {
+        "id": "mission-imported",
+        "missionNo": "WRJ-IMP-EXISTING",
+        "status": "completed",
+        "blocks": [{"id": "id-GJ9-001", "code": "GJ9-001"}],
+        "flightSummary": {
+            "recordOrigin": "trajectory-auto-import",
+            "trajectorySourceKey": source_key,
+            "sourceSceneIds": ["scene-pnts"],
+        },
+    }
+    updates = []
+    monkeypatch.setattr(app_module, "scene_trajectory_evidence", lambda _scene: trajectory)
+    monkeypatch.setattr(app_module, "list_missions", lambda **_kwargs: [existing])
+    monkeypatch.setattr(app_module, "block_by_code", lambda code: {"id": f"id-{code}", "blockCode": code})
+    monkeypatch.setattr(
+        app_module,
+        "update_mission",
+        lambda record, timeline: updates.append({**record, "timeline": [timeline]}) or updates[-1],
+    )
+
+    result = app_module.sync_scene_trajectory_mission(
+        {
+            "id": "scene-copc",
+            "name": "同航次COPC",
+            "linkedBlockCodes": ["GJ9-001", "GJ9-002"],
+        },
+        "reviewer",
+    )
+
+    assert result == {"status": "updated", "missionId": "mission-imported", "missionNo": "WRJ-IMP-EXISTING"}
+    assert len(updates) == 1
+    assert updates[0]["flightSummary"]["sourceSceneIds"] == ["scene-pnts", "scene-copc"]
+    assert {item["code"] for item in updates[0]["blocks"]} == {"GJ9-001", "GJ9-002"}

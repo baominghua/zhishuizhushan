@@ -174,6 +174,26 @@ def test_mysql_deployment_is_the_default_production_stack():
     assert 'REMOTE_SENSING_CATALOG_BACKEND: "${REMOTE_SENSING_CATALOG_BACKEND:-mysql}"' in compose
 
 
+def test_historical_drone_import_columns_are_upgraded_to_nullable():
+    from server.modules.mysql_schema import mysql_nullable_column_upgrade_statements
+
+    statements = mysql_nullable_column_upgrade_statements(
+        {
+            ("drone_missions", "drone_device_id"): "NO",
+            ("drone_missions", "device_code"): "NO",
+            ("drone_missions", "device_name"): "YES",
+            ("drone_missions", "planned_start_at"): "NO",
+            ("drone_missions", "planned_end_at"): "YES",
+        }
+    )
+
+    assert statements == [
+        "ALTER TABLE drone_missions MODIFY COLUMN drone_device_id CHAR(36) NULL",
+        "ALTER TABLE drone_missions MODIFY COLUMN device_code VARCHAR(128) NULL",
+        "ALTER TABLE drone_missions MODIFY COLUMN planned_start_at DATETIME(6) NULL",
+    ]
+
+
 def test_mysql_production_verifier_checks_storage_engine_collation_and_indexes():
     verifier = read_text("server/scripts/verify_mysql_production.py")
     deploy_script = read_text("scripts/verify-production.ps1")
