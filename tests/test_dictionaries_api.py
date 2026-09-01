@@ -477,3 +477,91 @@ def test_derived_divisions_refresh_until_manually_curated(app_client):
     )
     final = next(item for item in final_items.json()["items"] if item["itemCode"] == "350703998")
     assert final["label"] == "人工确认乡镇"
+
+
+def test_dictionary_import_previews_commits_and_upserts(app_client):
+    created = app_client.post(
+        "/api/dictionaries",
+        json=sample_dictionary("import-methods"),
+        headers={"X-RS-Roles": "system.dictionaries.create"},
+    )
+    assert created.status_code == 200
+    payload = {
+        "mode": "append",
+        "dryRun": True,
+        "items": [
+            sample_item(
+                "manual-weeding",
+                "人工除草",
+                parent_code="manual",
+                level_code="operation",
+            ),
+            sample_item("manual", "人工管护", level_code="method"),
+        ],
+    }
+
+    preview = app_client.post(
+        "/api/dictionaries/import-methods/imports",
+        json=payload,
+        headers={"X-RS-Roles": "system.dictionaries.import"},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["canCommit"] is True
+    assert preview.json()["created"] == 2
+
+    committed = app_client.post(
+        "/api/dictionaries/import-methods/imports",
+        json={**payload, "dryRun": False},
+        headers={"X-RS-Roles": "system.dictionaries.import"},
+    )
+    assert committed.status_code == 200
+    assert committed.json()["committed"] == 2
+
+    upsert = app_client.post(
+        "/api/dictionaries/import-methods/imports",
+        json={
+            "mode": "upsert",
+            "dryRun": False,
+            "items": [sample_item("manual", "人工抚育", level_code="method")],
+        },
+        headers={"X-RS-Roles": "system.dictionaries.import"},
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["updated"] == 1
+    items = app_client.get(
+        "/api/dictionaries/import-methods/items",
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    assert {item["label"] for item in items.json()["items"]} >= {"人工抚育", "人工除草"}
+
+
+def test_dictionary_import_requires_permission_and_rejects_duplicates(app_client):
+    created = app_client.post(
+        "/api/dictionaries",
+        json=sample_dictionary("import-permission"),
+        headers={"X-RS-Roles": "system.dictionaries.create"},
+    )
+    assert created.status_code == 200
+    payload = {
+        "mode": "append",
+        "dryRun": True,
+        "items": [
+            sample_item("same", "第一行", level_code="method"),
+            sample_item("same", "第二行", level_code="method"),
+        ],
+    }
+    denied = app_client.post(
+        "/api/dictionaries/import-permission/imports",
+        json=payload,
+        headers={"X-RS-Roles": "system.dictionaries.view"},
+    )
+    preview = app_client.post(
+        "/api/dictionaries/import-permission/imports",
+        json=payload,
+        headers={"X-RS-Roles": "system.dictionaries.import"},
+    )
+
+    assert denied.status_code == 403
+    assert preview.status_code == 200
+    assert preview.json()["canCommit"] is False
+    assert preview.json()["errors"][0]["row"] == 3

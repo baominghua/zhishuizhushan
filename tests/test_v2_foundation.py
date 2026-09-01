@@ -76,6 +76,7 @@ def test_v2_capabilities_expose_versioned_modules(app_client):
         "organizations",
         "users",
         "roles",
+        "dictionaries",
         "permissions",
         "basemap-settings",
     ]

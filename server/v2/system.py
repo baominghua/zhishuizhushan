@@ -318,6 +318,13 @@ V2_MODULES: tuple[dict[str, Any], ...] = (
         "status": "available",
     },
     {
+        "key": "dictionaries",
+        "label": "字典管理",
+        "path": "/system/dictionaries",
+        "requiredPermission": "system.dictionaries.view",
+        "status": "available",
+    },
+    {
         "key": "permissions",
         "label": "权限目录",
         "path": "/system/permissions",

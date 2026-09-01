@@ -748,6 +748,26 @@ def test_forest_block_editor_uses_national_administrative_division_selector():
     assert "请从省级开始选择行政区划" in selector_source
 
 
+def test_v2_dictionary_governance_reuses_formal_dictionary_storage():
+    web_root = ROOT_DIR / "apps" / "web-operations"
+    router = (web_root / "src" / "router.tsx").read_text(encoding="utf-8")
+    shell = (web_root / "src" / "components" / "AppShell.tsx").read_text(encoding="utf-8")
+    page = (web_root / "src" / "pages" / "DictionariesPage.tsx").read_text(encoding="utf-8")
+    client = (web_root / "src" / "api" / "client.ts").read_text(encoding="utf-8")
+    system = (ROOT_DIR / "server" / "v2" / "system.py").read_text(encoding="utf-8")
+    dictionaries = (ROOT_DIR / "server" / "modules" / "dictionaries.py").read_text(encoding="utf-8")
+
+    assert 'path: "/system/dictionaries"' in router
+    assert "dictionaries: BookOpenText" in shell
+    assert '"requiredPermission": "system.dictionaries.view"' in system
+    assert 'request<LedgerResponse<DictionaryTypeRecord>>(`/api/dictionaries?' in client
+    assert 'request<DictionaryImportResult>' in client
+    assert "批量导入词项" in page
+    assert "预检数据" in page and "确认写入" in page
+    assert '@router.post("/dictionaries/{type_code}/imports")' in dictionaries
+    assert "_save_item_records(ordered)" in dictionaries
+
+
 def test_leadership_cockpit_and_carbon_dashboard_use_live_api_metrics():
     web_root = ROOT_DIR / "apps" / "web-operations"
     router = (web_root / "src" / "router.tsx").read_text(encoding="utf-8")

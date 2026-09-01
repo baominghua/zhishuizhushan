@@ -31,6 +31,7 @@ export interface V2Module {
     | "organizations"
     | "users"
     | "roles"
+    | "dictionaries"
     | "permissions";
   label: string;
   path: string;
@@ -105,6 +106,64 @@ export interface AdminRole {
 }
 
 export type AdminRolePayload = Pick<AdminRole, "roleCode" | "name" | "status" | "permissions" | "menuModules" | "dataScopes" | "properties">;
+
+export interface DictionaryTypeRecord {
+  id: string;
+  typeCode: string;
+  name: string;
+  category: string;
+  hierarchyEnabled: boolean;
+  valueMode: string;
+  description: string;
+  status: string;
+  sortOrder: number;
+  systemDefined: boolean;
+  properties: Record<string, unknown>;
+  itemCount: number;
+  activeItemCount: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export type DictionaryTypePayload = Pick<DictionaryTypeRecord, "typeCode" | "name" | "category" | "hierarchyEnabled" | "valueMode" | "description" | "status" | "sortOrder" | "properties">;
+
+export interface DictionaryItemRecord {
+  id: string;
+  dictionaryTypeId: string;
+  typeCode: string;
+  itemCode: string;
+  label: string;
+  parentItemId: string;
+  parentCode: string;
+  levelCode: string;
+  fullName: string;
+  pinyin: string;
+  initials: string;
+  searchAliases: string[];
+  sortOrder: number;
+  status: string;
+  metadata: Record<string, unknown>;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export type DictionaryItemPayload = Pick<DictionaryItemRecord, "itemCode" | "label" | "parentCode" | "levelCode" | "fullName" | "pinyin" | "initials" | "searchAliases" | "sortOrder" | "status" | "metadata" | "source">;
+
+export interface DictionaryImportResult {
+  dryRun: boolean;
+  mode: "append" | "upsert";
+  received: number;
+  created: number;
+  updated: number;
+  restored: number;
+  errors: Array<{ row: number; itemCode: string; message: string }>;
+  canCommit: boolean;
+  preview: DictionaryItemRecord[];
+  committed?: number;
+}
 
 export interface PermissionCatalogItem {
   code: string;

@@ -98,6 +98,11 @@ import type {
   AdminUserPayload,
   AdminRole,
   AdminRolePayload,
+  DictionaryTypeRecord,
+  DictionaryTypePayload,
+  DictionaryItemRecord,
+  DictionaryItemPayload,
+  DictionaryImportResult,
   PermissionCatalogResponse,
   ExtensionRecord,
   CostRate,
@@ -260,6 +265,28 @@ export const api = {
     request<AdminRole>(`/api/admin/roles/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteAdminRole: (id: string) =>
     request<{ ok: boolean; deleted: string }>(`/api/admin/roles/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  dictionaries: (query: { q?: string; category?: string; status?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<DictionaryTypeRecord>>(`/api/dictionaries?${queryString(query)}`),
+  createDictionary: (payload: DictionaryTypePayload) =>
+    request<DictionaryTypeRecord>("/api/dictionaries", { method: "POST", body: JSON.stringify(payload) }),
+  updateDictionary: (id: string, payload: Partial<Omit<DictionaryTypePayload, "typeCode">>) =>
+    request<DictionaryTypeRecord>(`/api/dictionaries/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteDictionary: (id: string) =>
+    request<{ ok: boolean; deleted: string }>(`/api/dictionaries/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  restoreDictionary: (id: string) =>
+    request<{ ok: boolean; restored: string; item: DictionaryTypeRecord }>(`/api/dictionaries/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  dictionaryItems: (typeCode: string, query: { q?: string; parentCode?: string; level?: string; status?: string; includeDeleted?: boolean; limit?: number; offset?: number } = {}) =>
+    request<LedgerResponse<DictionaryItemRecord>>(`/api/dictionaries/${encodeURIComponent(typeCode)}/items?${queryString(query)}`),
+  createDictionaryItem: (typeCode: string, payload: DictionaryItemPayload) =>
+    request<DictionaryItemRecord>(`/api/dictionaries/${encodeURIComponent(typeCode)}/items`, { method: "POST", body: JSON.stringify(payload) }),
+  updateDictionaryItem: (typeCode: string, id: string, payload: Partial<Omit<DictionaryItemPayload, "itemCode">>) =>
+    request<DictionaryItemRecord>(`/api/dictionaries/${encodeURIComponent(typeCode)}/items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteDictionaryItem: (typeCode: string, id: string) =>
+    request<{ ok: boolean; deleted: string }>(`/api/dictionaries/${encodeURIComponent(typeCode)}/items/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  restoreDictionaryItem: (typeCode: string, id: string) =>
+    request<{ ok: boolean; restored: string; item: DictionaryItemRecord }>(`/api/dictionaries/${encodeURIComponent(typeCode)}/items/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  importDictionaryItems: (typeCode: string, payload: { mode: "append" | "upsert"; dryRun: boolean; items: DictionaryItemPayload[] }) =>
+    request<DictionaryImportResult>(`/api/dictionaries/${encodeURIComponent(typeCode)}/imports`, { method: "POST", body: JSON.stringify(payload) }),
   permissionCatalog: () => request<PermissionCatalogResponse>("/api/admin/permission-catalog"),
   leadershipCockpit: () => request<LeadershipCockpitResponse>("/api/v2/cockpit/leadership"),
   cockpitTopics: () => request<CockpitTopicsResponse>("/api/v2/cockpit/topics"),

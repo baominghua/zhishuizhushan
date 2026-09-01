@@ -30,6 +30,7 @@ import {
   Leaf,
   LayoutDashboard,
   Building2,
+  BookOpenText,
   UserRoundCog,
   ShieldCheck,
   KeyRound,
@@ -76,6 +77,7 @@ const MODULE_ICONS = {
   organizations: Building2,
   users: UserRoundCog,
   roles: ShieldCheck,
+  dictionaries: BookOpenText,
   permissions: KeyRound,
   "resource-intelligence": ChartNoAxesCombined,
   "cost-management": WalletCards,
@@ -90,7 +92,7 @@ const MODULE_ORDER = [
   "patrol", "harvest", "labor", "workforce-development", "cost-management", "safety-events", "mobile-operations",
   "equipment", "drone-missions", "imagery-assets", "integration-hub",
   "ai-findings", "ai-models", "ai-inference", "carbon-estimates",
-  "system-overview", "organizations", "users", "roles", "permissions", "basemap-settings", "operations-audit", "system-governance",
+  "system-overview", "organizations", "users", "roles", "dictionaries", "permissions", "basemap-settings", "operations-audit", "system-governance",
 ];
 const MODULE_ORDER_INDEX = new globalThis.Map(MODULE_ORDER.map((key, index) => [key, index]));
 
@@ -105,6 +107,7 @@ function pageTitle(pathname: string) {
   if (pathname.includes("/system/organizations")) return "组织架构";
   if (pathname.includes("/system/users")) return "用户账号";
   if (pathname.includes("/system/roles")) return "角色管理";
+  if (pathname.includes("/system/dictionaries")) return "字典管理";
   if (pathname.includes("/system/permissions")) return "权限目录";
   if (pathname.includes("/cockpit/leadership")) return "领导驾驶舱";
   if (pathname.includes("/operations/todos")) return "我的待办";

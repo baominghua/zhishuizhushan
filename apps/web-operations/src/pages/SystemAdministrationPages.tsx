@@ -55,6 +55,7 @@ function SystemTabs() {
     <Link to="/system/organizations" activeProps={{ className: "active" }}>组织架构</Link>
     <Link to="/system/users" activeProps={{ className: "active" }}>用户账号</Link>
     <Link to="/system/roles" activeProps={{ className: "active" }}>角色管理</Link>
+    <Link to="/system/dictionaries" activeProps={{ className: "active" }}>字典管理</Link>
     <Link to="/system/permissions" activeProps={{ className: "active" }}>权限目录</Link>
   </nav>;
 }

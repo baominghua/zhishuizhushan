@@ -58,6 +58,7 @@ const OrganizationsPage = lazy(async () => ({ default: (await import("./pages/Sy
 const UsersPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).UsersPage }));
 const RolesPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).RolesPage }));
 const PermissionsPage = lazy(async () => ({ default: (await import("./pages/SystemAdministrationPages")).PermissionsPage }));
+const DictionariesPage = lazy(async () => ({ default: (await import("./pages/DictionariesPage")).DictionariesPage }));
 const CostManagementPage = lazy(async () => ({ default: (await import("./pages/CostManagementPage")).CostManagementPage }));
 const ResourceIntelligencePage = lazy(async () => ({ default: (await import("./pages/ResourceIntelligencePage")).ResourceIntelligencePage }));
 const IntegrationHubPage = lazy(async () => ({ default: (await import("./pages/IntegrationHubPage")).IntegrationHubPage }));
@@ -101,13 +102,14 @@ const organizationsRoute = createRoute({ getParentRoute: () => rootRoute, path: 
 const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/users", component: UsersPage });
 const rolesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/roles", component: RolesPage });
 const permissionsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/permissions", component: PermissionsPage });
+const dictionariesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/dictionaries", component: DictionariesPage });
 const costManagementRoute = createRoute({ getParentRoute: () => rootRoute, path: "/operations/costs", component: CostManagementPage });
 const resourceIntelligenceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/resources/intelligence", component: ResourceIntelligencePage });
 const integrationHubRoute = createRoute({ getParentRoute: () => rootRoute, path: "/integrations", component: IntegrationHubPage });
 const workforceDevelopmentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/workforce", component: WorkforceDevelopmentPage });
 const governanceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/system/governance", component: GovernancePage });
 
-const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, assetViewerRoute, mosoInventorySandboxRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, forestRoadsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, leadershipCockpitRoute, displayDashboardRoute, assetViewerRoute, mosoInventorySandboxRoute, systemOverviewRoute, organizationsRoute, usersRoute, rolesRoute, dictionariesRoute, permissionsRoute, governanceRoute, todosRoute, notificationsRoute, auditRoute, basemapSettingsRoute, mapRoute, forestBlocksRoute, forestSubcompartmentsRoute, forestRoadsRoute, resourceSurveysRoute, resourceIntelligenceRoute, attachmentsRoute, forestRightsRoute, importsRoute, patrolRoute, harvestRoute, laborRoute, costManagementRoute, workforceDevelopmentRoute, equipmentRoute, integrationHubRoute, droneMissionsRoute, imageryAssetsRoute, aiModelsRoute, aiInferenceRoute, aiReviewRoute, safetyEventsRoute, mobileOperationsRoute, mobileFieldRoute, carbonEstimatesRoute]);
 
 export const router = createRouter({ routeTree, basepath: "/v2", defaultPreload: "intent" });
 

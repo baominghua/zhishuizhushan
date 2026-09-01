@@ -639,6 +639,20 @@ class DictionaryItemPatch(BaseModel):
     source: str | None = None
 
 
+class DictionaryItemsImportIn(BaseModel):
+    items: list[DictionaryItemIn] = Field(min_length=1, max_length=5000)
+    mode: str = "append"
+    dryRun: bool = True
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        normalized = compact_text(value).lower()
+        if normalized not in {"append", "upsert"}:
+            raise ValueError("mode must be append or upsert")
+        return normalized
+
+
 def normalize_type(record: dict[str, Any]) -> dict[str, Any]:
     created_at = record.get("createdAt") or now_iso()
     return {
@@ -1630,6 +1644,157 @@ def create_dictionary_item(
     )
     _save_item_record(record)
     return record
+
+
+@router.post("/dictionaries/{type_code}/imports")
+def import_dictionary_items(
+    type_code: str,
+    payload: DictionaryItemsImportIn,
+    context: AuthContext = Depends(request_context),
+) -> dict[str, Any]:
+    require_permission(context, "system.dictionaries.import")
+    dictionary_type = _require_dictionary(type_code)
+    existing = _dictionary_items(dictionary_type["id"], include_deleted=True)
+    existing_by_identity = {
+        (item["levelCode"], item["itemCode"]): item
+        for item in existing
+    }
+    incoming = [item.model_dump() for item in payload.items]
+    incoming_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    errors: list[dict[str, Any]] = []
+    row_by_identity: dict[tuple[str, str], int] = {}
+    for row_number, item in enumerate(incoming, start=2):
+        identity = (compact_text(item.get("levelCode")), compact_text(item.get("itemCode")))
+        if identity in incoming_by_identity:
+            errors.append(
+                {
+                    "row": row_number,
+                    "itemCode": identity[1],
+                    "message": "导入文件中存在重复的层级与编码组合",
+                }
+            )
+            continue
+        incoming_by_identity[identity] = item
+        row_by_identity[identity] = row_number
+        if payload.mode == "append" and identity in existing_by_identity:
+            errors.append(
+                {
+                    "row": row_number,
+                    "itemCode": identity[1],
+                    "message": "编码已经存在；如需覆盖字段，请选择更新模式",
+                }
+            )
+
+    planned: dict[tuple[str, str], dict[str, Any]] = {}
+    now = now_iso()
+    created = 0
+    updated = 0
+    restored = 0
+    for item in incoming:
+        identity = (compact_text(item.get("levelCode")), compact_text(item.get("itemCode")))
+        if incoming_by_identity.get(identity) is not item:
+            continue
+        current = existing_by_identity.get(identity)
+        parent_code = compact_text(item.get("parentCode"))
+        record = normalize_item(
+            {
+                **(current or {}),
+                **item,
+                "id": current["id"] if current else str(uuid.uuid4()),
+                "dictionaryTypeId": dictionary_type["id"],
+                "typeCode": dictionary_type["typeCode"],
+                "parentItemId": "",
+                "parentCode": parent_code,
+                "source": compact_text(item.get("source")) or "dictionary-import",
+                "createdAt": current["createdAt"] if current else now,
+                "updatedAt": now,
+                "deletedAt": None,
+            }
+        )
+        planned[identity] = record
+        if current:
+            updated += 1
+            if current.get("deletedAt"):
+                restored += 1
+        else:
+            created += 1
+
+    available = {**existing_by_identity, **planned}
+    for identity, record in planned.items():
+        parent_code = record["parentCode"]
+        if not parent_code:
+            continue
+        expected_level = parent_level_for(identity[0])
+        candidates = [
+            candidate
+            for candidate_identity, candidate in available.items()
+            if candidate_identity[1] == parent_code
+            and (not expected_level or candidate_identity[0] == expected_level)
+            and not candidate.get("deletedAt")
+        ]
+        if len(candidates) == 1:
+            record["parentItemId"] = candidates[0]["id"]
+        elif not candidates:
+            errors.append(
+                {
+                    "row": row_by_identity[identity],
+                    "itemCode": identity[1],
+                    "message": f"父级编码 {parent_code} 不存在",
+                }
+            )
+        else:
+            errors.append(
+                {
+                    "row": row_by_identity[identity],
+                    "itemCode": identity[1],
+                    "message": f"父级编码 {parent_code} 在多个层级中重复，请补充标准层级编码",
+                }
+            )
+
+    ordered: list[dict[str, Any]] = []
+    remaining = dict(planned)
+    while remaining:
+        remaining_ids = {record["id"] for record in remaining.values()}
+        ready = [
+            identity
+            for identity, record in remaining.items()
+            if not record["parentItemId"] or record["parentItemId"] not in remaining_ids
+        ]
+        if not ready:
+            for identity in remaining:
+                errors.append(
+                    {
+                        "row": row_by_identity[identity],
+                        "itemCode": identity[1],
+                        "message": "父子层级关系存在循环",
+                    }
+                )
+            ordered.extend(remaining.values())
+            break
+        ready.sort(key=lambda identity: row_by_identity[identity])
+        for identity in ready:
+            ordered.append(remaining.pop(identity))
+
+    result = {
+        "dryRun": payload.dryRun,
+        "mode": payload.mode,
+        "received": len(incoming),
+        "created": created,
+        "updated": updated,
+        "restored": restored,
+        "errors": errors,
+        "canCommit": not errors,
+        "preview": ordered[:100],
+    }
+    if payload.dryRun:
+        return result
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "字典导入校验未通过", "errors": errors},
+        )
+    _save_item_records(ordered)
+    return {**result, "dryRun": False, "committed": len(planned), "preview": []}
 
 
 @router.patch("/dictionaries/{type_code}/items/{item_id}")
